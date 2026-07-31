@@ -10,9 +10,9 @@ import Foundation
 /// commit 030a035 and was fixed in fd72334. These tests catch such regressions at
 /// unit-test time (no device / re-login needed).
 ///
-/// Dual-mode design: PriType registers exactly two modes — Korean (smKorean) and a
-/// pass-through English (smRoman) — plus `TICapsLockLanguageSwitchCapable` so macOS
-/// can switch between them natively (Caps Lock / input-source shortcut).
+/// Single-mode design: PriType registers only Korean (smKorean). Korean/English is
+/// process-global `HangulComposer.inputMode` state so a new IMK client or tab cannot
+/// restore a session-scoped English child mode back to Korean.
 @Suite("Registration Contract (Info.plist)")
 struct RegistrationContractTests {
 
@@ -38,26 +38,25 @@ struct RegistrationContractTests {
         return (comp?["tsInputModeListKey"] as? [String: Any]) ?? [:]
     }
 
-    @Test("Registers exactly two modes: korean(smKorean) + english(smRoman)")
-    func twoModes() throws {
+    @Test("Registers exactly one Korean mode")
+    func singleKoreanMode() throws {
         let info = try loadInfoPlist()
         let list = modes(info)
-        #expect(list.count == 2, "expected exactly 2 input modes, got \(list.count)")
+        #expect(list.count == 1, "expected exactly 1 input mode, got \(list.count)")
 
         let korean = list["com.pritype.inputmethod.v2"] as? [String: Any]
-        let english = list["com.pritype.inputmethod.v2.english"] as? [String: Any]
         #expect(korean?["tsInputModeScriptKey"] as? String == "smKorean")
-        #expect(english?["tsInputModeScriptKey"] as? String == "smRoman")
+        #expect(list["com.pritype.inputmethod.v2.english"] == nil)
 
         let comp = info["ComponentInputModeDict"] as? [String: Any]
         let visible = comp?["tsVisibleInputModeOrderedArrayKey"] as? [String]
-        #expect(visible == ["com.pritype.inputmethod.v2", "com.pritype.inputmethod.v2.english"])
+        #expect(visible == ["com.pritype.inputmethod.v2"])
     }
 
-    @Test("Declares Caps Lock language-switch capability")
-    func capsLockCapable() throws {
+    @Test("Does not advertise child-mode Caps Lock switching")
+    func noChildModeCapsLockCapability() throws {
         let info = try loadInfoPlist()
-        #expect(info["TICapsLockLanguageSwitchCapable"] as? Bool == true)
+        #expect(info["TICapsLockLanguageSwitchCapable"] == nil)
     }
 
     @Test("Forbidden registration keys are absent (regression guard)")
@@ -80,7 +79,7 @@ struct RegistrationContractTests {
         #expect(info["InputMethodConnectionName"] as? String == "PriType_InputString_v2")
         #expect(info["InputMethodServerControllerClass"] as? String == "PriTypeInputController")
         let repertoire = info["tsInputMethodCharacterRepertoireKey"] as? [String]
-        #expect(repertoire?.contains("Hang") == true, "must declare Hangul repertoire")
+        #expect(repertoire == ["Hang"], "single-mode registration must declare Hang only")
     }
 
     @Test("Input source icons are mode-specific template images")
@@ -91,14 +90,9 @@ struct RegistrationContractTests {
 
         let list = modes(info)
         let korean = list["com.pritype.inputmethod.v2"] as? [String: Any]
-        let english = list["com.pritype.inputmethod.v2.english"] as? [String: Any]
 
         #expect(korean?["TISIconIsTemplate"] as? Bool == true)
         #expect(korean?["tsInputModeMenuIconFileKey"] as? String == "input-ko.tiff")
         #expect(korean?["tsInputModePaletteIconFileKey"] as? String == "input-ko.tiff")
-
-        #expect(english?["TISIconIsTemplate"] as? Bool == true)
-        #expect(english?["tsInputModeMenuIconFileKey"] as? String == "input-en.tiff")
-        #expect(english?["tsInputModePaletteIconFileKey"] as? String == "input-en.tiff")
     }
 }

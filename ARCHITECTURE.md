@@ -54,7 +54,6 @@ keyDown ──► PriTypeInputController.handle()
               • deactivateServer     — IMK 포커스 전환 (fallback, 멱등)
               • mouseCommit          — 조합 영역 외 클릭
               • modeTransition       — 사용자 한/영 전환키
-              • systemModeSwitch     — macOS Caps Lock/메뉴 입력 모드 선택 (setValue ingress)
               • keyboardLayoutChange — 두벌식/세벌식 전환
 ```
 

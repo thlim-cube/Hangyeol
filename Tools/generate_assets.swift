@@ -279,10 +279,6 @@ try writeTIFF(
     to: root.appendingPathComponent("input-ko.tiff")
 )
 try writeTIFF(
-    drawInputGlyph("A", fontName: nil, fontSize: 16.0, yOffset: -0.20),
-    to: root.appendingPathComponent("input-en.tiff")
-)
-try writeTIFF(
     drawInputGlyph("한", fontName: "AppleSDGothicNeo-Bold", fontSize: 15.0, yOffset: -1.15),
     to: root.appendingPathComponent("icon.tiff")
 )
@@ -296,4 +292,4 @@ guard process.terminationStatus == 0 else {
 }
 
 try? FileManager.default.removeItem(at: iconset)
-print("Generated AppIcon.icns and input source TIFF assets.")
+print("Generated AppIcon.icns and Korean input source TIFF assets.")

@@ -161,15 +161,12 @@ public class HangulComposer: @unchecked Sendable {
     /// Set Korean or English mode from the PriType controller.
     ///
     /// Custom toggle keys are coordinated by `InputModeCoordinator` and
-    /// `PriTypeInputController` before reaching this method. Caps Lock language
-    /// switching also arrives through the controller as an IMK input-mode value
-    /// change.
+    /// `PriTypeInputController` before reaching this method.
     /// - Important: `inputMode` is the single source of truth for the Korean/
     ///   English state. The only sanctioned writers are
-    ///   `PriTypeInputController.performPriTypeModeTransition` (custom toggle) and
-    ///   `PriTypeInputController.setValue(_:forTag:)` (macOS re-selecting the
-    ///   PriType source, which always lands back in `.korean`). No other path —
-    ///   including `activateServer` focus changes — may mutate the mode.
+    ///   `PriTypeInputController.performPriTypeModeTransition` (custom toggle).
+    ///   No lifecycle or IMK input-mode callback — including `activateServer`
+    ///   focus changes — may mutate the mode.
     public func setInputMode(_ mode: InputMode) {
         guard inputMode != mode else {
             return

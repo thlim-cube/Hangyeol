@@ -207,7 +207,7 @@ DispatchQueue.main.async { onTapFailed?() }   // 그 다음에만 IOKit 시작
 
 ### 6.1 단일 진실원 (검증됨)
 
-`HangulComposer.inputMode`는 `public private(set)`, 초기 `.korean`. **쓰기 경로 2개만**: `PriTypeInputController.performPriTypeModeTransition`(커스텀 토글), `setValue(_:forTag:)`(TIS 재선택). `activateServer`/`handle()`/`deactivateServer`는 절대 쓰지 않음. 토글은 `InputModeCoordinator.requestToggle` → 컨트롤러로 async 디스패치(검증). 문서 주석으로 불변식 고정.
+`HangulComposer.inputMode`는 `public private(set)`, 초기 `.korean`. 프로덕션 **쓰기 경로는 `PriTypeInputController.performPriTypeModeTransition`(커스텀 토글) 하나만** 둔다. `activateServer`/`handle()`/`deactivateServer`와 IMK input-mode callback은 절대 쓰지 않음. 토글은 `InputModeCoordinator.requestToggle` → 컨트롤러로 async 디스패치(검증). 문서 주석으로 불변식 고정.
 
 ### 6.2 첫‑키 안정성 (critique major)
 
@@ -285,7 +285,7 @@ Finder의 더미 IMK 윈도우 좌표 휴리스틱은 유일하게 정당한 좌
 
 1. 토글 핫패스에서 `TISSelectInputSource()` 호출 금지.
 2. `Info.plist`는 §3.2/3.3 계약 준수 — 모드 정확히 1개, `smKorean`, `[Hang]`, forbidden 0개. 모든 빌드가 검증 통과해야 함.
-3. `HangulComposer.inputMode` 쓰기 경로는 `performPriTypeModeTransition`·`setValue` 2개뿐.
+3. 프로덕션의 `HangulComposer.inputMode` 쓰기 경로는 `performPriTypeModeTransition` 하나뿐.
 4. 영어 모드 = 순수 패스‑스루(`return false`, 로컬 버퍼/마크드 텍스트 없음).
 5. Caps Lock 소유는 `TISRomanSwitchState`로 **진짜 상호배타**: ON=macOS, OFF=PriType(바인딩 시).
 6. `가`/`A` 상태바가 권위 인디케이터. LED/메뉴바 아이콘은 신뢰 대상 아님.

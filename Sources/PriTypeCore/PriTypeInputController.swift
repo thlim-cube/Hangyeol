@@ -8,8 +8,8 @@ import Carbon.HIToolbox
 /// The controller owns nothing but the IMK lifecycle. Everything session-scoped —
 /// client, analyzed context, delivery adapter, duplicate-keyDown state, focus-loss
 /// safety net — lives in a single `InputSession`, and EVERY composition-ending event
-/// (app deactivate, deactivateServer, mouse commit, custom toggle, Caps Lock mode
-/// switch, keyboard-layout change) funnels into `InputSession.finalize(reason:)`, the
+/// (app deactivate, deactivateServer, mouse commit, custom toggle, keyboard-layout
+/// change) funnels into `InputSession.finalize(reason:)`, the
 /// one host-agnostic commit path.
 ///
 /// ```
@@ -18,16 +18,10 @@ import Carbon.HIToolbox
 ///                  TextDeliveryAdapter (marked / direct / immediate) ◄─────┘
 ///
 /// toggle key ──► InputModeCoordinator ──► performPriTypeModeTransition ─┐
-/// Caps Lock  ──► setValue(inputMode)  ─────────────────────────────────┤
 /// app deactivate / deactivateServer / mouse commit / layout change ────┴─► session.finalize
 /// ```
 @objc(PriTypeInputController)
 public class PriTypeInputController: IMKInputController, @unchecked Sendable {
-    // Two PriType input modes registered in Info.plist ComponentInputModeDict.
-    // Korean composes; English is a pure pass-through (ABC layout override).
-    // macOS Caps Lock / input-source switching moves between these two modes.
-    private static let priTypeInputSourceID = "com.pritype.inputmethod.v2"          // Korean mode (== bundle id)
-    private static let priTypeEnglishInputModeID = "com.pritype.inputmethod.v2.english"
     private static let romanKeyboardLayoutID = resolveRomanKeyboardLayoutID()
     private static let romanKeyboardLayoutCandidates = [
         "com.apple.keylayout.ABC",
@@ -193,25 +187,6 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         composer.clearLocalBuffer()
         syncRomanKeyboardLayout(for: session.client, force: true)
         composer.setInputMode(nextMode)
-        syncSelectedInputModeForMenuBar(client: session.client, mode: nextMode)
-    }
-
-    /// Best-effort: tell macOS which PriType mode is active so the menu-bar input
-    /// source indicator (and Caps Lock's notion of the current mode) matches a
-    /// custom-key toggle. Cosmetic + consistency only — `composer.inputMode` is
-    /// already the authoritative composition state, so even if this is delayed or
-    /// unsupported, typing is unaffected (no first-key race). Without it, a
-    /// custom-key toggle and macOS's selected mode could drift apart.
-    private func syncSelectedInputModeForMenuBar(client: IMKTextInput, mode: InputMode) {
-        let modeID = mode == .english ? Self.priTypeEnglishInputModeID : Self.priTypeInputSourceID
-        let selector = NSSelectorFromString("selectInputMode:")
-        let object = client as AnyObject
-        guard object.responds(to: selector) else {
-            DebugLogger.log("PriTypeInputController: client does not support selectInputMode:")
-            return
-        }
-        _ = object.perform(selector, with: modeID)
-        DebugLogger.log("PriTypeInputController: selectInputMode -> \(modeID)")
     }
 
     // MARK: - IMK Lifecycle
@@ -222,9 +197,9 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         assert(Thread.isMainThread, "IMK activateServer must run on main thread")
         #endif
         super.activateServer(sender)
-        // NOTE: Focus changes never reset `composer.inputMode`. The Korean/English
-        // state is owned solely by the toggle path and the `setValue` ingress, so
-        // switching apps preserves whatever mode the user last chose.
+        // NOTE: Focus changes never reset `composer.inputMode`. Korean/English state
+        // is process-global and owned solely by the custom toggle path, so switching
+        // clients, tabs, or apps preserves the user's last mode.
         if let client = sender as? IMKTextInput {
             syncRomanKeyboardLayout(for: client, force: true)
 
@@ -304,46 +279,6 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     // through without doing any work in handle().
     override public func recognizedEvents(_ sender: Any!) -> Int {
         Int(NSEvent.EventTypeMask.keyDown.rawValue | NSEvent.EventTypeMask.flagsChanged.rawValue)
-    }
-
-    override public func setValue(_ value: Any!, forTag tag: Int, client sender: Any!) {
-        if tag == Int(kTextServiceInputModePropertyTag) {
-            guard let inputModeID = value as? String, !inputModeID.isEmpty else {
-                DebugLogger.log("PriTypeInputController: ignored empty input mode property")
-                return
-            }
-
-            // Route the two PriType modes to the single composer source of truth.
-            // This is how macOS Caps Lock / input-source switching between the
-            // Korean and English modes reaches the composer — synchronously, so the
-            // next keyDown already sees the new mode (no first-key race).
-            let targetMode: InputMode?
-            switch inputModeID {
-            case Self.priTypeEnglishInputModeID: targetMode = .english
-            case Self.priTypeInputSourceID:      targetMode = .korean
-            default:                             targetMode = nil
-            }
-            DebugLogger.log("PriTypeInputController: setValue inputMode='\(inputModeID)' target=\(String(describing: targetMode)) current=\(composer.inputMode)")
-            guard let targetMode else {
-                super.setValue(value, forTag: tag, client: sender)
-                return
-            }
-
-            if let client = sender as? IMKTextInput {
-                syncRomanKeyboardLayout(for: client, force: true)
-            }
-
-            if composer.inputMode != targetMode {
-                DebugLogger.log("PriTypeInputController: macOS selected PriType \(targetMode) mode")
-                // System-driven mode switches end composition through the same
-                // single path as everything else (not via a stale delegate).
-                finalizeActiveComposition(sender: sender, reason: .systemModeSwitch)
-                composer.setInputMode(targetMode)
-            }
-            return
-        }
-
-        super.setValue(value, forTag: tag, client: sender)
     }
 
     // MARK: - Keystroke Pipeline

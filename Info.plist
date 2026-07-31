@@ -21,9 +21,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.7.4</string>
+	<string>2.7.5</string>
 	<key>CFBundleVersion</key>
-	<string>50</string>
+	<string>51</string>
 	<key>ComponentInputModeDict</key>
 	<dict>
 		<key>tsInputModeListKey</key>
@@ -41,24 +41,10 @@
 				<key>tsInputModeScriptKey</key>
 				<string>smKorean</string>
 			</dict>
-			<key>com.pritype.inputmethod.v2.english</key>
-			<dict>
-				<key>TISIconIsTemplate</key>
-				<true/>
-				<key>tsInputModeMenuIconFileKey</key>
-				<string>input-en.tiff</string>
-				<key>tsInputModePaletteIconFileKey</key>
-				<string>input-en.tiff</string>
-				<key>tsInputModePrimaryInScriptKey</key>
-				<true/>
-				<key>tsInputModeScriptKey</key>
-				<string>smRoman</string>
-			</dict>
 		</dict>
 		<key>tsVisibleInputModeOrderedArrayKey</key>
 		<array>
 			<string>com.pritype.inputmethod.v2</string>
-			<string>com.pritype.inputmethod.v2.english</string>
 		</array>
 	</dict>
 	<key>InputMethodConnectionName</key>
@@ -69,12 +55,9 @@
 	<true/>
 	<key>PriTypeReleaseChannel</key>
 	<string>stable</string>
-	<key>TICapsLockLanguageSwitchCapable</key>
-	<true/>
 	<key>tsInputMethodCharacterRepertoireKey</key>
 	<array>
 		<string>Hang</string>
-		<string>Latn</string>
 	</array>
 	<key>TISIconIsTemplate</key>
 	<true/>

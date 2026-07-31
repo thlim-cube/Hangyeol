@@ -86,10 +86,9 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 ## 3. 불변식 (회귀 가드)
 
 1. custom toggle hot path에서 `TISSelectInputSource`를 호출하지 않는다.
-2. `composer.inputMode`를 바꾸는 writer는 **정확히 둘**뿐이다:
-   - `PriTypeInputController.performPriTypeModeTransition` (사용자 토글)
-   - `PriTypeInputController.setValue(_:forTag:)` ingress (macOS가 PriType source 재선택 → 항상 `.korean` 복귀)
-   `activateServer`(포커스 변경) 등 다른 경로는 모드를 건드리지 않는다.
+2. 프로덕션에서 `composer.inputMode`를 바꾸는 writer는
+   `PriTypeInputController.performPriTypeModeTransition`(사용자 토글) **하나뿐**이다.
+   `activateServer`(포커스 변경)나 IMK input-mode callback 등 다른 경로는 모드를 건드리지 않는다.
 3. 모드 전환 전 active composition은 정확히 1회 commit한다.
 4. 전환 직후 keyDown을 막거나 replay하지 않는다. 전환이 즉시 완료되므로 불필요하다.
 5. 영어 모드에서 PriType는 printable key를 consume하지 않는다(`return false`).
@@ -129,8 +128,8 @@ Caps Lock 정책·active controller 가드·전환 전 1회 commit을 한 곳(co
 > 동작(탭 콜백 내 IMK IPC)이라 `kCGEventTapDisabledByTimeout` 위험만 추가하고 이득이 불확실해 채택하지 않았다.
 
 ### ④ inputMode write-path 단일화
-불변식 2를 코드 주석으로 명문화(`setInputMode`, `activateServer`). 외부 선택(Caps Lock)에서 PriType로
-돌아오면 `setValue` ingress가 항상 `.korean`으로 복귀시킨다 — 영어는 "ABC"이지 "PriType-영어"가 아니므로.
+불변식 2를 코드 주석으로 명문화(`setInputMode`, `activateServer`). 탭·입력 필드·앱 전환이나 외부 입력
+소스에서 PriType로 돌아오는 동작은 내부 한/영 상태를 바꾸지 않으며, 사용자가 마지막으로 선택한 mode를 유지한다.
 
 ---
 

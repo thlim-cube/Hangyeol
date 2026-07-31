@@ -52,7 +52,6 @@ cp -R Resources/* "$RESOURCES_DIR/" 2>/dev/null || true
 cp "AppIcon.icns" "$RESOURCES_DIR/" 2>/dev/null || true
 cp "icon.tiff" "$RESOURCES_DIR/" 2>/dev/null || true
 cp "input-ko.tiff" "$RESOURCES_DIR/" 2>/dev/null || true
-cp "input-en.tiff" "$RESOURCES_DIR/" 2>/dev/null || true
 if [ -d "$BUILD_DIR/PriType_PriTypeCore.bundle" ]; then
     cp -R "$BUILD_DIR/PriType_PriTypeCore.bundle" "$RESOURCES_DIR/"
 fi
