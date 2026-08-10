@@ -232,11 +232,17 @@ C 기반 libhangul을 순수 Swift로 재구현한 한글 조합 엔진. PriType
 
 ## Secure Input 처리
 
-macOS의 `IsSecureEventInputEnabled()`는 프로세스 단위가 아닌 **시스템 전역 플래그**다. 카카오톡 등 일부 앱이 비밀번호 필드에서 이 플래그를 설정한 뒤 해제하지 않으면, 다른 모든 앱에서 입력기가 영문 모드로 고정되는 문제가 발생한다.
+macOS의 `IsSecureEventInputEnabled()`는 프로세스 단위가 아닌 **시스템 전역 플래그**다. PriType은
+비밀번호 입력을 조합하거나 기록하는 위험보다 일반 필드에서 잠시 pass-through할 가능성을 선택하는
+fail-closed 정책을 사용한다.
 
-PriType은 2단계 검증으로 이를 처리한다:
-1. **번들 ID 확인**: `SecurityAgent`, `loginwindow`, `screencaptureui`이면 즉시 pass-through.
-2. **필드 속성 확인**: 위 목록에 없으면 `validAttributesForMarkedText()`가 빈 배열인지 검사. 빈 배열이면 비밀번호 필드로 간주하여 pass-through. 그 외에는 오래된(stale) 플래그로 판단하고 정상 입력 처리.
+- `SecurityAgent`, `loginwindow`, `screencaptureui` 같은 시스템 secure client는 즉시 pass-through한다.
+- 전역 Secure Event Input이 활성화돼 있으면 client 종류와 관계없이 raw pass-through한다. stale 전역
+  플래그를 입력기에서 추정해 자동 해제하거나 무시하지 않는다.
+- 전역 플래그가 꺼져 있어도 client가 marked-text capability를 제공하지 않고 selection도 무효이면
+  secure/non-text 영역으로 보고 pass-through한다.
+- pass-through 진입 시 libhangul과 delivery adapter의 추적만 버리고 client 문서에는 commit·clear를
+  보내지 않는다. pending Caps/TIS 소유권 정합화도 Secure Input 게이트 뒤로 미룬다.
 
 ## 동시성 (Concurrency) 및 스레드 안전성
 
