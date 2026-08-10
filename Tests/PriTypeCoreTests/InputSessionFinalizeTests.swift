@@ -463,6 +463,78 @@ struct InputSessionFinalizeTests {
         #expect(client.insertCalls.count == 1)
     }
 
+    @Test("Secure cleanup rejects marked text no longer owned by PriType")
+    func secureCleanupRejectsUnownedMarkedText() {
+        let sessions = [makeDirectFallbackSession(), makeMarkedSession()]
+
+        for (session, composer, client) in sessions {
+            _ = composer.handle(
+                TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+                delegate: session.adapter
+            )
+            #expect(client.markedText == "ㄱ")
+
+            session.discardForSecureInput()
+            client.markedText = "나"
+            client.markedRangeValue = NSRange(location: 0, length: 1)
+
+            #expect(!session.prepareForNonSecureClientWrites())
+            #expect(client.insertCalls.isEmpty)
+            #expect(client.markedText == "나")
+        }
+    }
+
+    @Test("Secure cleanup abandons unreadable or overflowing marked text")
+    func secureCleanupAbandonsInvalidMarkedText() {
+        let invalidations: [(String, (FakeIMKTextInput) -> Void)] = [
+            ("unreadable", { client in
+                client.attributedSubstringOverride = { _ in nil }
+            }),
+            ("overflowing", { client in
+                client.markedRangeValue = NSRange(location: Int.max - 1, length: 2)
+            })
+        ]
+
+        for (reason, invalidate) in invalidations {
+            let (session, composer, client) = makeMarkedSession()
+            _ = composer.handle(
+                TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+                delegate: session.adapter
+            )
+            session.discardForSecureInput()
+            invalidate(client)
+
+            #expect(
+                !session.prepareForNonSecureClientWrites(),
+                "\(reason) marked text must be abandoned"
+            )
+            #expect(client.insertCalls.isEmpty)
+            #expect(client.markedText == "ㄱ")
+        }
+    }
+
+    @Test("Secure cleanup compares canonically normalized marked text")
+    func secureCleanupAcceptsCanonicalEquivalentMarkedText() {
+        let (session, composer, client) = makeMarkedSession()
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: session.adapter
+        )
+        #expect(client.markedText == "가")
+
+        session.discardForSecureInput()
+        client.markedText = "가"
+        client.markedRangeValue = NSRange(location: 0, length: 2)
+
+        #expect(session.prepareForNonSecureClientWrites())
+        #expect(client.insertCalls.count == 1)
+        #expect(client.insertCalls.first?.1 == NSRange(location: 0, length: 2))
+    }
+
     @Test("A field reached by Secure Tab never receives deferred marked-text cleanup")
     func secureTabFieldAbandonsDeferredMarkedCleanup() {
         let (session, composer, client) = makeDirectFallbackSession()

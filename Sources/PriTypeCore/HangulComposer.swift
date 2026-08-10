@@ -49,6 +49,7 @@ public class HangulComposer: @unchecked Sendable {
     var activePreeditForDisplay: String {
         let preedit = context.getPreeditString()
         return CompositionHelpers.normalizeJamoForDisplay(preedit)
+            .precomposedStringWithCanonicalMapping
     }
     
     // MARK: - Dependencies

@@ -14,6 +14,7 @@ final class FakeIMKTextInput: NSObject, IMKTextInput {
     var firstRectValue = NSRect.zero
     var onInsertText: (() -> Void)?
     var attributedSubstringUnavailable = false
+    var attributedSubstringOverride: ((NSRange) -> NSAttributedString?)?
 
     private func plainString(_ value: Any?) -> String {
         if let attributed = value as? NSAttributedString { return attributed.string }
@@ -58,6 +59,9 @@ final class FakeIMKTextInput: NSObject, IMKTextInput {
     func markedRange() -> NSRange { markedRangeValue }
     func attributedSubstring(from range: NSRange) -> NSAttributedString! {
         guard !attributedSubstringUnavailable else { return nil }
+        if let attributedSubstringOverride {
+            return attributedSubstringOverride(range)
+        }
         if range == markedRangeValue,
            range.location != NSNotFound,
            range.length == markedText.utf16.count {

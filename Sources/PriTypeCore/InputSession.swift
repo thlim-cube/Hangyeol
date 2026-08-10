@@ -55,6 +55,11 @@ final class InputSession: @unchecked Sendable {
         case fieldIdentityMayHaveChanged
     }
 
+    private struct DeferredMarkedTextCleanupToken {
+        let generation: UInt64
+        let normalizedContent: String
+    }
+
     let client: IMKTextInput
     private(set) var context: ClientContext
     private(set) var adapter: BaseClientAdapter
@@ -99,9 +104,9 @@ final class InputSession: @unchecked Sendable {
     /// boundary; lifecycle callbacks can never grant this permission themselves.
     private var lastNonSecureGeneration: UInt64?
 
-    /// Generation that owned marked text when a write-free discard became necessary.
-    /// A later field refresh changes `contextGeneration`, making cleanup fail closed.
-    private var deferredOwnedMarkedTextGeneration: UInt64?
+    /// Exact marked preedit owned when a write-free discard became necessary.
+    /// Cleanup requires both the same field generation and the same normalized text.
+    private var deferredMarkedTextCleanupToken: DeferredMarkedTextCleanupToken?
 
     /// A custom toggle changed PriType's internal mode while Secure Input prevented
     /// `overrideKeyboardWithKeyboardNamed:`. The next nonsecure input boundary must
@@ -223,7 +228,7 @@ final class InputSession: @unchecked Sendable {
               adapter.deliveryMode == .markedText,
               TextDeliveryPolicy.mode(for: newContext) == .markedText,
               lastNonSecureGeneration == contextGeneration,
-              deferredOwnedMarkedTextGeneration == nil,
+              deferredMarkedTextCleanupToken == nil,
               composer.hasActiveComposition else {
             return false
         }
@@ -547,12 +552,12 @@ final class InputSession: @unchecked Sendable {
         }
         lastNonSecureGeneration = contextGeneration
 
-        guard let ownedGeneration = deferredOwnedMarkedTextGeneration else {
+        guard let token = deferredMarkedTextCleanupToken else {
             return false
         }
-        deferredOwnedMarkedTextGeneration = nil
+        deferredMarkedTextCleanupToken = nil
 
-        guard ownedGeneration == contextGeneration else {
+        guard token.generation == contextGeneration else {
             DebugLogger.event("composition.deferred_marked_fallback_abandoned", metadata: [
                 .state("reason", "context_changed")
             ])
@@ -560,7 +565,29 @@ final class InputSession: @unchecked Sendable {
         }
 
         let markedRange = client.markedRange()
-        guard markedRange.location != NSNotFound, markedRange.length > 0 else {
+        let (_, rangeOverflow) = markedRange.location.addingReportingOverflow(markedRange.length)
+        guard markedRange.location != NSNotFound,
+              markedRange.location >= 0,
+              markedRange.length > 0,
+              !rangeOverflow else {
+            DebugLogger.event("composition.deferred_marked_fallback_abandoned", metadata: [
+                .state("reason", "marked_range_invalid")
+            ])
+            return false
+        }
+
+        guard let currentMarkedText = client.attributedSubstring(from: markedRange)?.string,
+              currentMarkedText.utf16.count == markedRange.length else {
+            DebugLogger.event("composition.deferred_marked_fallback_abandoned", metadata: [
+                .state("reason", "marked_text_unavailable")
+            ])
+            return false
+        }
+        let normalizedCurrentText = currentMarkedText.precomposedStringWithCanonicalMapping
+        guard normalizedCurrentText == token.normalizedContent else {
+            DebugLogger.event("composition.deferred_marked_fallback_abandoned", metadata: [
+                .state("reason", "marked_text_changed")
+            ])
             return false
         }
 
@@ -618,10 +645,15 @@ final class InputSession: @unchecked Sendable {
         let direct = adapter as? DirectInsertionAdapter
         let ownsMarkedText = direct?.usesMarkedTextFallback == true
             || (adapter.deliveryMode == .markedText && composer.hasActiveComposition)
-        if deferredOwnedMarkedTextGeneration == nil,
+        let normalizedOwnedContent = composer.activePreeditForDisplay
+        if deferredMarkedTextCleanupToken == nil,
            ownsMarkedText,
-           let ownerGeneration = lastNonSecureGeneration {
-            deferredOwnedMarkedTextGeneration = ownerGeneration
+           let ownerGeneration = lastNonSecureGeneration,
+           !normalizedOwnedContent.isEmpty {
+            deferredMarkedTextCleanupToken = DeferredMarkedTextCleanupToken(
+                generation: ownerGeneration,
+                normalizedContent: normalizedOwnedContent
+            )
         }
 
         composer.dismissHanjaCandidates()
