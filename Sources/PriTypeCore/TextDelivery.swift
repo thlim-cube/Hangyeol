@@ -206,9 +206,9 @@ final class ImmediateModeAdapter: BaseClientAdapter {
 /// stays unchanged: the composer keeps calling `insertText`/`setMarkedText` and this
 /// adapter reinterprets them as in-place real-text rewrites.
 ///
-/// Selected only when `experimentalDirectInsertion` is ON, the host is on the
-/// `directInsertionAllowed` allowlist, AND the activation probe found
-/// `documentAccessSafe`. OFF by default. See Docs/KoreanWindowsInputFeasibility.md.
+/// Selected when `experimentalDirectInsertion` is ON (or a compatibility policy
+/// explicitly prefers it), the activation probe found `documentAccessSafe`, and the
+/// host is not denylisted. OFF by default. See Docs/KoreanWindowsInputFeasibility.md.
 final class DirectInsertionAdapter: BaseClientAdapter {
     override var deliveryMode: InputDeliveryMode { .directInsertion }
 

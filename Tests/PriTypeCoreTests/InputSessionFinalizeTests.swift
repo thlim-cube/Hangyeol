@@ -4,6 +4,18 @@ import Testing
 
 @Suite("Input session finalize")
 struct InputSessionFinalizeTests {
+    private func context(
+        bundleId: String,
+        documentAccessSafe: Bool
+    ) -> ClientContext {
+        ClientContext(
+            bundleId: bundleId,
+            hasTextInputCapability: true,
+            isLikelyDesktopArea: false,
+            documentAccessSafe: documentAccessSafe
+        )
+    }
+
     private func makeDirectFallbackSession() -> (InputSession, HangulComposer, FakeIMKTextInput) {
         let client = FakeIMKTextInput()
         client.bundleID = "com.nousresearch.hermes"
@@ -11,12 +23,7 @@ struct InputSessionFinalizeTests {
         let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
         let session = InputSession(
             client: client,
-            context: ClientContext(
-                bundleId: client.bundleID,
-                hasTextInputCapability: true,
-                isLikelyDesktopArea: false,
-                documentAccessSafe: true
-            ),
+            context: context(bundleId: client.bundleID, documentAccessSafe: true),
             composer: composer
         )
         return (session, composer, client)
@@ -58,6 +65,48 @@ struct InputSessionFinalizeTests {
         #expect(client.insertCalls.count == 1)
         #expect(client.insertCalls.first?.0 == "")
         #expect(client.insertCalls.first?.1 == NSRange(location: 0, length: 1))
+    }
+
+    @Test("Changing from marked to direct delivery finalizes through the old adapter")
+    func markedToDirectFinalizesBeforeAdapterReplacement() {
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.apple.TextEdit"
+        let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID, documentAccessSafe: true),
+            composer: composer
+        )
+
+        _ = composer.handle(TestEventFactory.keyEvent(char: "r", keyCode: 15)!, delegate: session.adapter)
+        #expect(session.adapter.deliveryMode == .markedText)
+        #expect(composer.hasActiveComposition)
+        #expect(client.markedText == "ㄱ")
+
+        session.refreshContext(context(bundleId: "com.nousresearch.hermes", documentAccessSafe: true))
+
+        #expect(session.adapter.deliveryMode == .directInsertion)
+        #expect(!composer.hasActiveComposition)
+        #expect(client.document == "ㄱ")
+        #expect(client.markedText.isEmpty)
+    }
+
+    @Test("Changing from direct to marked delivery preserves committed text")
+    func directToMarkedFinalizesBeforeAdapterReplacement() {
+        let (session, composer, client) = makeDirectFallbackSession()
+        client.selectedRangeValue = NSRange(location: 0, length: 0)
+
+        _ = composer.handle(TestEventFactory.keyEvent(char: "r", keyCode: 15)!, delegate: session.adapter)
+        #expect(session.adapter.deliveryMode == .directInsertion)
+        #expect(composer.hasActiveComposition)
+        #expect(client.document == "ㄱ")
+
+        session.refreshContext(context(bundleId: client.bundleID, documentAccessSafe: false))
+
+        #expect(session.adapter.deliveryMode == .markedText)
+        #expect(!composer.hasActiveComposition)
+        #expect(client.document == "ㄱ")
+        #expect(client.markedText.isEmpty)
     }
 }
 

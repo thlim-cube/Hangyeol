@@ -14,6 +14,7 @@ enum CompositionFinalizeReason: String {
     case modeTransition         // PriType custom toggle key (한/영)
     case keyboardLayoutChange   // 두벌식/세벌식 layout switch mid-composition
     case sessionReplacement     // a different IMK client became active first
+    case deliveryModeChange     // marked/direct policy changed while the session stayed active
 
     var diagnosticLabel: StaticString {
         switch self {
@@ -23,6 +24,7 @@ enum CompositionFinalizeReason: String {
         case .modeTransition: "mode_transition"
         case .keyboardLayoutChange: "keyboard_layout_change"
         case .sessionReplacement: "session_replacement"
+        case .deliveryModeChange: "delivery_mode_change"
         }
     }
 }
@@ -100,6 +102,10 @@ final class InputSession: @unchecked Sendable {
     func ensureAdapterMatchesPolicy() {
         let resolved = TextDeliveryPolicy.mode(for: context)
         guard adapter.deliveryMode != resolved else { return }
+        // The old adapter owns the currently rendered preedit. Finalize through it
+        // before replacing the adapter, otherwise marked text or direct-insertion
+        // tracking can be stranded when the experimental setting changes at runtime.
+        finalize(reason: .deliveryModeChange)
         adapter = TextDeliveryPolicy.makeAdapter(for: client, context: context)
     }
 

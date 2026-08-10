@@ -133,7 +133,8 @@ struct CompositionFinalizeReasonTests {
     func reasonsAreDistinct() {
         let reasons: [CompositionFinalizeReason] = [
             .appDeactivate, .deactivateServer, .mouseCommit,
-            .modeTransition, .keyboardLayoutChange
+            .modeTransition, .keyboardLayoutChange, .sessionReplacement,
+            .deliveryModeChange
         ]
         #expect(Set(reasons.map(\.rawValue)).count == reasons.count)
     }
