@@ -60,25 +60,12 @@ public class HangulComposer: @unchecked Sendable {
     
     // MARK: - Private Properties
     
-    /// Track last delegate for external toggle calls
+    /// Weak fallback for calls that originate outside `handle(_:delegate:)`.
     private weak var lastDelegate: (any HangulComposerDelegate)?
-    
-    /// Strong reference to the most recent adapter for Hanja lookup.
-    /// Unlike lastDelegate (weak) and PriTypeInputController.currentAdapter,
-    /// this survives IMK controller deallocation which happens frequently
-    /// in Electron apps (Chrome, VS Code).
-    /// Released with a 2-second delay when replaced, to allow async Hanja callbacks to finish.
-    private var lastStrongDelegate: (any HangulComposerDelegate)?
-    
-    /// Pending release of previous strong delegate (delayed to allow async callbacks)
-    private var pendingDelegateRelease: DispatchWorkItem?
     
     /// Whether Hanja candidate mode is currently active
     private var hanjaMode = false
     
-    /// The Hangul key currently being looked up for Hanja conversion
-    private var hanjaKey: String = ""
-
     /// Invalidates callbacks retained by a previous candidate window. A client can
     /// change between panel presentation and a mouse/keyboard selection.
     private var hanjaGeneration: UInt64 = 0
@@ -414,25 +401,9 @@ public class HangulComposer: @unchecked Sendable {
     ///   - delegate: The delegate to receive composition callbacks
     /// - Returns: `true` if the event was consumed, `false` if it should be passed to the system
     public func handle(_ event: NSEvent, delegate: HangulComposerDelegate) -> Bool {
-        // Track delegate for external toggle calls
+        // Keep a weak fallback for direct composer callers. Production external
+        // lookups use the active controller's session-owned adapter first.
         self.lastDelegate = delegate
-        
-        // Delayed release of previous strong delegate to prevent indefinite retention
-        // while keeping it alive long enough for async Hanja callbacks (2s window).
-        // HOW IT WORKS: `oldDelegate` is captured strongly by the DispatchWorkItem closure.
-        // This keeps the old adapter alive for 2 seconds even after `lastStrongDelegate`
-        // is replaced. When the work item executes (or is cancelled), the captured
-        // reference is released, allowing the old adapter to be deallocated.
-        if lastStrongDelegate !== (delegate as AnyObject) {
-            pendingDelegateRelease?.cancel()
-            let oldDelegate = lastStrongDelegate  // Strong capture keeps it alive for 2s
-            let releaseWork = DispatchWorkItem {
-                _ = oldDelegate  // prevent compiler from optimizing away the capture
-            }
-            pendingDelegateRelease = releaseWork
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: releaseWork)
-            self.lastStrongDelegate = delegate
-        }
         
         // Only handle key down events for actual typing
         if event.type != .keyDown {
@@ -710,7 +681,6 @@ public class HangulComposer: @unchecked Sendable {
     private func invalidateHanjaState() {
         hanjaGeneration &+= 1
         hanjaMode = false
-        hanjaKey = ""
     }
     
     /// Trigger Hanja lookup externally (called by RightCommandSuppressor via CGEventTap)
@@ -725,9 +695,9 @@ public class HangulComposer: @unchecked Sendable {
             return
         }
         
-        // Use the active controller's current adapter, fallback to strong delegate on composer
+        // Production lookups use the active session-owned adapter. Standalone callers
+        // can still use the most recent delegate while its owner keeps it alive.
         let activeDelegate = PriTypeInputController.sharedController?.currentAdapter
-            ?? lastStrongDelegate
             ?? lastDelegate
         guard let delegate = activeDelegate else {
             DebugLogger.event("hanja.lookup_skipped", metadata: [
@@ -820,7 +790,6 @@ public class HangulComposer: @unchecked Sendable {
         ])
         
         hanjaMode = true
-        hanjaKey = searchKey
         hanjaGeneration &+= 1
         let snapshotGeneration = hanjaGeneration
         
@@ -841,7 +810,7 @@ public class HangulComposer: @unchecked Sendable {
             commitComposition(delegate: delegate)
         }
         
-        // Capture the hanjaKey length for use in the callback
+        // Capture replacement lengths for the retained selection callback.
         let replacementLength = searchKey.utf16.count
         let replacementCharacterCount = searchKey.count
         

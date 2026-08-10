@@ -252,6 +252,54 @@ struct HanjaCandidateLifecycleTests {
         #expect(client.document == "가")
     }
 
+    @Test("Session handoff invalidates a retained candidate callback without client writes")
+    func sessionHandoffInvalidatesRetainedCandidateCallback() throws {
+        let presenter = MockHanjaCandidatePresenter()
+        let client = FakeIMKTextInput()
+        client.document = "가"
+        client.selectedRangeValue = NSRange(location: 1, length: 0)
+        let composer = makeComposer(presenter: presenter)
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: composer
+        )
+        _ = session.prepareForNonSecureClientWrites()
+        let shortcut = TestEventFactory.keyEvent(
+            char: "x",
+            keyCode: 7,
+            modifiers: .command
+        )!
+        _ = composer.handle(shortcut, delegate: session.adapter)
+        composer.triggerHanjaLookup()
+        let retainedSelection = try #require(presenter.selectionCallbacks.first)
+        let insertCount = client.insertCalls.count
+        let markCount = client.markCalls.count
+        #expect(presenter.isVisible)
+
+        session.retireForControllerHandoff(fieldIdentityMayHaveChanged: false)
+
+        #expect(!presenter.isVisible)
+        #expect(presenter.dismissCount == 1)
+        retainedSelection(HanjaEntry(
+            hangul: "가",
+            hanja: "可",
+            meaning: "synthetic test"
+        ))
+        #expect(client.insertCalls.count == insertCount)
+        #expect(client.markCalls.count == markCount)
+        #expect(client.document == "가")
+    }
+
+    @Test("Composer keeps only a weak fallback delegate")
+    func composerDoesNotRetainFallbackDelegate() {
+        let presenter = MockHanjaCandidatePresenter()
+        let composer = makeComposer(presenter: presenter)
+        let weakDelegate = establishFallbackDelegate(on: composer)
+
+        #expect(weakDelegate.value == nil)
+    }
+
     @Test("Same client with a new input session invalidates a selection snapshot")
     func newSessionInvalidatesSnapshot() {
         let client = NSObject()
@@ -478,6 +526,14 @@ struct HanjaCandidateLifecycleTests {
         delegate.fullText = "가"
         composer.triggerHanjaLookup()
     }
+
+    private func establishFallbackDelegate(on composer: HangulComposer) -> WeakReference<MockComposerDelegate> {
+        let delegate = MockComposerDelegate()
+        let weakDelegate = WeakReference(delegate)
+        let shortcut = TestEventFactory.keyEvent(char: "x", keyCode: 7, modifiers: .command)!
+        _ = composer.handle(shortcut, delegate: delegate)
+        return weakDelegate
+    }
 }
 
 private final class MockHanjaCandidatePresenter: HanjaCandidatePresenting, @unchecked Sendable {
@@ -503,5 +559,13 @@ private final class MockHanjaCandidatePresenter: HanjaCandidatePresenting, @unch
 
     func handleKey(_ event: NSEvent) -> Bool {
         consumedKeyCodes.contains(event.keyCode)
+    }
+}
+
+private final class WeakReference<Value: AnyObject> {
+    weak var value: Value?
+
+    init(_ value: Value) {
+        self.value = value
     }
 }

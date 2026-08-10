@@ -55,9 +55,8 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     }
 
     /// The live input session (client + context + adapter + dedup + focus-loss net).
-    /// Kept across deactivateServer — async Hanja callbacks and a `handle()` arriving
-    /// before the next activateServer still need the adapter/context — and replaced
-    /// when a different client appears.
+    /// Kept across deactivateServer so a `handle()` arriving before the next
+    /// activateServer can refresh its context, and replaced when a different client appears.
     private var session: InputSession?
 
     /// Session-derived views for collaborators (Hanja lookup in `HangulComposer`).
@@ -452,9 +451,8 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
                 ])
             }
         } else {
-            // Fallback if sender is not IMKTextInput (rare). Keep the old session's
-            // adapter alive for async Hanja callbacks, but stop trusting its context
-            // and stop watching focus on its behalf.
+            // Fallback if sender is not IMKTextInput (rare). Preserve the session object,
+            // but stop trusting its context and stop watching focus on its behalf.
             session?.disarmFocusLossFinalizer()
             session?.markContextStale()
         }
@@ -500,8 +498,8 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // Cross-app hanja leaking is prevented by bundleId matching in handleHanjaLookup(),
         // not by clearing the buffer. Clearing would make same-app hanja lookup impossible.
         super.deactivateServer(sender)
-        // Keep the session alive — async Hanja callbacks need the adapter, and a
-        // handle() arriving before the next activateServer needs the context. But:
+        // Keep the session until replacement so handle() can refresh it even if it
+        // arrives before the next activateServer. Candidate callbacks were invalidated above.
         // - disarm the focus-loss observer so an inactive host never receives a
         //   redundant late finalize (composition state itself is session-owned);
         // - mark the context stale so the next handle() re-analyzes it.

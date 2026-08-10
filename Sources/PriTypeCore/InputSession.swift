@@ -38,8 +38,8 @@ enum CompositionFinalizeReason: String {
 /// never drift apart.
 ///
 /// Lifecycle: created in `activateServer` (or on a client change observed in
-/// `handle()`), kept across `deactivateServer` (async Hanja callbacks and early
-/// `handle()` need the adapter/context), replaced when a different client appears.
+/// `handle()`), kept across `deactivateServer` so an early `handle()` can refresh
+/// its context, and replaced when a different client appears.
 ///
 /// INVARIANT: `finalize(reason:)` is the ONLY way an in-progress composition ends
 /// against this session's client. It is idempotent (no-op without active composition)

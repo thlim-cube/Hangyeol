@@ -228,14 +228,13 @@ public final class HanjaCandidateWindow: HanjaCandidatePresenting, @unchecked Se
         guard index < candidates.count else { return }
         let entry = candidates[index]
         let callback = onSelect
-        // Fire onSelect BEFORE dismiss to preserve hanjaKey state
+        // Selection owns composer cleanup, so invoke it before clearing the callbacks.
         callback?(entry)
-        // Dismiss without calling onDismiss (selection already handled cleanup)
+        // Do not fire onDismiss after a successful selection; it is a separate exit path.
         dismissWithoutCallback()
     }
     
-    /// Hide the window without triggering onDismiss callback
-    /// Used after selection, where the onSelect callback already handles state cleanup
+    /// Hide the window after selection without invoking the independent dismiss callback.
     @MainActor
     private func dismissWithoutCallback() {
         window?.orderOut(nil)
