@@ -270,11 +270,14 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     private func retireForControllerHandoff(incomingClient: IMKTextInput?) {
         Self.prepareForActivationDuringSessionRetirement(sessionRetirementInProgress)
         let mayReuseField = incomingClient.map { session?.matches($0) == true } ?? true
-        guard let retirement = Self.captureSessionRetirementSnapshot(session: session) else {
+        let finishControllerHandoff = { [self] in
             NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
             NotificationCenter.default.removeObserver(self, name: .romanKeyboardLayoutPreferenceChanged, object: nil)
             CursorRectResolver.invalidateCache()
             DebugLogger.event("input.controller_handoff")
+        }
+        guard let retirement = Self.captureSessionRetirementSnapshot(session: session) else {
+            finishControllerHandoff()
             return
         }
         let enclosingRetirement = sessionRetirementInProgress
@@ -289,10 +292,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             currentSession: { self.session },
             fieldIdentityMayHaveChanged: mayReuseField
         ) {
-            NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
-            NotificationCenter.default.removeObserver(self, name: .romanKeyboardLayoutPreferenceChanged, object: nil)
-            CursorRectResolver.invalidateCache()
-            DebugLogger.event("input.controller_handoff")
+            finishControllerHandoff()
         }
     }
 

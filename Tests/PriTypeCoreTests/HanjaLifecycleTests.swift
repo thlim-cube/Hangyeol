@@ -1050,12 +1050,11 @@ struct HanjaCandidateLifecycleTests {
         session.armFocusLossFinalizer()
 
         let registry = ActiveOwnerHandoffRegistry<VisibleSessionOwner>()
-        let visibleOwner = VisibleSessionOwner(session: session)
-        let incomingOwner = VisibleSessionOwner(session: session)
+        let visibleOwner = VisibleSessionOwner()
+        let incomingOwner = VisibleSessionOwner()
         let retirement = PriTypeInputController.captureSessionRetirementSnapshot(
             session: session
         )
-        let currentSession: InputSession? = session
         var observerCleanupCount = 0
         var reactivatedFocus: InputSession.FocusLossActivation?
         registry.claim(visibleOwner) { _ in }
@@ -1074,7 +1073,7 @@ struct HanjaCandidateLifecycleTests {
         registry.claim(incomingOwner) { retiringOwner in
             let didRetire = PriTypeInputController.retireSessionForControllerHandoff(
                 retirement,
-                currentSession: { currentSession },
+                currentSession: { session },
                 fieldIdentityMayHaveChanged: false
             ) {
                 observerCleanupCount += 1
@@ -1084,7 +1083,6 @@ struct HanjaCandidateLifecycleTests {
         }
 
         #expect(registry.owner === visibleOwner)
-        #expect(currentSession === session)
         #expect(client.document == "가")
         #expect(client.insertCalls.count == 1)
         #expect(composer.localTextBuffer == "나")
@@ -1108,16 +1106,15 @@ struct HanjaCandidateLifecycleTests {
             session: session
         )
         let registry = ActiveOwnerHandoffRegistry<VisibleSessionOwner>()
-        let visibleOwner = VisibleSessionOwner(session: session)
-        let incomingOwner = VisibleSessionOwner(session: session)
-        let currentSession: InputSession? = session
+        let visibleOwner = VisibleSessionOwner()
+        let incomingOwner = VisibleSessionOwner()
         var observerCleanupCount = 0
         registry.claim(visibleOwner) { _ in }
 
         registry.claim(incomingOwner) { _ in
             let didRetire = PriTypeInputController.retireSessionForControllerHandoff(
                 retirement,
-                currentSession: { currentSession },
+                currentSession: { session },
                 fieldIdentityMayHaveChanged: false
             ) {
                 observerCleanupCount += 1
@@ -1289,13 +1286,7 @@ struct HanjaCandidateLifecycleTests {
     }
 }
 
-private final class VisibleSessionOwner {
-    let session: InputSession
-
-    init(session: InputSession) {
-        self.session = session
-    }
-}
+private final class VisibleSessionOwner {}
 
 private final class MockHanjaCandidatePresenter: HanjaCandidatePresenting, @unchecked Sendable {
     var isVisible = false
