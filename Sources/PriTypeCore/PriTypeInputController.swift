@@ -161,7 +161,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             return
         }
 
-        let targetMode = mode ?? composer.inputMode
+        let targetMode = mode ?? Self.sharedInputModeStore.mode
         let respectCurrentLayout = ConfigurationManager.shared.respectCurrentRomanKeyboardLayout
         let currentASCIILayoutID = respectCurrentLayout && targetMode == .english
             ? Self.currentASCIICapableKeyboardLayoutID()
