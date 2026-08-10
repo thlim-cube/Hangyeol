@@ -210,6 +210,40 @@ struct InputSessionFinalizeTests {
             #expect(client.document == (boundary.insertsText ? "ㄱ ㄱ" : "ㄱㄱ"))
         }
     }
+
+    @Test("Finalized insert commits when invalid selection outlives fail-closed composition")
+    func finalizedInsertCommitsWithPersistentlyInvalidSelection() {
+        let (session, composer, client) = makeDirectFallbackSession()
+        client.selectedRangeValue = NSRange(location: 0, length: 0)
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        client.selectedRangeValue = NSRange(location: NSNotFound, length: 0)
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: session.adapter
+        )
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: " ", keyCode: KeyCode.space)!,
+            delegate: session.adapter
+        )
+
+        #expect(client.document == "ㄱ ")
+        #expect(client.markedText.isEmpty)
+        #expect(client.insertCalls.last?.0 == " ")
+        #expect(client.insertCalls.last?.1.location == NSNotFound)
+        #expect(client.markCalls.isEmpty)
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        #expect(session.finalize(reason: .modeTransition))
+        #expect(client.document == "ㄱ ㄱ")
+        #expect(client.markedText.isEmpty)
+    }
 }
 
 @Suite("Mouse composition policy")

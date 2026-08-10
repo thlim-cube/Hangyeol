@@ -284,6 +284,16 @@ final class DirectInsertionAdapter: BaseClientAdapter {
             && caret >= 0
             && caret < DirectInsertionPlanner.maxReasonableLocation
 
+        // A finalized insert with no live preedit does not need a document range:
+        // canonical IMK insertion can commit it at the host-owned selection. Turning
+        // permanent text (for example, Space) into marked fallback would let the next
+        // preedit replace it when selectedRange remains unavailable.
+        if livePreeditLength == 0, !keepingLive, !hasUsableCaret {
+            super.insertText(text)
+            expectedCaret = NSNotFound
+            return
+        }
+
         // Once real preedit text exists, an unusable selection cannot safely be
         // converted to a full marked preedit: the host would later commit both the
         // old real text and the new marked text (for example, `ㄱ가`). Never guess
