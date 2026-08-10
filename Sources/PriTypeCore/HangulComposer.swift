@@ -143,6 +143,9 @@ public class HangulComposer: @unchecked Sendable {
             },
             isSmartDashSubstitutionEnabled: {
                 configuration.smartDashSubstitutionEnabled
+            },
+            isEnglishFallbackEnabled: {
+                configuration.englishTextConvenienceFallbackEnabled
             }
         )
         DebugLogger.log("HangulComposer init")
@@ -390,11 +393,11 @@ public class HangulComposer: @unchecked Sendable {
         // - Roman characters come from the keyboard layout that the controller
         //   installs via `overrideKeyboardWithKeyboardNamed` (ABC/US by default,
         //   or the user's current Roman layout when explicitly enabled).
-        // - Some macOS text conveniences do not fire for this internal English
-        //   mode in every host, so PriType supplies a narrow fallback for only
-        //   the transformed cases (double-space period and auto-capitalization).
-        // Keeping this path mostly pass-through avoids the classic buffer-vs-
-        // cursor desync that a PriType-side English buffer invites.
+        // - English text conveniences are host-owned by default. An explicit
+        //   preference enables PriType's fallback for hosts where substitutions
+        //   do not fire. The handler consumes only actual transformations.
+        // Keeping the default path pure pass-through avoids duplicate host
+        // transformations and cursor-context drift.
         if inputMode == .english {
             if !context.isEmpty() {
                 commitComposition(delegate: delegate)

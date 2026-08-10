@@ -94,7 +94,7 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
    `activateServer`(포커스 변경)나 IMK input-mode callback 등 다른 경로는 모드를 건드리지 않는다.
 3. 모드 전환 전 active composition은 정확히 1회 commit한다.
 4. 전환 직후 keyDown을 막거나 replay하지 않는다. 전환이 즉시 완료되므로 불필요하다.
-5. 영어 모드에서 PriType는 printable key를 consume하지 않는다(`return false`).
+5. 영어 편의 fallback이 꺼진 기본 상태에서 PriType는 printable key를 consume하지 않는다(`return false`).
 6. 일반 typing hot path에 TIS/AX 조회·UserDefaults JSON decode·로그 문자열 생성이 없다.
 7. Caps Lock on이면 custom toggle을 비활성화한다. 둘이 같은 키 이벤트에서 동시 동작하지 않는다.
 
@@ -107,15 +107,16 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 ### ① 단일 소스 유지
 `Info.plist`의 단일 모드 등록을 정식 구조로 고정. RollbackPlan의 2-가짜-모드 안은 폐기(§2.1).
 
-### ② 영어 모드 = 순수 pass-through
+### ② 영어 모드 기본값 = 순수 pass-through
 [HangulComposer.handle()](../Sources/PriTypeCore/HangulComposer.swift)의 영어 분기는 조합 정리 후
-`return false`만 수행한다. `localTextBuffer`와 `TextConvenienceHandler.handleEnglishModeInput`을
-영어 hot path에서 제거했다(후자는 dead code로 삭제). 영어의 더블스페이스 마침표 등 텍스트 편의는
-macOS가 소유한다(2.7 결정과 일치). 이로써 "PriType 영어 버퍼 ↔ 실제 커서" desync 버그 표면이 사라진다.
+기본적으로 `return false`를 수행한다. 영어의 더블스페이스 마침표 등 텍스트 편의는 macOS와 host 앱이
+소유한다(2.7 결정과 일치). 이로써 기본 경로에서 "PriType 영어 버퍼 ↔ 실제 커서" desync와 host 치환
+중복 가능성을 제거한다.
 
 - 한글 모드의 더블스페이스 마침표는 기존대로 `NSAutomaticPeriodSubstitutionEnabled` 연동 정책을 유지한다.
-- 검증 의존: pass-through 키에 host가 더블스페이스 치환을 적용하는지는 실기기 확인 항목(§6).
-  만약 미동작이고 영어 더블스페이스가 꼭 필요하면, 그 한 기능만을 위한 최소 버퍼를 영어 분기에 재도입한다.
+- pass-through 키에 host가 치환을 적용하지 않는 경우 사용자가 설정에서 영어 편의 fallback을 켤 수 있다.
+  ON일 때만 `TextConvenienceHandler`가 자동 대문자, 스마트 따옴표·대시, 더블스페이스 마침표의 실제
+  치환 이벤트를 소비한다. 시스템 각 기능 설정을 따르며 기본값은 OFF다.
 
 ### ③ custom toggle 경로 단일화 (전환 정책을 coordinator로)
 2.6.5는 `onToggle`이 `sharedComposer.toggleInputMode()`를 **직접** 호출했다. 현재 구조는

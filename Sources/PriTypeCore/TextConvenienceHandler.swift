@@ -8,11 +8,12 @@ import Cocoa
 /// ## Features
 /// - Double-space to period conversion for Korean composition (gated on the
 ///   macOS `NSAutomaticPeriodSubstitutionEnabled`-backed preference)
-/// - English-mode fallback for macOS text conveniences when IMK pass-through
-///   does not trigger host substitutions.
+/// - Opt-in English-mode fallback for macOS text conveniences when IMK
+///   pass-through does not trigger host substitutions.
 ///
 /// English fallback deliberately touches only the narrow keys that need help
-/// (`space` and lowercase ASCII letters). Everything else stays pass-through.
+/// (`space`, lowercase ASCII letters, quotes, and hyphen). Everything else
+/// stays pass-through.
 ///
 /// ## Usage
 /// ```swift
@@ -24,6 +25,7 @@ public final class TextConvenienceHandler: @unchecked Sendable {
     private let isAutoCapitalizationEnabled: @Sendable () -> Bool
     private let isSmartQuoteSubstitutionEnabled: @Sendable () -> Bool
     private let isSmartDashSubstitutionEnabled: @Sendable () -> Bool
+    private let isEnglishFallbackEnabled: @Sendable () -> Bool
     
     // MARK: - State
     
@@ -45,12 +47,16 @@ public final class TextConvenienceHandler: @unchecked Sendable {
         },
         isSmartDashSubstitutionEnabled: @escaping @Sendable () -> Bool = {
             ConfigurationManager.shared.smartDashSubstitutionEnabled
+        },
+        isEnglishFallbackEnabled: @escaping @Sendable () -> Bool = {
+            ConfigurationManager.shared.englishTextConvenienceFallbackEnabled
         }
     ) {
         self.isDoubleSpacePeriodEnabled = isDoubleSpacePeriodEnabled
         self.isAutoCapitalizationEnabled = isAutoCapitalizationEnabled
         self.isSmartQuoteSubstitutionEnabled = isSmartQuoteSubstitutionEnabled
         self.isSmartDashSubstitutionEnabled = isSmartDashSubstitutionEnabled
+        self.isEnglishFallbackEnabled = isEnglishFallbackEnabled
     }
     
     // MARK: - Double-Space Period
@@ -111,9 +117,13 @@ public final class TextConvenienceHandler: @unchecked Sendable {
     ///
     /// The normal English path still passes through. This method consumes only
     /// when macOS would visibly transform the input and IMK pass-through does
-    /// not do it for PriType's internal English mode.
+    /// not do it for PriType's internal English mode. It is disabled by default
+    /// to prevent duplicate transformations in hosts that already handle them.
     public func handleEnglishModeInput(_ event: NSEvent, delegate: HangulComposerDelegate) -> Bool {
-        guard event.type == .keyDown, !event.isARepeat, shouldHandleTextConvenience(event) else {
+        guard isEnglishFallbackEnabled(),
+              event.type == .keyDown,
+              !event.isARepeat,
+              shouldHandleTextConvenience(event) else {
             return false
         }
 

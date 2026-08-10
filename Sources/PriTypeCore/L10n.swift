@@ -51,6 +51,8 @@ public enum L10n {
         public static var threeSetOld: String { localized("keyboard.3setOld") }
         public static var respectRomanLayout: String { localized("keyboard.respectRomanLayout") }
         public static var respectRomanLayoutSubtitle: String { localized("keyboard.respectRomanLayoutSubtitle") }
+        public static var englishConveniences: String { localized("keyboard.englishConveniences") }
+        public static var englishConveniencesSubtitle: String { localized("keyboard.englishConveniencesSubtitle") }
     }
     
     // MARK: - Toggle Key

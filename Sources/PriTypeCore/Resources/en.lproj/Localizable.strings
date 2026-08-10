@@ -12,6 +12,8 @@
 "keyboard.3setOld" = "3-Set Old Hangul";
 "keyboard.respectRomanLayout" = "Use Current Roman Layout";
 "keyboard.respectRomanLayoutSubtitle" = "Uses your current Roman layout, such as Dvorak or AZERTY, instead of ABC in English mode.";
+"keyboard.englishConveniences" = "Handle English Text Conveniences";
+"keyboard.englishConveniencesSubtitle" = "PriType applies auto-capitalization, smart punctuation, and double-space periods. Off by default to avoid duplicating app features.";
 
 /* Toggle Key */
 "toggle.title" = "Korean/English Toggle";

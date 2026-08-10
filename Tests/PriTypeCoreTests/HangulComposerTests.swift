@@ -124,9 +124,38 @@ struct HangulComposerTests {
         #expect(delegate.markedText.isEmpty)
     }
 
+    @Test("English conveniences default to pure pass-through")
+    func englishConveniencesDefaultToPurePassthrough() {
+        let (composer, delegate, _) = makeComposer()
+        composer.setInputMode(.english)
+
+        let firstLetter = TestEventFactory.keyEvent(char: "h", keyCode: 4)!
+        #expect(!composer.handle(firstLetter, delegate: delegate))
+
+        let quote = TestEventFactory.keyEvent(char: "\"", keyCode: 39)!
+        #expect(!composer.handle(quote, delegate: delegate))
+
+        delegate.fullText = "-"
+        let hyphen = TestEventFactory.keyEvent(char: "-", keyCode: 27)!
+        #expect(!composer.handle(hyphen, delegate: delegate))
+        #expect(delegate.fullText == "-")
+
+        delegate.fullText = "h"
+        let space = TestEventFactory.keyEvent(char: " ", keyCode: KeyCode.space)!
+        #expect(!composer.handle(space, delegate: delegate))
+        delegate.fullText.append(" ")
+        #expect(!composer.handle(space, delegate: delegate))
+        #expect(delegate.fullText == "h ")
+
+        #expect(delegate.insertedTexts.isEmpty)
+        #expect(delegate.markedText.isEmpty)
+    }
+
     @Test("English mode applies double-space period fallback")
     func englishModeDoubleSpacePeriodFallback() {
-        let (composer, delegate, _) = makeComposer()
+        let configuration = MockConfiguration()
+        configuration.englishTextConvenienceFallbackEnabled = true
+        let (composer, delegate, _) = makeComposer(configuration: configuration)
         composer.setInputMode(.english)
 
         delegate.fullText = "h"
@@ -143,7 +172,9 @@ struct HangulComposerTests {
 
     @Test("English mode applies auto-capitalization fallback")
     func englishModeAutoCapitalizationFallback() {
-        let (composer, delegate, _) = makeComposer()
+        let configuration = MockConfiguration()
+        configuration.englishTextConvenienceFallbackEnabled = true
+        let (composer, delegate, _) = makeComposer(configuration: configuration)
         composer.setInputMode(.english)
 
         let firstLetter = TestEventFactory.keyEvent(char: "h", keyCode: 4)!
@@ -169,7 +200,9 @@ struct HangulComposerTests {
 
     @Test("English mode applies smart quote fallback")
     func englishModeSmartQuoteFallback() {
-        let (composer, delegate, _) = makeComposer()
+        let configuration = MockConfiguration()
+        configuration.englishTextConvenienceFallbackEnabled = true
+        let (composer, delegate, _) = makeComposer(configuration: configuration)
         composer.setInputMode(.english)
 
         let quote = TestEventFactory.keyEvent(char: "\"", keyCode: 39)!
@@ -183,7 +216,9 @@ struct HangulComposerTests {
 
     @Test("English mode applies smart dash fallback")
     func englishModeSmartDashFallback() {
-        let (composer, delegate, _) = makeComposer()
+        let configuration = MockConfiguration()
+        configuration.englishTextConvenienceFallbackEnabled = true
+        let (composer, delegate, _) = makeComposer(configuration: configuration)
         composer.setInputMode(.english)
         delegate.fullText = "-"
 
@@ -486,9 +521,11 @@ struct HangulComposerTests {
 
     // MARK: - Helper
     
-    private func makeComposer() -> (HangulComposer, MockComposerDelegate, MockStatusBar) {
+    private func makeComposer(
+        configuration: MockConfiguration = MockConfiguration()
+    ) -> (HangulComposer, MockComposerDelegate, MockStatusBar) {
         let statusBar = MockStatusBar()
-        let composer = HangulComposer(statusBar: statusBar, configuration: MockConfiguration())
+        let composer = HangulComposer(statusBar: statusBar, configuration: configuration)
         let delegate = MockComposerDelegate()
         return (composer, delegate, statusBar)
     }

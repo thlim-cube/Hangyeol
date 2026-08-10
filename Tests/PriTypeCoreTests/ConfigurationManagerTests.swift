@@ -68,6 +68,20 @@ struct ConfigurationManagerTests {
             forcedLayoutID: abc
         ) == abc)
     }
+
+    @Test("English text convenience preference can be disabled and persists")
+    func englishTextConveniencePreferencePersistence() {
+        let config = ConfigurationManager.shared
+        let original = config.englishTextConvenienceFallbackEnabled
+        defer { config.englishTextConvenienceFallbackEnabled = original }
+
+        config.englishTextConvenienceFallbackEnabled = false
+        #expect(!config.englishTextConvenienceFallbackEnabled)
+
+        config.englishTextConvenienceFallbackEnabled = true
+        #expect(config.englishTextConvenienceFallbackEnabled)
+        #expect(UserDefaults.standard.bool(forKey: "com.pritype.englishTextConvenienceFallbackEnabled"))
+    }
     
     // MARK: - Toggle Key Tests (Legacy)
     

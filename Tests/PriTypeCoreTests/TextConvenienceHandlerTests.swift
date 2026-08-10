@@ -75,7 +75,6 @@ struct TextConvenienceHandlerTests {
         #expect(!handler.isHangul("!"))
     }
     
-    // English mode performs no composition and is a pure pass-through, so it no
-    // longer routes through TextConvenienceHandler. The behaviour is covered by
-    // `HangulComposerTests.englishModePurePassthrough`.
+    // English mode is pure pass-through by default. Its explicit fallback is
+    // covered end-to-end by `HangulComposerTests`.
 }

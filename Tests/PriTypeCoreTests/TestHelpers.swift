@@ -26,6 +26,7 @@ final class MockConfiguration: ConfigurationProviding, @unchecked Sendable {
     var autoCapitalizationEnabled: Bool { true }
     var smartQuoteSubstitutionEnabled: Bool { true }
     var smartDashSubstitutionEnabled: Bool { true }
+    var englishTextConvenienceFallbackEnabled: Bool = false
 }
 
 /// Mock implementation of HangulComposerDelegate for tests

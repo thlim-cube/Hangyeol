@@ -249,6 +249,10 @@ public protocol ConfigurationProviding: AnyObject, Sendable {
     /// Whether English pass-through should use the user's current Roman layout
     /// instead of forcing the ABC/US layout.
     var respectCurrentRomanKeyboardLayout: Bool { get }
+
+    /// Whether PriType should apply English text-convenience substitutions
+    /// instead of leaving them entirely to the host application.
+    var englishTextConvenienceFallbackEnabled: Bool { get }
     
     /// Whether the system double-space period feature is enabled.
     var doubleSpacePeriodEnabled: Bool { get }
@@ -278,6 +282,9 @@ public extension ConfigurationProviding {
 
     /// Default preserves PriType's existing ABC/US override behavior.
     var respectCurrentRomanKeyboardLayout: Bool { false }
+
+    /// Default is pure pass-through; hosts own English text substitutions.
+    var englishTextConvenienceFallbackEnabled: Bool { false }
 
     /// Default: enabled, matching macOS's normal text-input default.
     var autoCapitalizationEnabled: Bool { true }
@@ -336,6 +343,9 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
         key: SystemTextInputKeys.automaticDashSubstitution,
         defaultValue: true
     )
+    private var cachedEnglishTextConvenienceFallbackEnabled: Bool = UserDefaults.standard.bool(
+        forKey: Keys.englishTextConvenienceFallbackEnabled
+    )
     
     private init() {
         defaults.removeObject(forKey: "com.pritype.autoCapitalize")
@@ -353,6 +363,7 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
         static let autoUpdateCheck = "com.pritype.autoUpdateCheck"
         static let experimentalDirectInsertion = "com.pritype.experimentalDirectInsertion"
         static let respectCurrentRomanKeyboardLayout = "com.pritype.respectCurrentRomanKeyboardLayout"
+        static let englishTextConvenienceFallbackEnabled = "com.pritype.englishTextConvenienceFallbackEnabled"
     }
 
     private enum SystemTextInputKeys {
@@ -509,6 +520,23 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
         }
     }
 
+    /// Let PriType emulate macOS English text substitutions in hosts where
+    /// pass-through does not trigger them. Default OFF prevents double transforms.
+    public var englishTextConvenienceFallbackEnabled: Bool {
+        get {
+            systemTextFeatureLock.withLock { cachedEnglishTextConvenienceFallbackEnabled }
+        }
+        set {
+            let didChange = systemTextFeatureLock.withLock {
+                guard cachedEnglishTextConvenienceFallbackEnabled != newValue else { return false }
+                cachedEnglishTextConvenienceFallbackEnabled = newValue
+                return true
+            }
+            guard didChange else { return }
+            defaults.set(newValue, forKey: Keys.englishTextConvenienceFallbackEnabled)
+        }
+    }
+
     /// Mirrors macOS "Use the Caps Lock key to switch to and from ABC".
     ///
     /// When this is enabled, PriType should not also run its own language
@@ -534,16 +562,16 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     
     // MARK: - Text Input Features
     
-    /// Mirrors macOS "Add period with double-space" for PriType Korean input.
+    /// Mirrors macOS "Add period with double-space" for Korean input and the
+    /// opt-in English text-convenience fallback.
     public var doubleSpacePeriodEnabled: Bool {
         return systemTextFeatureLock.withLock { cachedDoubleSpacePeriodEnabled }
     }
 
     /// Mirrors macOS "Capitalize words automatically".
     ///
-    /// PriType reads and caches this setting for observability, but does not
-    /// apply it in Korean composition. English mode passes through to macOS, so
-    /// the system handles capitalization without PriType tracking text context.
+    /// PriType does not apply it in Korean composition. English mode uses it
+    /// only when the explicit text-convenience fallback is enabled.
     public var autoCapitalizationEnabled: Bool {
         return systemTextFeatureLock.withLock { cachedAutoCapitalizationEnabled }
     }

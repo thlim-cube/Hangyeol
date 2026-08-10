@@ -11,7 +11,9 @@
 "keyboard.2setOld" = "두벌식 옛한글";
 "keyboard.3setOld" = "세벌식 옛한글";
 "keyboard.respectRomanLayout" = "현재 영문 자판 배열 사용";
-"keyboard.respectRomanLayoutSubtitle" = "영어 모드에서 ABC 대신 현재 선택한 Dvorak, AZERTY 등의 영문 자판 배열을 사용합니다.";
+"keyboard.respectRomanLayoutSubtitle" = "영어 모드에서 ABC 대신 최근 사용한 Dvorak, AZERTY 등의 영문 자판 배열을 사용합니다.";
+"keyboard.englishConveniences" = "영어 편의 기능 직접 처리";
+"keyboard.englishConveniencesSubtitle" = "자동 대문자, 스마트 문장부호, 스페이스 두 번으로 마침표 입력을 PriType이 처리합니다. 앱 기능과 중복될 수 있어 기본값은 꺼져 있습니다.";
 
 /* Toggle Key */
 "toggle.title" = "한/영 전환";

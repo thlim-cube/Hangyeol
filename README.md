@@ -32,7 +32,7 @@ PriType은 Swift와 InputMethodKit으로 만든 macOS용 한글 입력기입니�
   macOS Caps Lock 입력 소스 전환을 쓰지 않는 경우, 우측 Command 등 원하는 키를 PriType 한/영 전환키로 지정할 수 있습니다. Caps Lock 전환이 켜져 있으면 PriType 전환키는 자동으로 비활성화됩니다.
 
 - **macOS 설정 연동**
-  스페이스 두 번으로 마침표 입력은 PriType 별도 설정이 아니라 macOS 텍스트 입력 설정을 따릅니다.
+  스페이스 두 번으로 마침표 입력 등은 macOS 텍스트 입력 설정을 따릅니다. 영어 모드는 기본적으로 앱에 그대로 맡기며, 치환이 동작하지 않는 앱에서는 설정의 영어 편의 기능 대체 처리를 명시적으로 켤 수 있습니다.
 
 - **공증된 설치 패키지**
   릴리즈 PKG는 Developer ID 서명, Apple 공증, Gatekeeper 검증을 거쳐 배포합니다.
@@ -68,7 +68,7 @@ Caps Lock 입력 소스 전환을 쓰지 않는다면 PriType 설정에서 한/�
 | 입력 소스 | PriType 단일 입력 소스, 영어는 내부 모드 + ABC/US 또는 현재 영문 레이아웃 pass-through |
 | 전환 | macOS Caps Lock 입력 소스 전환 또는 PriType 내부 사용자 지정 전환키 |
 | 한자 | 한자 후보창, 자모 특수문자 입력 |
-| 텍스트 편의 기능 | macOS 더블스페이스 마침표 설정 연동 |
+| 텍스트 편의 기능 | macOS 설정 연동, 영어 자동 대문자·스마트 문장부호·더블스페이스 대체 처리 선택 가능(기본 꺼짐) |
 | 업데이트 | GitHub Releases 기반 자동 업데이트 확인 |
 
 ## 요구사항
