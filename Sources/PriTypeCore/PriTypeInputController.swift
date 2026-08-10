@@ -100,6 +100,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     }
 
     private func replaceSession(client: IMKTextInput, context: ClientContext) -> InputSession {
+        publishHanjaShortcutSessionState(.unknown)
         if let previous = session {
             previous.composer.dismissHanjaCandidates()
             previous.finalize(reason: .sessionReplacement)
@@ -130,6 +131,16 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         NotificationCenter.default.removeObserver(self, name: .romanKeyboardLayoutPreferenceChanged, object: nil)
         CursorRectResolver.invalidateCache()
         DebugLogger.event("input.controller_handoff")
+    }
+
+    /// Event-tap callbacks cannot call IMK/client APIs. Publish only the content-free
+    /// result of the main-thread secure gate, and only for the process-active owner.
+    private func publishHanjaShortcutSessionState(_ state: HanjaShortcutSessionState) {
+        #if DEBUG
+        assert(Thread.isMainThread, "Hanja shortcut session state must be published on main thread")
+        #endif
+        guard Self.sharedController === self else { return }
+        HanjaShortcutSessionStateStore.shared.update(state)
     }
 
     /// Return the session for `client`, creating or refreshing it as needed.
@@ -397,6 +408,10 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         #if DEBUG
         assert(Thread.isMainThread, "IMK activateServer must run on main thread")
         #endif
+        // Invalidate before controller handoff or client probing. A regular Hanja
+        // binding pressed in this window must reach the host until the current field
+        // has passed the main-thread secure gate.
+        HanjaShortcutSessionStateStore.shared.update(.unknown)
         super.activateServer(sender)
         claimProcessActiveController()
         session?.composer.dismissHanjaCandidates()
@@ -465,6 +480,9 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // ignore insertText. If the observer already committed, this is a no-op.
         let senderClient = sender as? IMKTextInput
         let deactivatesCurrentSession = senderClient.map { session?.matches($0) == true } ?? true
+        if deactivatesCurrentSession, Self.sharedController === self {
+            HanjaShortcutSessionStateStore.shared.update(.unknown)
+        }
         finalizeActiveComposition(sender: sender, reason: .deactivateServer)
         // NOTE: Do NOT clear localTextBuffer here.
         // Cross-app hanja leaking is prevented by bundleId matching in handleHanjaLookup(),
@@ -537,6 +555,9 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             characterIndex: index,
             markedRange: client.markedRange()
         )
+        // A click can move focus between an ordinary and a password field while
+        // reusing the same IMK client. Re-prove the context at the next input boundary.
+        session.markContextStale()
         return false // The host still owns caret movement and selection.
     }
 
@@ -623,38 +644,32 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
     private func shouldPassThroughSecureInput(client: IMKTextInput, context: ClientContext) -> Bool {
         let bundleId = context.bundleId
+        let isSecureInput: Bool
 
         if SecureInputPolicy.isSystemSecureClient(bundleId) {
             DebugLogger.event("input.secure_passthrough", metadata: [
                 .state("reason", "system_client")
             ])
-            return true
-        }
-
-        let hasGlobalSecureInput = IsSecureEventInputEnabled()
-
-        if hasGlobalSecureInput {
+            isSecureInput = true
+        } else if IsSecureEventInputEnabled() {
             DebugLogger.event("input.secure_passthrough", metadata: [
                 .state("reason", "global_secure_input")
             ])
-            return true
+            isSecureInput = true
+        } else if context.hasTextInputCapability {
+            isSecureInput = false
+        } else {
+            let selectionRange = client.selectedRange()
+            isSecureInput = selectionRange.location == NSNotFound
+            if isSecureInput {
+                DebugLogger.event("input.secure_passthrough", metadata: [
+                    .state("reason", "invalid_selection")
+                ])
+            }
         }
 
-        guard !context.hasTextInputCapability else {
-            return false
-        }
-
-        let selectionRange = client.selectedRange()
-        let hasInvalidSelection = selectionRange.location == NSNotFound
-
-        if hasInvalidSelection {
-            DebugLogger.event("input.secure_passthrough", metadata: [
-                .state("reason", "invalid_selection")
-            ])
-            return true
-        }
-
-        return false
+        publishHanjaShortcutSessionState(isSecureInput ? .secure : .nonsecure)
+        return isSecureInput
     }
 
     // 마우스 클릭 등으로 조합 영역 외부 클릭 시 조합 커밋

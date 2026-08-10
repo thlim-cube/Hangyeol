@@ -295,7 +295,11 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                hanjaBinding.isModifierKey,
                hanjaBinding.isModifierOnly,
                keyCode == hanjaBinding.keyCode,
-               keyCode != toggleBinding.keyCode {
+               keyCode != toggleBinding.keyCode,
+               HanjaShortcutSuppressionPolicy.allowsSuppression(
+                   binding: hanjaBinding,
+                   sessionState: HanjaShortcutSessionStateStore.shared.state
+               ) {
                 suppressedHanjaModifierKeyCode = keyCode
                 modifierKeyState.suppressUntilRelease(keyCode: keyCode)
 
@@ -375,11 +379,16 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                     flags: event.flags,
                     required: CGEventFlags(rawValue: hanjaBinding.modifiers)
                 ))
+            let hanjaSuppressionAllowed = hanjaMatches && HanjaShortcutSuppressionPolicy.allowsSuppression(
+                binding: hanjaBinding,
+                sessionState: HanjaShortcutSessionStateStore.shared.state
+            )
 
             switch regularKeyState.keyDown(
                 keyCode: keyCode,
                 isRepeat: isRepeat,
-                matchesBinding: hanjaMatches
+                matchesBinding: hanjaMatches,
+                suppressionAllowed: hanjaSuppressionAllowed
             ) {
             case .triggerAndSuppress:
                 DebugLogger.event("hanja.requested", metadata: [

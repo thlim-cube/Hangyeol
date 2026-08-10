@@ -95,6 +95,98 @@ struct SuppressedKeyPairTests {
         #expect(state.keyUp(keyCode: 0) == .passThrough)
     }
 
+    @Test("Secure regular Hanja bindings pass through before the controller callback")
+    func secureRegularHanjaBindingPassesThrough() {
+        var state = RegularKeyPressState()
+        let binding = KeyBinding(keyCode: 5, modifiers: 0, displayName: "G")
+        let suppressionAllowed = HanjaShortcutSuppressionPolicy.allowsSuppression(
+            binding: binding,
+            sessionState: .secure
+        )
+
+        #expect(!suppressionAllowed)
+        #expect(state.keyDown(
+            keyCode: 5,
+            isRepeat: false,
+            matchesBinding: true,
+            suppressionAllowed: suppressionAllowed
+        ) == .passThrough)
+        // A main-thread context refresh during the hold must not turn an already
+        // passed-through down into a suppressed repeat/up pair.
+        #expect(state.keyDown(
+            keyCode: 5,
+            isRepeat: true,
+            matchesBinding: true,
+            suppressionAllowed: true
+        ) == .passThrough)
+        #expect(state.keyUp(keyCode: 5) == .passThrough)
+    }
+
+    @Test("Unknown regular Hanja bindings fail open to the host")
+    func unknownRegularHanjaBindingPassesThrough() {
+        var state = RegularKeyPressState()
+        let binding = KeyBinding(keyCode: 49, modifiers: CGEventFlags.maskControl.rawValue, displayName: "Control + Space")
+
+        #expect(state.keyDown(
+            keyCode: binding.keyCode,
+            isRepeat: false,
+            matchesBinding: true,
+            suppressionAllowed: HanjaShortcutSuppressionPolicy.allowsSuppression(
+                binding: binding,
+                sessionState: .unknown
+            )
+        ) == .passThrough)
+        #expect(state.keyUp(keyCode: binding.keyCode) == .passThrough)
+    }
+
+    @Test("Known nonsecure regular Hanja bindings still trigger and suppress")
+    func nonsecureRegularHanjaBindingSuppresses() {
+        var state = RegularKeyPressState()
+        let binding = KeyBinding(keyCode: 105, modifiers: 0, displayName: "F13")
+
+        #expect(state.keyDown(
+            keyCode: binding.keyCode,
+            isRepeat: false,
+            matchesBinding: true,
+            suppressionAllowed: HanjaShortcutSuppressionPolicy.allowsSuppression(
+                binding: binding,
+                sessionState: .nonsecure
+            )
+        ) == .triggerAndSuppress)
+        #expect(state.keyDown(
+            keyCode: binding.keyCode,
+            isRepeat: true,
+            matchesBinding: true,
+            suppressionAllowed: true
+        ) == .suppress)
+        #expect(state.keyUp(keyCode: binding.keyCode) == .suppress)
+    }
+
+    @Test("Modifier-only Hanja bindings preserve their global shortcut contract")
+    func modifierOnlyHanjaBindingAlwaysSuppresses() {
+        #expect(HanjaShortcutSuppressionPolicy.allowsSuppression(
+            binding: .defaultHanja,
+            sessionState: .unknown
+        ))
+        #expect(HanjaShortcutSuppressionPolicy.allowsSuppression(
+            binding: .defaultHanja,
+            sessionState: .secure
+        ))
+    }
+
+    @Test("Hanja shortcut state snapshots start unknown and apply every transition")
+    func hanjaShortcutSessionStateStoreSnapshot() {
+        let store = HanjaShortcutSessionStateStore()
+
+        #expect(store.state == .unknown)
+        store.update(.nonsecure)
+        #expect(store.state == .nonsecure)
+        store.update(.secure)
+        #expect(store.state == .secure)
+        store.update(.unknown)
+        #expect(store.state == .unknown)
+    }
+
     @Test("IOKit repeat cannot erase a chorded modifier state")
     func iokitRepeatPreservesChordedState() {
         var state = ReleaseTogglePressState()

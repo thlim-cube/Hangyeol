@@ -223,27 +223,88 @@ enum SuppressedKeyAction: Equatable {
     case triggerAndSuppress
 }
 
-/// regular/combo 바인딩의 최초 down, repeat, up을 하나의 소비 쌍으로 묶습니다.
+/// Event tap에서 IMK client를 조회하지 않고 판단할 수 있는 마지막 client 상태입니다.
+/// 활성화/field 전환 경계의 `.unknown`은 regular 한자키를 host로 통과시킵니다.
+enum HanjaShortcutSessionState: Equatable, Sendable {
+    case unknown
+    case secure
+    case nonsecure
+}
+
+/// Main-thread IMK 판정 결과를 event-tap thread에 내용 없이 전달합니다.
+final class HanjaShortcutSessionStateStore: @unchecked Sendable {
+    static let shared = HanjaShortcutSessionStateStore()
+
+    private let lock = NSLock()
+    private var storedState: HanjaShortcutSessionState
+
+    var state: HanjaShortcutSessionState {
+        lock.withLock { storedState }
+    }
+
+    init(initialState: HanjaShortcutSessionState = .unknown) {
+        storedState = initialState
+    }
+
+    func update(_ state: HanjaShortcutSessionState) {
+        lock.withLock {
+            storedState = state
+        }
+    }
+}
+
+/// Modifier-only 한자키에는 입력 문자가 없으므로 기존 전역 단축키 계약을 유지합니다.
+/// 반면 regular/combo 한자키는 현재 field가 nonsecure로 확인된 경우에만 소비합니다.
+enum HanjaShortcutSuppressionPolicy {
+    static func allowsSuppression(
+        binding: KeyBinding,
+        sessionState: HanjaShortcutSessionState
+    ) -> Bool {
+        if binding.isModifierKey && binding.isModifierOnly {
+            return true
+        }
+        return sessionState == .nonsecure
+    }
+}
+
+/// regular/combo 바인딩의 최초 down, repeat, up을 하나의 route 쌍으로 묶습니다.
 struct RegularKeyPressState {
     private var suppressedKeyCodes: Set<Int64> = []
+    private var passedThroughKeyCodes: Set<Int64> = []
 
-    mutating func keyDown(keyCode: Int64, isRepeat: Bool, matchesBinding: Bool) -> SuppressedKeyAction {
+    mutating func keyDown(
+        keyCode: Int64,
+        isRepeat: Bool,
+        matchesBinding: Bool,
+        suppressionAllowed: Bool = true
+    ) -> SuppressedKeyAction {
         if suppressedKeyCodes.contains(keyCode) {
             return .suppress
         }
+        if passedThroughKeyCodes.contains(keyCode) {
+            return .passThrough
+        }
         guard matchesBinding else { return .passThrough }
+        guard suppressionAllowed else {
+            passedThroughKeyCodes.insert(keyCode)
+            return .passThrough
+        }
 
         suppressedKeyCodes.insert(keyCode)
         return isRepeat ? .suppress : .triggerAndSuppress
     }
 
     mutating func keyUp(keyCode: Int64) -> SuppressedKeyAction {
-        guard suppressedKeyCodes.remove(keyCode) != nil else { return .passThrough }
-        return .suppress
+        if suppressedKeyCodes.remove(keyCode) != nil {
+            return .suppress
+        }
+        passedThroughKeyCodes.remove(keyCode)
+        return .passThrough
     }
 
     mutating func reset() {
         suppressedKeyCodes.removeAll()
+        passedThroughKeyCodes.removeAll()
     }
 }
 

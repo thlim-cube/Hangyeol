@@ -100,6 +100,10 @@ final class InputSession: @unchecked Sendable {
     /// secure or nonsecure; rebuilding here could finalize into a password field.
     /// Re-arms the focus-loss finalizer when the owning app changed.
     func refreshContext(_ newContext: ClientContext) {
+        // Do not expose the previous field's nonsecure classification while the
+        // current field is being replaced. The controller republishes the result
+        // only after its main-thread secure gate completes.
+        HanjaShortcutSessionStateStore.shared.update(.unknown)
         let oldBundleId = context.bundleId
         context = newContext
         contextNeedsRefresh = false
@@ -109,6 +113,7 @@ final class InputSession: @unchecked Sendable {
     }
 
     func markContextStale() {
+        HanjaShortcutSessionStateStore.shared.update(.unknown)
         contextNeedsRefresh = true
     }
 
@@ -228,6 +233,9 @@ final class InputSession: @unchecked Sendable {
                   app.bundleIdentifier == bundleId else {
                 return
             }
+            // Event-tap shortcuts run outside IMK. Invalidate the content-free
+            // shortcut snapshot before this session stops being authoritative.
+            HanjaShortcutSessionStateStore.shared.update(.unknown)
             self.finalize(reason: .appDeactivate)
         }
     }
