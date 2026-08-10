@@ -79,6 +79,126 @@ struct SuppressedKeyPairTests {
         #expect(state.keyUp(keyCode: 105) == .passThrough)
     }
 
+    @Test("Recovery clears a released suppressed pair without leaking its stale key-up")
+    func releasedSuppressedPairRecovery() {
+        var staleReleaseFirst = RegularKeyPressState()
+
+        #expect(staleReleaseFirst.keyDown(
+            keyCode: 105,
+            isRepeat: false,
+            matchesBinding: true
+        ) == .triggerAndSuppress)
+        staleReleaseFirst.resynchronize(pressedKeyCodes: [])
+        #expect(staleReleaseFirst.keyDown(
+            keyCode: 105,
+            isRepeat: true,
+            matchesBinding: true
+        ) == .suppress)
+        #expect(staleReleaseFirst.keyUp(keyCode: 105) == .suppress)
+        #expect(staleReleaseFirst.keyUp(keyCode: 105) == .passThrough)
+
+        var nextDownFirst = RegularKeyPressState()
+
+        #expect(nextDownFirst.keyDown(
+            keyCode: 105,
+            isRepeat: false,
+            matchesBinding: true
+        ) == .triggerAndSuppress)
+        nextDownFirst.resynchronize(pressedKeyCodes: [])
+        #expect(nextDownFirst.keyDown(
+            keyCode: 105,
+            isRepeat: false,
+            matchesBinding: true
+        ) == .triggerAndSuppress)
+        #expect(nextDownFirst.keyUp(keyCode: 105) == .suppress)
+
+        var releasedPassedThrough = RegularKeyPressState()
+
+        #expect(releasedPassedThrough.keyDown(
+            keyCode: 5,
+            isRepeat: false,
+            matchesBinding: true,
+            suppressionAllowed: false
+        ) == .passThrough)
+        releasedPassedThrough.resynchronize(pressedKeyCodes: [])
+        #expect(releasedPassedThrough.keyUp(keyCode: 5) == .passThrough)
+        #expect(releasedPassedThrough.keyDown(
+            keyCode: 5,
+            isRepeat: false,
+            matchesBinding: true
+        ) == .triggerAndSuppress)
+    }
+
+    @Test("Recovery preserves physically held suppressed and passed-through routes")
+    func heldRegularPairRecovery() {
+        var state = RegularKeyPressState()
+
+        #expect(state.keyDown(
+            keyCode: 105,
+            isRepeat: false,
+            matchesBinding: true
+        ) == .triggerAndSuppress)
+        #expect(state.keyDown(
+            keyCode: 49,
+            isRepeat: true,
+            matchesBinding: true
+        ) == .passThrough)
+
+        state.resynchronize(pressedKeyCodes: [49, 105])
+
+        #expect(state.keyDown(keyCode: 105, isRepeat: true, matchesBinding: true) == .suppress)
+        #expect(state.keyUp(keyCode: 105) == .suppress)
+        #expect(state.keyDown(keyCode: 49, isRepeat: true, matchesBinding: true) == .passThrough)
+        #expect(state.keyUp(keyCode: 49) == .passThrough)
+    }
+
+    @Test("Event tap recovery resynchronizes modifier and tracked regular key pairs")
+    func eventTapRegularPairRecovery() {
+        var modifierState = ModifierKeyPressState()
+        #expect(modifierState.observe(keyCode: 54, physicalKeyIsDown: true) == .down)
+        modifierState.suppressUntilRelease(keyCode: 54)
+        #expect(modifierState.observe(keyCode: 55, physicalKeyIsDown: true) == .down)
+
+        var regularState = RegularKeyPressState()
+
+        #expect(regularState.keyDown(
+            keyCode: 105,
+            isRepeat: false,
+            matchesBinding: true
+        ) == .triggerAndSuppress)
+        #expect(regularState.keyDown(
+            keyCode: 49,
+            isRepeat: true,
+            matchesBinding: true
+        ) == .passThrough)
+
+        var queriedKeyCodes: Set<Int64> = []
+        RightCommandSuppressor.resynchronizeKeyState(
+            modifierState: &modifierState,
+            regularState: &regularState,
+            modifierKeyState: { $0 == 54 },
+            regularKeyState: { keyCode in
+                queriedKeyCodes.insert(keyCode)
+                return keyCode == 49
+            }
+        )
+
+        #expect(modifierState.pressedKeyCodes == [54])
+        #expect(modifierState.isSuppressed(keyCode: 54))
+        #expect(queriedKeyCodes == [49, 105])
+        #expect(regularState.keyDown(
+            keyCode: 105,
+            isRepeat: false,
+            matchesBinding: true
+        ) == .triggerAndSuppress)
+        #expect(regularState.keyDown(
+            keyCode: 49,
+            isRepeat: true,
+            matchesBinding: true
+        ) == .passThrough)
+        #expect(regularState.keyUp(keyCode: 49) == .passThrough)
+    }
+
     @Test("A repeat first observed mid-hold preserves the host key pair")
     func repeatWithoutInitialDown() {
         var state = RegularKeyPressState()

@@ -156,7 +156,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         CGEvent.tapEnable(tap: eventTap, enable: true)
 
         resetKeyState()
-        resynchronizeModifierKeyState()
+        resynchronizeKeyState()
         tapDisableTracker.reset()
         ToggleMonitorStatusStore.shared.markRunning(.eventTap)
         
@@ -209,7 +209,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 ])
                 if let tap = eventTap {
                     CGEvent.tapEnable(tap: tap, enable: true)
-                    resynchronizeModifierKeyState()
+                    resynchronizeKeyState()
                 }
             case .ignore:
                 break
@@ -470,11 +470,20 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         suppressedHanjaModifierKeyCode = nil
     }
 
-    private func resynchronizeModifierKeyState() {
-        let physicallyPressed = Self.physicallyPressedModifierKeyCodes { keyCode in
-            Self.modifierKeyIsPhysicallyDown(keyCode)
-        }
-        modifierKeyState.resynchronize(pressedKeyCodes: physicallyPressed)
+    private func resynchronizeKeyState() {
+        Self.resynchronizeKeyState(
+            modifierState: &modifierKeyState,
+            regularState: &regularKeyState,
+            modifierKeyState: { keyCode in
+                Self.modifierKeyIsPhysicallyDown(keyCode)
+            },
+            regularKeyState: { keyCode in
+                CGEventSource.keyState(
+                    .combinedSessionState,
+                    key: CGKeyCode(keyCode)
+                )
+            }
+        )
 
         if let keyCode = suppressedToggleModifierKeyCode,
            !modifierKeyState.isSuppressed(keyCode: keyCode) {
@@ -484,6 +493,23 @@ public final class RightCommandSuppressor: @unchecked Sendable {
            !modifierKeyState.isSuppressed(keyCode: keyCode) {
             suppressedHanjaModifierKeyCode = nil
         }
+    }
+
+    static func resynchronizeKeyState(
+        modifierState: inout ModifierKeyPressState,
+        regularState: inout RegularKeyPressState,
+        modifierKeyState: (Int64) -> Bool,
+        regularKeyState: (Int64) -> Bool
+    ) {
+        let physicallyPressedModifiers = physicallyPressedModifierKeyCodes(
+            keyState: modifierKeyState
+        )
+        modifierState.resynchronize(pressedKeyCodes: physicallyPressedModifiers)
+
+        let physicallyPressedRegularKeys = Set(
+            regularState.trackedKeyCodes.filter(regularKeyState)
+        )
+        regularState.resynchronize(pressedKeyCodes: physicallyPressedRegularKeys)
     }
 
     private func triggerToggle() {

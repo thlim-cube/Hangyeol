@@ -357,6 +357,11 @@ enum HanjaShortcutSuppressionPolicy {
 struct RegularKeyPressState {
     private var suppressedKeyCodes: Set<Int64> = []
     private var passedThroughKeyCodes: Set<Int64> = []
+    private var pendingSuppressedUpKeyCodes: Set<Int64> = []
+
+    var trackedKeyCodes: Set<Int64> {
+        suppressedKeyCodes.union(passedThroughKeyCodes)
+    }
 
     mutating func keyDown(
         keyCode: Int64,
@@ -364,7 +369,15 @@ struct RegularKeyPressState {
         matchesBinding: Bool,
         suppressionAllowed: Bool = true
     ) -> SuppressedKeyAction {
+        if !isRepeat {
+            // A fresh down starts a new pair even if the disabled tap has not
+            // delivered the previous pair's stale suppressed up yet.
+            pendingSuppressedUpKeyCodes.remove(keyCode)
+        }
         if suppressedKeyCodes.contains(keyCode) {
+            return .suppress
+        }
+        if pendingSuppressedUpKeyCodes.contains(keyCode) {
             return .suppress
         }
         if passedThroughKeyCodes.contains(keyCode) {
@@ -391,13 +404,27 @@ struct RegularKeyPressState {
         if suppressedKeyCodes.remove(keyCode) != nil {
             return .suppress
         }
+        if pendingSuppressedUpKeyCodes.remove(keyCode) != nil {
+            return .suppress
+        }
         passedThroughKeyCodes.remove(keyCode)
         return .passThrough
+    }
+
+    /// Event tap 재활성화 중 놓친 release를 현재 물리 상태로 교정합니다.
+    /// 이미 down을 소비한 released key의 지연 up은 한 번 더 소비하되,
+    /// passed-through pair에는 별도의 release tombstone을 만들지 않습니다.
+    mutating func resynchronize(pressedKeyCodes physicalKeyCodes: Set<Int64>) {
+        let releasedSuppressedKeyCodes = suppressedKeyCodes.subtracting(physicalKeyCodes)
+        pendingSuppressedUpKeyCodes.formUnion(releasedSuppressedKeyCodes)
+        suppressedKeyCodes.formIntersection(physicalKeyCodes)
+        passedThroughKeyCodes.formIntersection(physicalKeyCodes)
     }
 
     mutating func reset() {
         suppressedKeyCodes.removeAll()
         passedThroughKeyCodes.removeAll()
+        pendingSuppressedUpKeyCodes.removeAll()
     }
 }
 
