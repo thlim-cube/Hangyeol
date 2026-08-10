@@ -158,7 +158,7 @@ final class InputSession: @unchecked Sendable {
         let oldBundleId = context.bundleId
         context = newContext
         if fieldIdentityMayHaveChanged {
-            composer.resetTextConvenienceState()
+            composer.clearLocalBuffer()
             contextGeneration &+= 1
         }
         contextRefreshRequirement = .none

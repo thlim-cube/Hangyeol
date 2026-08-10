@@ -819,7 +819,47 @@ struct HanjaCandidateLifecycleTests {
         #expect(client.document == "나")
     }
 
-    @Test("Same-client repeated activation without deactivate preserves Hanja buffer")
+    @Test("Same-client field move drops field-local Hanja state")
+    func sameClientFieldMoveDropsFieldLocalHanjaState() throws {
+        let presenter = MockHanjaCandidatePresenter()
+        let client = FakeIMKTextInput()
+        client.document = "나"
+        client.selectedRangeValue = NSRange(location: 1, length: 0)
+        let composer = makeComposer(presenter: presenter)
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: composer
+        )
+        _ = session.prepareForNonSecureClientWrites()
+        _ = composer.handle(
+            TestEventFactory.keyEvent(
+                char: "x",
+                keyCode: 7,
+                modifiers: .command
+            )!,
+            delegate: session.adapter
+        )
+        composer.localTextBuffer = "가"
+
+        session.markContextStaleForSameClientReactivation()
+        #expect(session.refreshContextIfNeeded { _ in
+            context(bundleId: client.bundleID)
+        })
+
+        #expect(composer.localTextBuffer.isEmpty)
+        #expect(PriTypeInputController.routeExternalHanjaLookup(
+            in: session,
+            isSecureInput: false,
+            reconcileOwnership: {},
+            performLookup: { $0.triggerHanjaLookup() }
+        ))
+        let fieldBEntries = try #require(presenter.shownEntries.last)
+        #expect(!fieldBEntries.isEmpty)
+        #expect(fieldBEntries.allSatisfy { $0.hangul == "나" })
+    }
+
+    @Test("Canonical same-client reactivation preserves Hanja buffer")
     func repeatedActivationPreservesFieldLocalHanjaState() {
         let presenter = MockHanjaCandidatePresenter()
         let client = FakeIMKTextInput()
@@ -829,16 +869,22 @@ struct HanjaCandidateLifecycleTests {
             context: context(bundleId: client.bundleID),
             composer: composer
         )
+        _ = session.prepareForNonSecureClientWrites()
         composer.localTextBuffer = "가"
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        #expect(composer.hasActiveComposition)
+        #expect(client.markedRange().length > 0)
 
-        composer.dismissHanjaCandidates()
-        CursorRectResolver.invalidateCache()
-        session.markContextStale()
+        session.markContextStaleForSameClientReactivation()
         #expect(session.refreshContextIfNeeded { _ in
             context(bundleId: client.bundleID)
         })
 
         #expect(composer.localTextBuffer == "가")
+        #expect(composer.hasActiveComposition)
     }
 
     @Test("Normal deactivate commits once and retires the field session")
