@@ -10,8 +10,6 @@ import Carbon.HIToolbox
 public final class InputModeCoordinator: @unchecked Sendable {
     public static let shared = InputModeCoordinator()
 
-    private static let priTypeInputSourceID = "com.pritype.inputmethod.v2"
-
     public enum ToggleSource: Sendable {
         case customKey
         case iokitFallback
@@ -158,12 +156,14 @@ public final class InputModeCoordinator: @unchecked Sendable {
             return .unavailable
         }
         let source = sourceReference.takeRetainedValue()
-        guard let identifierPointer = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else {
-            return .unavailable
-        }
-        let identifier = Unmanaged<CFString>
-            .fromOpaque(identifierPointer)
-            .takeUnretainedValue() as String
-        return identifier == priTypeInputSourceID ? .priType : .other
+        return SelectedInputSourceClassifier.classify(
+            inputSourceID: inputSourceStringProperty(source, key: kTISPropertyInputSourceID),
+            bundleID: inputSourceStringProperty(source, key: kTISPropertyBundleID)
+        )
+    }
+
+    private static func inputSourceStringProperty(_ source: TISInputSource, key: CFString) -> String? {
+        guard let pointer = TISGetInputSourceProperty(source, key) else { return nil }
+        return Unmanaged<CFString>.fromOpaque(pointer).takeUnretainedValue() as String
     }
 }

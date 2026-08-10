@@ -9,6 +9,22 @@ enum SelectedInputSourceKind: Equatable {
     case unavailable
 }
 
+enum SelectedInputSourceClassifier {
+    private static let priTypeInputSourceID = "com.pritype.inputmethod.v2"
+    private static let priTypeBundleID = "com.pritype.inputmethod.v2"
+
+    static func classify(
+        inputSourceID: String?,
+        bundleID: String?
+    ) -> SelectedInputSourceKind {
+        guard let inputSourceID else { return .unavailable }
+        if inputSourceID == priTypeInputSourceID || bundleID == priTypeBundleID {
+            return .priType
+        }
+        return .other
+    }
+}
+
 struct InputModeOwnershipSnapshot: Equatable {
     let macOSOwnsSwitching: Bool
     let selectedInputSource: SelectedInputSourceKind

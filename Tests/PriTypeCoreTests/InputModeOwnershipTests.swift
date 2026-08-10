@@ -15,6 +15,30 @@ struct InputModeOwnershipTests {
         )
     }
 
+    @Test("Exact PriType source ID is classified as PriType")
+    func exactPriTypeSourceIDClassification() {
+        #expect(SelectedInputSourceClassifier.classify(
+            inputSourceID: "com.pritype.inputmethod.v2",
+            bundleID: nil
+        ) == .priType)
+    }
+
+    @Test("Alternate mode ID from the PriType bundle is classified as PriType")
+    func alternatePriTypeModeIDClassification() {
+        #expect(SelectedInputSourceClassifier.classify(
+            inputSourceID: "com.pritype.inputmethod.v2.v2",
+            bundleID: "com.pritype.inputmethod.v2"
+        ) == .priType)
+    }
+
+    @Test("Alternate mode ID from another bundle remains other")
+    func alternateModeIDFromAnotherBundleClassification() {
+        #expect(SelectedInputSourceClassifier.classify(
+            inputSourceID: "com.pritype.inputmethod.v2.v2",
+            bundleID: "com.example.inputmethod"
+        ) == .other)
+    }
+
     @Test("Sessions share mode without sharing libhangul composition")
     func sharedModeIsolatedComposition() {
         let store = InputModeStore()
