@@ -340,7 +340,7 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     private let systemTextFeatureRefreshLock = NSLock()
     private var systemTextFeatureSnapshot: SystemTextFeatureSnapshot
     private var cachedEnglishTextConvenienceFallbackEnabled: Bool
-    
+
     private convenience init() {
         self.init(
             defaults: .standard,
