@@ -93,6 +93,7 @@ extension SettingsWindowController: NSWindowDelegate {
 
 struct SettingsView: View {
     @State private var selectedKeyboard = ConfigurationManager.shared.keyboardId
+    @State private var respectCurrentRomanKeyboardLayout = ConfigurationManager.shared.respectCurrentRomanKeyboardLayout
     @State private var toggleKeyBinding = ConfigurationManager.shared.toggleKeyBinding
     @State private var hanjaKeyBinding = ConfigurationManager.shared.hanjaKeyBinding
     @State private var autoUpdateCheckEnabled = ConfigurationManager.shared.autoUpdateCheckEnabled
@@ -155,6 +156,7 @@ struct SettingsView: View {
         .frame(width: PriTypeConfig.settingsWindowWidth, height: PriTypeConfig.settingsWindowHeight)
         .onAppear {
             selectedKeyboard = ConfigurationManager.shared.keyboardId
+            respectCurrentRomanKeyboardLayout = ConfigurationManager.shared.respectCurrentRomanKeyboardLayout
             toggleKeyBinding = ConfigurationManager.shared.toggleKeyBinding
             hanjaKeyBinding = ConfigurationManager.shared.hanjaKeyBinding
             autoUpdateCheckEnabled = ConfigurationManager.shared.autoUpdateCheckEnabled
@@ -195,9 +197,23 @@ struct SettingsView: View {
                         )
                     }
                 }
+
+                Divider()
+                    .opacity(0.2)
+                    .padding(.horizontal, 12)
+
+                SettingsToggleRow(
+                    title: L10n.keyboard.respectRomanLayout,
+                    subtitle: L10n.keyboard.respectRomanLayoutSubtitle,
+                    icon: "textformat.abc",
+                    isOn: $respectCurrentRomanKeyboardLayout
+                )
             }
             .onChange(of: selectedKeyboard) { _, newValue in
                 ConfigurationManager.shared.keyboardId = newValue
+            }
+            .onChange(of: respectCurrentRomanKeyboardLayout) { _, newValue in
+                ConfigurationManager.shared.respectCurrentRomanKeyboardLayout = newValue
             }
 
             CapsLockStatusCard(

@@ -31,6 +31,8 @@
 **결합안:** PriType 단일 입력 소스가 IMK 세션을 **영구 소유**하고, 한/영은 `HangulComposer.inputMode`
 하나로 내부 전환한다(2.6.5의 무지연·일관성). 영어는 조합하지 않고 raw key를 pass-through하며,
 `overrideKeyboardWithKeyboardNamed`로 로마자 레이아웃을 입혀 ABC를 *체감*으로 재현한다(2.7대의 통합 일부).
+기본값은 ABC/US를 강제하며, 사용자가 설정에서 명시적으로 켜면 Carbon이 제공하는 최근 사용
+ASCII-capable keyboard layout(Dvorak·AZERTY 등)을 대신 적용한다.
 Caps Lock 기반 전환은 그대로 macOS가 소유하고, 이때 PriType custom toggle은 비활성화한다.
 
 ---
@@ -45,7 +47,7 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
                                   │ performPriTypeModeTransition
         ┌─────────────────────────┼──────────────────────────┐
         ▼                         ▼                          ▼
-  commit 1회             overrideKeyboard(ABC/US)      InputModeStore 갱신
+  commit 1회             overrideKeyboard(Roman)       InputModeStore 갱신
   (세션 조합 정리)         (영어 레이아웃 보정)          (★ 프로세스 단일 진리)
                                             │
                           ┌─────────────────┴─────────────────┐
@@ -141,7 +143,7 @@ Tap/IOKit  ──requestToggle(source)──►  InputModeCoordinator
    InputModeCoordinator: Caps Lock 소유면 거부, active controller 없으면 거부
    InputModeCoordinator ──performModeTransition──►  PriTypeInputController
       Controller: commit active composition (1회)
-      Controller: overrideKeyboardWithKeyboardNamed(ABC/US)
+      Controller: overrideKeyboardWithKeyboardNamed(ABC/US 또는 opt-in 현재 Roman layout)
       Controller: composer.setInputMode(next)   ← 단일 진리 갱신
 ```
 

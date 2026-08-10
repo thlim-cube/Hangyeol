@@ -22,7 +22,7 @@ import Carbon.HIToolbox
 /// ```
 @objc(PriTypeInputController)
 public class PriTypeInputController: IMKInputController, @unchecked Sendable {
-    private static let romanKeyboardLayoutID = resolveRomanKeyboardLayoutID()
+    private static let forcedRomanKeyboardLayoutID = resolveForcedRomanKeyboardLayoutID()
     private static let romanKeyboardLayoutCandidates = [
         "com.apple.keylayout.ABC",
         "com.apple.keylayout.US"
@@ -75,6 +75,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // but do it eagerly here too.
         session?.disarmFocusLossFinalizer()
         NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .romanKeyboardLayoutPreferenceChanged, object: nil)
     }
 
     // MARK: - Session Management
@@ -156,13 +157,60 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             return
         }
 
-        _ = object.perform(selector, with: Self.romanKeyboardLayoutID)
+        let respectCurrentLayout = ConfigurationManager.shared.respectCurrentRomanKeyboardLayout
+        let currentASCIILayoutID = respectCurrentLayout ? Self.currentASCIICapableKeyboardLayoutID() : nil
+        let layoutID = Self.preferredRomanKeyboardLayoutID(
+            respectCurrentLayout: respectCurrentLayout,
+            currentASCIILayoutID: currentASCIILayoutID,
+            forcedLayoutID: Self.forcedRomanKeyboardLayoutID
+        )
+        _ = object.perform(selector, with: layoutID)
         lastKeyboardOverrideClientID = clientID
         lastKeyboardOverrideTime = now
-        DebugLogger.log("PriTypeInputController: override keyboard layout -> \(Self.romanKeyboardLayoutID)")
+        DebugLogger.log("PriTypeInputController: override keyboard layout -> \(layoutID)")
     }
 
-    private static func resolveRomanKeyboardLayoutID() -> String {
+    internal static func preferredRomanKeyboardLayoutID(
+        respectCurrentLayout: Bool,
+        currentASCIILayoutID: String?,
+        forcedLayoutID: String
+    ) -> String {
+        guard respectCurrentLayout,
+              let currentASCIILayoutID,
+              !currentASCIILayoutID.isEmpty else {
+            return forcedLayoutID
+        }
+        return currentASCIILayoutID
+    }
+
+    private static func currentASCIICapableKeyboardLayoutID() -> String? {
+        guard let sourceReference = TISCopyCurrentASCIICapableKeyboardLayoutInputSource() else {
+            DebugLogger.log("PriTypeInputController: current Roman layout lookup failed, keeping ABC/US fallback")
+            return nil
+        }
+        let source = sourceReference.takeRetainedValue()
+        guard inputSourceStringProperty(source, key: kTISPropertyInputSourceType) == kTISTypeKeyboardLayout as String,
+              inputSourceBoolProperty(source, key: kTISPropertyInputSourceIsASCIICapable),
+              let layoutID = inputSourceStringProperty(source, key: kTISPropertyInputSourceID),
+              !layoutID.isEmpty else {
+            DebugLogger.log("PriTypeInputController: current Roman layout unavailable, keeping ABC/US fallback")
+            return nil
+        }
+        return layoutID
+    }
+
+    private static func inputSourceStringProperty(_ source: TISInputSource, key: CFString) -> String? {
+        guard let pointer = TISGetInputSourceProperty(source, key) else { return nil }
+        return Unmanaged<CFString>.fromOpaque(pointer).takeUnretainedValue() as String
+    }
+
+    private static func inputSourceBoolProperty(_ source: TISInputSource, key: CFString) -> Bool {
+        guard let pointer = TISGetInputSourceProperty(source, key) else { return false }
+        let value = Unmanaged<CFBoolean>.fromOpaque(pointer).takeUnretainedValue()
+        return CFBooleanGetValue(value)
+    }
+
+    private static func resolveForcedRomanKeyboardLayoutID() -> String {
         let filter: [String: Any] = [
             kTISPropertyInputSourceCategory as String: kTISCategoryKeyboardInputSource as String
         ]
@@ -250,6 +298,13 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // registration first so this stays idempotent.
         NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleLayoutChange), name: .keyboardLayoutChanged, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .romanKeyboardLayoutPreferenceChanged, object: nil)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRomanKeyboardLayoutPreferenceChange),
+            name: .romanKeyboardLayoutPreferenceChanged,
+            object: nil
+        )
     }
 
     override public func deactivateServer(_ sender: Any!) {
@@ -276,6 +331,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             session?.disarmFocusLossFinalizer()
             session?.markContextStale()
             NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
+            NotificationCenter.default.removeObserver(self, name: .romanKeyboardLayoutPreferenceChanged, object: nil)
             if Self.sharedController === self {
                 Self.sharedController = nil
             }
@@ -293,6 +349,11 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             session.finalize(reason: .keyboardLayoutChange)
         }
         composer.updateKeyboardLayout(id: newId)
+    }
+
+    @objc private func handleRomanKeyboardLayoutPreferenceChange() {
+        guard let session else { return }
+        syncRomanKeyboardLayout(for: session.client, force: true)
     }
 
     // Keep flagsChanged for Caps Lock/TIS ownership and explicitly opt into mouse

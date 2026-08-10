@@ -388,7 +388,8 @@ public class HangulComposer: @unchecked Sendable {
         // English mode stays inside the PriType input source but performs no
         // composition. Most keys pass through to the host app unchanged.
         // - Roman characters come from the keyboard layout that the controller
-        //   installs via `overrideKeyboardWithKeyboardNamed(ABC/US)`.
+        //   installs via `overrideKeyboardWithKeyboardNamed` (ABC/US by default,
+        //   or the user's current Roman layout when explicitly enabled).
         // - Some macOS text conveniences do not fire for this internal English
         //   mode in every host, so PriType supplies a narrow fallback for only
         //   the transformed cases (double-space period and auto-capitalization).

@@ -10,6 +10,8 @@
 "keyboard.3set390" = "3-Set 390";
 "keyboard.2setOld" = "2-Set Old Hangul";
 "keyboard.3setOld" = "3-Set Old Hangul";
+"keyboard.respectRomanLayout" = "Use Current Roman Layout";
+"keyboard.respectRomanLayoutSubtitle" = "Uses your current Roman layout, such as Dvorak or AZERTY, instead of ABC in English mode.";
 
 /* Toggle Key */
 "toggle.title" = "Korean/English Toggle";

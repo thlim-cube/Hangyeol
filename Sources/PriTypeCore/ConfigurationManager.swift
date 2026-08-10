@@ -207,6 +207,8 @@ public struct KeyBinding: Codable, Equatable, Sendable {
 public extension Notification.Name {
     /// Posted when the keyboard layout changes
     static let keyboardLayoutChanged = Notification.Name("PriTypeKeyboardLayoutChanged")
+    /// Posted when the Roman keyboard override preference changes
+    static let romanKeyboardLayoutPreferenceChanged = Notification.Name("PriTypeRomanKeyboardLayoutPreferenceChanged")
     /// Posted when a key binding changes
     static let keyBindingChanged = Notification.Name("PriTypeKeyBindingChanged")
 }
@@ -243,6 +245,10 @@ public protocol ConfigurationProviding: AnyObject, Sendable {
 
     /// Whether macOS owns Caps Lock input-source switching.
     var capsLockInputSourceSwitchEnabled: Bool { get }
+
+    /// Whether English pass-through should use the user's current Roman layout
+    /// instead of forcing the ABC/US layout.
+    var respectCurrentRomanKeyboardLayout: Bool { get }
     
     /// Whether the system double-space period feature is enabled.
     var doubleSpacePeriodEnabled: Bool { get }
@@ -269,6 +275,9 @@ public extension ConfigurationProviding {
     /// Default: experimental direct insertion disabled. Conformers (e.g. test mocks)
     /// inherit this unless they override it; only `ConfigurationManager` reads the flag.
     var experimentalDirectInsertion: Bool { false }
+
+    /// Default preserves PriType's existing ABC/US override behavior.
+    var respectCurrentRomanKeyboardLayout: Bool { false }
 
     /// Default: enabled, matching macOS's normal text-input default.
     var autoCapitalizationEnabled: Bool { true }
@@ -343,6 +352,7 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
         static let lastUpdateCheck = "com.pritype.lastUpdateCheck"
         static let autoUpdateCheck = "com.pritype.autoUpdateCheck"
         static let experimentalDirectInsertion = "com.pritype.experimentalDirectInsertion"
+        static let respectCurrentRomanKeyboardLayout = "com.pritype.respectCurrentRomanKeyboardLayout"
     }
 
     private enum SystemTextInputKeys {
@@ -486,6 +496,17 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     /// Use this to conditionally handle Control+Space in the composer.
     public var controlSpaceAsToggle: Bool {
         return toggleKeyBinding.keyCode == 49 && toggleKeyBinding.modifiers == CGEventFlags.maskControl.rawValue
+    }
+
+    /// Use the most recently selected ASCII-capable keyboard layout for English
+    /// pass-through. Default OFF keeps the established ABC/US override.
+    public var respectCurrentRomanKeyboardLayout: Bool {
+        get { defaults.bool(forKey: Keys.respectCurrentRomanKeyboardLayout) }
+        set {
+            guard respectCurrentRomanKeyboardLayout != newValue else { return }
+            defaults.set(newValue, forKey: Keys.respectCurrentRomanKeyboardLayout)
+            NotificationCenter.default.post(name: .romanKeyboardLayoutPreferenceChanged, object: nil)
+        }
     }
 
     /// Mirrors macOS "Use the Caps Lock key to switch to and from ABC".

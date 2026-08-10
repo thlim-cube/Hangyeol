@@ -25,6 +25,49 @@ struct ConfigurationManagerTests {
         let stored = UserDefaults.standard.string(forKey: "com.pritype.keyboardId")
         #expect(stored == "3")
     }
+
+    @Test("Roman keyboard layout preference defaults to forced ABC/US and persists")
+    func romanKeyboardLayoutPreferencePersistence() {
+        let defaults = UserDefaults.standard
+        let key = "com.pritype.respectCurrentRomanKeyboardLayout"
+        let original = defaults.object(forKey: key)
+        defer {
+            if let original {
+                defaults.set(original, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
+
+        defaults.removeObject(forKey: key)
+        #expect(!ConfigurationManager.shared.respectCurrentRomanKeyboardLayout)
+
+        ConfigurationManager.shared.respectCurrentRomanKeyboardLayout = true
+        #expect(ConfigurationManager.shared.respectCurrentRomanKeyboardLayout)
+        #expect(defaults.bool(forKey: key))
+    }
+
+    @Test("Roman keyboard layout selection respects opt-in and falls back safely")
+    func romanKeyboardLayoutSelection() {
+        let abc = "com.apple.keylayout.ABC"
+        let dvorak = "com.apple.keylayout.Dvorak"
+
+        #expect(PriTypeInputController.preferredRomanKeyboardLayoutID(
+            respectCurrentLayout: false,
+            currentASCIILayoutID: dvorak,
+            forcedLayoutID: abc
+        ) == abc)
+        #expect(PriTypeInputController.preferredRomanKeyboardLayoutID(
+            respectCurrentLayout: true,
+            currentASCIILayoutID: dvorak,
+            forcedLayoutID: abc
+        ) == dvorak)
+        #expect(PriTypeInputController.preferredRomanKeyboardLayoutID(
+            respectCurrentLayout: true,
+            currentASCIILayoutID: nil,
+            forcedLayoutID: abc
+        ) == abc)
+    }
     
     // MARK: - Toggle Key Tests (Legacy)
     

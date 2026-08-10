@@ -10,6 +10,8 @@
 "keyboard.3set390" = "세벌식 390";
 "keyboard.2setOld" = "두벌식 옛한글";
 "keyboard.3setOld" = "세벌식 옛한글";
+"keyboard.respectRomanLayout" = "현재 영문 자판 배열 사용";
+"keyboard.respectRomanLayoutSubtitle" = "영어 모드에서 ABC 대신 현재 선택한 Dvorak, AZERTY 등의 영문 자판 배열을 사용합니다.";
 
 /* Toggle Key */
 "toggle.title" = "한/영 전환";
