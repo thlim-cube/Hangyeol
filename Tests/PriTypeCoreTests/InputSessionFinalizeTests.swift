@@ -609,6 +609,52 @@ struct InputSessionFinalizeTests {
         #expect(client.insertCalls.isEmpty)
     }
 
+    @Test("Stale activation layout refresh does not write")
+    func staleActivationLayoutRefreshDoesNotWrite() {
+        let (session, composer, client) = makeMarkedSession()
+        #expect(composer.keyboardLayoutId == "2")
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        let insertCount = client.insertCalls.count
+        let markCount = client.markCalls.count
+        #expect(composer.hasActiveComposition)
+        #expect(client.markedText == "ㄱ")
+
+        session.markContextStaleForSameClientReactivation()
+        session.refreshKeyboardLayoutForStaleActivation(id: "3")
+
+        #expect(composer.keyboardLayoutId == "3")
+        #expect(!composer.hasActiveComposition)
+        #expect(client.insertCalls.count == insertCount)
+        #expect(client.markCalls.count == markCount)
+        #expect(client.markedText == "ㄱ")
+        #expect(session.contextNeedsRefresh)
+    }
+
+    @Test("Same-layout stale activation preserves owned composition")
+    func sameLayoutStaleActivationPreservesOwnedComposition() {
+        let (session, composer, client) = makeMarkedSession()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        let insertCount = client.insertCalls.count
+        let markCount = client.markCalls.count
+
+        session.markContextStaleForSameClientReactivation()
+        session.refreshKeyboardLayoutForStaleActivation(id: composer.keyboardLayoutId)
+
+        #expect(composer.hasActiveComposition)
+        #expect(client.markedText == "ㄱ")
+        #expect(client.insertCalls.count == insertCount)
+        #expect(client.markCalls.count == markCount)
+        #expect(session.contextNeedsRefresh)
+    }
+
     @Test(
         "Same-client reactivation requires exact readable marked content",
         arguments: [false, true]

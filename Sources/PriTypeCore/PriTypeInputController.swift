@@ -528,9 +528,10 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // Activation is evidence that PriType is the selected source, but it only
         // records a real ownership boundary. It never resets mode or commits text.
         InputModeCoordinator.shared.observePriTypeActivation()
-        // Ensure this session's composer has the current layout.
+        // Activation is still unclassified. A layout mismatch must not commit old
+        // preedit through the retained delegate before the secure-input gate.
         let currentLayoutId = ConfigurationManager.shared.keyboardId
-        session?.composer.updateKeyboardLayout(id: currentLayoutId)
+        session?.refreshKeyboardLayoutForStaleActivation(id: currentLayoutId)
 
         // Observe layout changes. IMK can call activateServer again without an
         // intervening deactivateServer (common in Electron/Chromium hosts), and

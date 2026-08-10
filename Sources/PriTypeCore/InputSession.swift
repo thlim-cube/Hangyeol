@@ -188,6 +188,15 @@ final class InputSession: @unchecked Sendable {
         contextRefreshRequirement = .sameClientReactivation
     }
 
+    /// Activation has not passed the current field's secure-input gate yet. A
+    /// layout mismatch must therefore drop old composition without using its
+    /// retained delegate, then rebuild the engine for the configured layout.
+    func refreshKeyboardLayoutForStaleActivation(id: String) {
+        guard contextNeedsRefresh, composer.keyboardLayoutId != id else { return }
+        discardCompositionWithoutClientWrite(rebuildAdapter: false)
+        composer.updateKeyboardLayout(id: id)
+    }
+
     /// Refresh a reactivated session before any operation that depends on the current
     /// field's identity or delivery policy. Key input and external Hanja shortcuts use
     /// the same gate so a shortcut arriving before the first keyDown cannot capture a
