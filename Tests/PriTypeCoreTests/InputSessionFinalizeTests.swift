@@ -170,6 +170,46 @@ struct InputSessionFinalizeTests {
         #expect(client.markedText.isEmpty)
         #expect(client.insertCalls.count == 1)
     }
+
+    @Test("Insert-only boundaries re-arm direct insertion after invalid selection")
+    func insertOnlyBoundariesRecoverAfterInvalidSelection() {
+        let boundaries: [(character: String, keyCode: UInt16, insertsText: Bool)] = [
+            (" ", KeyCode.space, true),
+            ("\t", KeyCode.tab, false),
+            ("", KeyCode.leftArrow, false),
+        ]
+
+        for boundary in boundaries {
+            let (session, composer, client) = makeDirectFallbackSession()
+            client.selectedRangeValue = NSRange(location: 0, length: 0)
+
+            _ = composer.handle(
+                TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+                delegate: session.adapter
+            )
+            client.selectedRangeValue = NSRange(location: NSNotFound, length: 0)
+            _ = composer.handle(
+                TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+                delegate: session.adapter
+            )
+            #expect(client.document == "ㄱ")
+
+            client.selectedRangeValue = NSRange(location: client.document.utf16.count, length: 0)
+            _ = composer.handle(
+                TestEventFactory.keyEvent(
+                    char: boundary.character,
+                    keyCode: boundary.keyCode
+                )!,
+                delegate: session.adapter
+            )
+            _ = composer.handle(
+                TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+                delegate: session.adapter
+            )
+
+            #expect(client.document == (boundary.insertsText ? "ㄱ ㄱ" : "ㄱㄱ"))
+        }
+    }
 }
 
 @Suite("Mouse composition policy")

@@ -266,9 +266,11 @@ final class DirectInsertionAdapter: BaseClientAdapter {
         }
 
         if preservingUnverifiedLivePreedit {
-            // An empty marked update means the composer ended/cancelled this
-            // composition. Re-arm direct insertion only after that boundary.
-            if keepingLive && text.isEmpty {
+            // Either an empty marked update or a finalized insert means the
+            // composer ended the unsafe composition. The finalized text is still
+            // unverified and must be dropped, but the next delivery belongs to a
+            // new composition (or a following Space) and can try direct insertion.
+            if !keepingLive || text.isEmpty {
                 resetPreeditTracking()
             }
             return
