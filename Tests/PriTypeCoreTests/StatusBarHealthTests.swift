@@ -89,6 +89,30 @@ struct StatusBarHealthTests {
         #expect(health.usesFallback)
     }
 
+    @Test("Pending mode overlays the actual mode until cancellation or write")
+    func pendingModePresentationLifecycle() {
+        var presentation = InputModePresentationState(actualMode: .english)
+
+        #expect(presentation.displayedMode == .english)
+        let didSetPendingKorean = presentation.setPendingMode(.korean)
+        #expect(didSetPendingKorean)
+        #expect(presentation.actualMode == .english)
+        #expect(presentation.pendingMode == .korean)
+        #expect(presentation.displayedMode == .korean)
+
+        let didCancelPendingMode = presentation.setPendingMode(nil)
+        #expect(didCancelPendingMode)
+        #expect(presentation.displayedMode == .english)
+
+        let didRestorePendingKorean = presentation.setPendingMode(.korean)
+        let didWriteActualKorean = presentation.setActualMode(.korean)
+        #expect(didRestorePendingKorean)
+        #expect(didWriteActualKorean)
+        #expect(presentation.actualMode == .korean)
+        #expect(presentation.pendingMode == nil)
+        #expect(presentation.displayedMode == .korean)
+    }
+
     @Test("Monitor notifications synchronously apply the authoritative store status")
     @MainActor
     func monitorNotificationOrdering() {

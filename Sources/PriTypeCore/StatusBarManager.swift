@@ -11,6 +11,41 @@ public protocol StatusBarUpdating: AnyObject {
     func setMode(_ mode: InputMode)
 }
 
+/// Presentation-only mode expected after a deferred ownership reconciliation.
+/// This must never mutate the actual input mode or an IMK client.
+protocol PendingInputModePresenting: AnyObject {
+    func setPendingMode(_ mode: InputMode?)
+}
+
+struct InputModePresentationState: Equatable {
+    private(set) var actualMode: InputMode?
+    private(set) var pendingMode: InputMode?
+
+    init(actualMode: InputMode? = nil, pendingMode: InputMode? = nil) {
+        self.actualMode = actualMode
+        self.pendingMode = pendingMode
+    }
+
+    var displayedMode: InputMode {
+        pendingMode ?? actualMode ?? .korean
+    }
+
+    @discardableResult
+    mutating func setActualMode(_ mode: InputMode) -> Bool {
+        let changed = actualMode != mode || pendingMode != nil
+        actualMode = mode
+        pendingMode = nil
+        return changed
+    }
+
+    @discardableResult
+    mutating func setPendingMode(_ mode: InputMode?) -> Bool {
+        guard pendingMode != mode else { return false }
+        pendingMode = mode
+        return true
+    }
+}
+
 /// The currently active system-wide toggle-key monitor.
 ///
 /// This is deliberately a small presentation contract. The monitor remains the
@@ -93,7 +128,7 @@ func addToggleMonitorStatusObserver(
 /// input-health metadata.
 ///
 /// This class handles all UI updates on the main thread for thread safety.
-public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate, @unchecked Sendable {
+public final class StatusBarManager: NSObject, StatusBarUpdating, PendingInputModePresenting, NSMenuDelegate, @unchecked Sendable {
     
     // MARK: - Singleton
     
@@ -102,7 +137,7 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate
     // MARK: - Properties
     
     private var statusItem: NSStatusItem?
-    private var lastMode: InputMode?
+    private var modePresentation = InputModePresentationState()
     private var monitorBackend: InputMonitorBackend = .starting
     private var monitorLimitations: [ToggleMonitorIssue] = []
     private var monitorStatusObserver: NSObjectProtocol?
@@ -130,7 +165,7 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate
         statusItem?.isVisible = true
 
         if let button = statusItem?.button {
-            applyMode(lastMode ?? .korean, to: button)
+            applyMode(modePresentation.displayedMode, to: button)
         }
 
         setupMenu()
@@ -216,7 +251,7 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate
 
     @MainActor
     private func refreshInputHealth() {
-        let mode = lastMode ?? .korean
+        let mode = modePresentation.displayedMode
         let metadata = InputHealthMetadata(
             monitorBackend: monitorBackend,
             monitorHasLimitations: !monitorLimitations.isEmpty,
@@ -328,15 +363,52 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate
     /// the system input-source indicator (no fade), and uses the native plain-title
     /// rendering set up in `applyMode`.
     public func setMode(_ mode: InputMode) {
-        Task { @MainActor [weak self] in
-            guard let self, self.lastMode != mode else { return }
-            self.lastMode = mode
-            if let button = self.statusItem?.button {
-                self.applyMode(mode, to: button)
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                applyActualMode(mode)
             }
-            self.refreshInputHealth()
-            DebugLogger.log("StatusBarManager: Mode set to \(mode)")
+            return
         }
+
+        Task { @MainActor [weak self] in
+            self?.applyActualMode(mode)
+        }
+    }
+
+    /// Show the mode expected after a deferred system-ownership reconciliation.
+    /// This changes presentation only; `setMode` remains the actual-mode writer.
+    func setPendingMode(_ mode: InputMode?) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                applyPendingMode(mode)
+            }
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            self?.applyPendingMode(mode)
+        }
+    }
+
+    @MainActor
+    private func applyActualMode(_ mode: InputMode) {
+        guard modePresentation.setActualMode(mode) else { return }
+        updateDisplayedMode()
+        DebugLogger.log("StatusBarManager: Mode set to \(mode)")
+    }
+
+    @MainActor
+    private func applyPendingMode(_ mode: InputMode?) {
+        guard modePresentation.setPendingMode(mode) else { return }
+        updateDisplayedMode()
+    }
+
+    @MainActor
+    private func updateDisplayedMode() {
+        if let button = statusItem?.button {
+            applyMode(modePresentation.displayedMode, to: button)
+        }
+        refreshInputHealth()
     }
 
     /// Report which keyboard monitor owns custom toggle detection. No key or

@@ -35,7 +35,8 @@
 ASCII-capable keyboard layout(Dvorak·AZERTY 등)을 대신 적용한다.
 Caps Lock 기반 전환은 예외로 macOS가 실제 TIS source를 소유하고, 이때 PriType custom toggle은 비활성화한다.
 macOS 소유권 활성화 또는 ABC→PriType 재선택 경계는 pending으로 기록하고, 다음 비보안 PriType
-keyDown에서 내부 mode를 한국어로 정합화한다.
+keyDown에서 내부 mode를 한국어로 정합화한다. 경계가 확정된 동안 상태바는 실제 mode를 쓰지 않고
+다음 일반 입력의 예상 mode인 `한`을 먼저 표시한다.
 
 ---
 
@@ -65,7 +66,7 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 
 과거 RollbackPlan은 Korean/English 두 가짜 모드 등록을 제안했지만 채택하지 않는다. 이유:
 
-- 메뉴바 모드 표시는 앱 시작 시 초기화되는 [StatusBarManager](../Sources/PriTypeCore/StatusBarManager.swift)의 `한`/`A`가 담당한다.
+- 메뉴바 모드 표시는 앱 시작 시 초기화되는 [StatusBarManager](../Sources/PriTypeCore/StatusBarManager.swift)의 `한`/`A`가 담당한다. pending 소유권 정합화가 있으면 실제 저장 mode보다 다음 일반 입력의 예상 mode를 우선 표시한다.
   가짜 영어 모드의 유일한 명분(메뉴 표시)이 불필요하다.
 - 두 모드는 전환마다 `selectInputMode:`라는 **또 다른 비동기 IMK 호출을 hot path에 추가**한다.
   이는 `composer.inputMode`와 desync 가능 → 우리가 제거하려던 race를 재도입한다.
@@ -73,7 +74,8 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 
 **트레이드오프(수용):** 영어 모드일 때도 macOS 메뉴바의 입력 소스 아이콘은 PriType(한글)로 남는다.
 이는 2.6.5와 동일한 화면상 사소함이며, 사용자에겐 PriType 자체 `한`/`A` 표시가 실질 지표다.
-상태바 메뉴는 현재 모드와 중앙 감시 backend, IOKit 제한 사항, 손쉬운 사용 권한, 시스템 Secure Input 활성 여부만 표시하며 입력 문자열·preedit·문서 내용은 수집하지 않는다.
+상태바 메뉴는 실제 또는 pending 예상 모드와 중앙 감시 backend, IOKit 제한 사항, 손쉬운 사용 권한,
+시스템 Secure Input 활성 여부만 표시하며 입력 문자열·preedit·문서 내용은 수집하지 않는다.
 
 ### 2.2 상태 소유권
 
@@ -86,7 +88,7 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 | 감시 backend 단일 소유권·제한 | `ToggleMonitorStatusStore` | CGEventTap/IOKit 동시 실행 방지, IOKit 미지원 바인딩 노출 |
 | IMK 세션 edge(commit·override·layout) | `PriTypeInputController` | imperative 경계 |
 | 실제 TIS source 선택 | **macOS만** | Caps Lock 경로 한정 |
-| 사용자 표시(한/A)·입력 상태 metadata | `StatusBarManager` | 입력 문자열 미수집 |
+| 사용자 표시(한/A)·입력 상태 metadata | `StatusBarManager` | `setMode` actual, `setPendingMode` expected; pending 우선, 실제 mode/client 불변 |
 | TIS 조회·stale 정리 | `InputSourceManager` | hot path 제외 |
 
 ---
@@ -161,6 +163,7 @@ Tap/IOKit  ──requestToggle(source)──►  InputModeCoordinator
 TIS/소유권 알림 ──► InputModeOwnershipTracker
    경계가 아니거나 TIS 조회 실패: no-op, 상태 추정 금지
    실제 경계: pending Korean reconciliation만 기록
+   StatusBarManager: pending `한` 표시만 갱신 (InputModeStore/client 불변)
 
 다음 PriType keyDown
    1. session/context 확인 및 중복 keyDown 판정
@@ -177,7 +180,7 @@ TIS/소유권 알림 ──► InputModeOwnershipTracker
 
 - active controller가 없으면 composer mode만 단독으로 바꾸지 않는다(다음 activate에서 stale state로 첫 글자 엉킴 방지).
 - active session이 없으면 custom toggle은 no-op이다.
-- Secure Input client에서는 pending 소유권 정합화를 실행하지 않으며 text commit이나 mode write도 하지 않는다.
+- Secure Input client에서는 pending 예상 `한` 표시는 유지하되 소유권 정합화를 실행하지 않으며 text commit이나 mode write도 하지 않는다.
 - TIS source를 조회할 수 없으면 선택 source를 추정하지 않는다.
 - Caps Lock 소유 상태면 custom toggle은 진입 자체가 거부된다.
 

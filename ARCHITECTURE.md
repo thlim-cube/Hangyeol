@@ -202,7 +202,7 @@ libhangul preedit: ᄆ (U+1106)
 | **HanjaManager** | 한자 사전 로더 + 자모 특수문자 검색. `hanja.txt`를 `HanjaTable`에 적재하고, `jamo_symbols.json`에서 자모 특수문자를 로딩한다. LRU 캐시(32개, NSLock 보호)로 재검색 시 사전 접근을 생략한다. 초성 자모(U+1100~) → 호환 자모(U+3131~) 변환을 포함한다. |
 | **ConfigurationManager** | `UserDefaults` 기반 설정 관리. 자판 배열, `KeyBinding`(한/영 전환키·한자 입력키), 자동 대문자, 더블스페이스 마침표, 자동 업데이트 확인 옵션을 저장한다. 기존 `ToggleKey` enum에서 `KeyBinding` struct로의 자동 마이그레이션을 지원한다. `ConfigurationProviding` 프로토콜로 테스트 시 목(mock) 주입이 가능하다. |
 | **SettingsWindowController** | SwiftUI `NSHostingController` 기반 설정 창. Liquid Glass 스타일, Key Recorder(키 녹음) UI, 접근성 권한 확인/요청, Caps Lock 입력 소스 전환 안내를 포함한다. |
-| **StatusBarManager** | 앱 시작 시 생성되는 `NSStatusItem` 기반 표시기. 현재 모드를 시스템 글꼴의 `"한"` / `"A"` plain title로 표시하고 전환 즉시 바꾼다(fade 없음). 중앙 감시 상태에서 backend·제한 사항을 받아 손쉬운 사용 권한과 Secure Input 상태를 함께 표시하되 입력 문자열은 받지 않는다. |
+| **StatusBarManager** | 앱 시작 시 생성되는 `NSStatusItem` 기반 표시기. `setMode(_:)`는 실제 mode를 기록하고, `setPendingMode(_:)`는 client/store를 건드리지 않는 다음 일반 입력 예상 mode만 기록한다. 한국어 정합화가 예정되면 실제 mode를 쓰기 전에 `"한"`을 우선 표시하며 실제 mode write·취소·정합화 완료 시 pending을 제거한다. 중앙 감시 상태에서 backend·제한 사항을 받아 손쉬운 사용 권한과 Secure Input 상태를 함께 표시하되 입력 문자열은 받지 않는다. |
 | **TextConvenienceHandler** | macOS 더블스페이스 마침표 설정을 한글 조합 경로에서 반영한다. 영어 모드는 순수 pass-through라 이 핸들러를 거치지 않는다(영문 편의는 macOS 소유). |
 | **UpdateChecker** | GitHub Releases API를 통해 최신 버전을 확인한다. 24시간 스로틀, 실패 시 다음 실행 시 재시도, 시맨틱 버전 비교(`.numeric`)를 사용한다. |
 | **UpdateNotifier** | `UNUserNotificationCenter`를 사용해 업데이트 알림을 표시한다. 알림 클릭 시 릴리즈 페이지를 연다. |
@@ -242,7 +242,8 @@ fail-closed 정책을 사용한다.
 - 전역 플래그가 꺼져 있어도 client가 marked-text capability를 제공하지 않고 selection도 무효이면
   secure/non-text 영역으로 보고 pass-through한다.
 - pass-through 진입 시 libhangul과 delivery adapter의 추적만 버리고 client 문서에는 commit·clear를
-  보내지 않는다. pending Caps/TIS 소유권 정합화도 Secure Input 게이트 뒤로 미룬다.
+  보내지 않는다. pending Caps/TIS 소유권 정합화도 Secure Input 게이트 뒤로 미룬다. 상태바에는
+  다음 일반 입력의 예상 `한`만 표시하며 실제 `InputModeStore`와 client는 변경하지 않는다.
 
 ## 동시성 (Concurrency) 및 스레드 안전성
 
