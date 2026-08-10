@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import CoreGraphics
 @testable import PriTypeCore
 
 // MARK: - ConfigurationManager Tests
@@ -173,6 +174,34 @@ struct ConfigurationManagerTests {
         
         #expect(toggle != hanja)
         #expect(toggle == duplicate)
+    }
+
+    @Test("Settings conflicts only on the same key and exact recorded modifiers")
+    func semanticKeyBindingConflictDetection() {
+        let controlSpace = KeyBinding(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue,
+            displayName: "Control + Space"
+        )
+        let sameShortcutDifferentLabel = KeyBinding(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue,
+            displayName: "Stored legacy label"
+        )
+        let optionSpace = KeyBinding(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskAlternate.rawValue,
+            displayName: "Option + Space"
+        )
+        let controlShiftSpace = KeyBinding(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue | CGEventFlags.maskShift.rawValue,
+            displayName: "Control + Shift + Space"
+        )
+
+        #expect(ShortcutBindingRouter.conflicts(controlSpace, sameShortcutDifferentLabel))
+        #expect(!ShortcutBindingRouter.conflicts(controlSpace, optionSpace))
+        #expect(!ShortcutBindingRouter.conflicts(controlSpace, controlShiftSpace))
     }
     
     @Test("Legacy ToggleKey migration to KeyBinding")

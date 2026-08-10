@@ -293,7 +293,7 @@ struct SettingsView: View {
                     isRestoringKeyBinding = false
                     return
                 }
-                if newValue == hanjaKeyBinding {
+                if ShortcutBindingRouter.conflicts(newValue, hanjaKeyBinding) {
                     showRestoredConflict()
                     isRestoringKeyBinding = true
                     toggleKeyBinding = ConfigurationManager.shared.toggleKeyBinding
@@ -307,7 +307,7 @@ struct SettingsView: View {
                     isRestoringKeyBinding = false
                     return
                 }
-                if newValue == toggleKeyBinding {
+                if ShortcutBindingRouter.conflicts(newValue, toggleKeyBinding) {
                     showRestoredConflict()
                     isRestoringKeyBinding = true
                     hanjaKeyBinding = ConfigurationManager.shared.hanjaKeyBinding

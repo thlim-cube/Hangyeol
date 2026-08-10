@@ -336,6 +336,147 @@ struct SuppressedKeyPairTests {
     }
 }
 
+@Suite("Shortcut binding routing")
+struct ShortcutBindingRoutingTests {
+    private let controlSpace = KeyBinding(
+        keyCode: 49,
+        modifiers: CGEventFlags.maskControl.rawValue,
+        displayName: "Control + Space"
+    )
+    private let optionSpace = KeyBinding(
+        keyCode: 49,
+        modifiers: CGEventFlags.maskAlternate.rawValue,
+        displayName: "Option + Space"
+    )
+
+    @Test("Same base key with disjoint modifiers routes each configured action")
+    func disjointModifiersRouteIndependently() {
+        #expect(ShortcutBindingRouter.routeRegularKey(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue,
+            toggleBinding: controlSpace,
+            hanjaBinding: optionSpace,
+            priTypeToggleEnabled: true
+        ) == .toggle)
+        #expect(ShortcutBindingRouter.routeRegularKey(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskAlternate.rawValue,
+            toggleBinding: controlSpace,
+            hanjaBinding: optionSpace,
+            priTypeToggleEnabled: true
+        ) == .hanja)
+        #expect(ShortcutBindingRouter.routeRegularKey(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue | CGEventFlags.maskShift.rawValue,
+            toggleBinding: controlSpace,
+            hanjaBinding: optionSpace,
+            priTypeToggleEnabled: true
+        ) == nil)
+    }
+
+    @Test("Subset and superset modifier bindings require their exact snapshot")
+    func subsetAndSupersetRouteExactly() {
+        let controlShiftSpace = KeyBinding(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue | CGEventFlags.maskShift.rawValue,
+            displayName: "Control + Shift + Space"
+        )
+
+        #expect(ShortcutBindingRouter.routeRegularKey(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue,
+            toggleBinding: controlSpace,
+            hanjaBinding: controlShiftSpace,
+            priTypeToggleEnabled: true
+        ) == .toggle)
+        #expect(ShortcutBindingRouter.routeRegularKey(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue | CGEventFlags.maskShift.rawValue,
+            toggleBinding: controlSpace,
+            hanjaBinding: controlShiftSpace,
+            priTypeToggleEnabled: true
+        ) == .hanja)
+        #expect(ShortcutBindingRouter.routeRegularKey(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue | CGEventFlags.maskAlternate.rawValue,
+            toggleBinding: controlSpace,
+            hanjaBinding: controlShiftSpace,
+            priTypeToggleEnabled: true
+        ) == nil)
+    }
+
+    @Test("A plain binding does not consume a system shortcut with modifiers")
+    func plainBindingDoesNotMatchCommandShortcut() {
+        let plainSpace = KeyBinding(keyCode: 49, modifiers: 0, displayName: "Space")
+
+        #expect(ShortcutBindingRouter.routeRegularKey(
+            keyCode: 49,
+            modifiers: 0,
+            toggleBinding: plainSpace,
+            hanjaBinding: optionSpace,
+            priTypeToggleEnabled: true
+        ) == .toggle)
+        #expect(ShortcutBindingRouter.routeRegularKey(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskCommand.rawValue,
+            toggleBinding: plainSpace,
+            hanjaBinding: optionSpace,
+            priTypeToggleEnabled: true
+        ) == nil)
+    }
+
+    @Test("Unrecorded event flags do not break an exact shortcut")
+    func irrelevantFlagsAreIgnored() {
+        let eventFlags = CGEventFlags.maskControl.rawValue
+            | CGEventFlags.maskAlphaShift.rawValue
+            | CGEventFlags.maskSecondaryFn.rawValue
+            | CGEventFlags.maskNumericPad.rawValue
+
+        #expect(ShortcutBindingRouter.routeRegularKey(
+            keyCode: 49,
+            modifiers: eventFlags,
+            toggleBinding: controlSpace,
+            hanjaBinding: optionSpace,
+            priTypeToggleEnabled: true
+        ) == .toggle)
+    }
+
+    @Test("Invalid exact overlap has one deterministic owner")
+    func exactOverlapPrefersToggle() {
+        let duplicate = KeyBinding(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue,
+            displayName: "Same physical shortcut"
+        )
+
+        #expect(ShortcutBindingRouter.routeRegularKey(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue,
+            toggleBinding: controlSpace,
+            hanjaBinding: duplicate,
+            priTypeToggleEnabled: true
+        ) == .toggle)
+    }
+
+    @Test("Modifier-only routing also assigns at most one action")
+    func modifierOnlyRouteHasOneOwner() {
+        let duplicateToggle = KeyBinding(keyCode: 54, modifiers: 0, displayName: "Same Right Command")
+
+        #expect(ShortcutBindingRouter.routeModifierKey(
+            keyCode: 54,
+            toggleBinding: .defaultToggle,
+            hanjaBinding: duplicateToggle,
+            priTypeToggleEnabled: true
+        ) == .toggle)
+        #expect(ShortcutBindingRouter.routeModifierKey(
+            keyCode: 61,
+            toggleBinding: .defaultToggle,
+            hanjaBinding: .defaultHanja,
+            priTypeToggleEnabled: true
+        ) == .hanja)
+    }
+}
+
 @Suite("IOKit fallback capabilities")
 struct IOKitFallbackCapabilityTests {
     @Test("Modifier-only bindings are supported without limitations")

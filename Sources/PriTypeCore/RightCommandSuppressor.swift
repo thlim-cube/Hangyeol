@@ -281,11 +281,14 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 return nil
             }
 
-            if transition == .down,
-               priTypeToggleEnabled,
-               toggleBinding.isModifierKey,
-               toggleBinding.isModifierOnly,
-               keyCode == toggleBinding.keyCode {
+            let route = transition == .down ? ShortcutBindingRouter.routeModifierKey(
+                keyCode: keyCode,
+                toggleBinding: toggleBinding,
+                hanjaBinding: hanjaBinding,
+                priTypeToggleEnabled: priTypeToggleEnabled
+            ) : nil
+
+            if route == .toggle {
                 suppressedToggleModifierKeyCode = keyCode
                 modifierKeyState.suppressUntilRelease(keyCode: keyCode)
                 DebugLogger.event("toggle.requested", metadata: [
@@ -295,11 +298,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 return nil
             }
 
-            if transition == .down,
-               hanjaBinding.isModifierKey,
-               hanjaBinding.isModifierOnly,
-               keyCode == hanjaBinding.keyCode,
-               keyCode != toggleBinding.keyCode,
+            if route == .hanja,
                HanjaShortcutSuppressionPolicy.allowsSuppression(
                    binding: hanjaBinding,
                    sessionState: HanjaShortcutSessionStateStore.shared.state
@@ -351,39 +350,14 @@ public final class RightCommandSuppressor: @unchecked Sendable {
 
         if type == .keyDown {
             let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-            let toggleMatches = priTypeToggleEnabled
-                && keyCode == toggleBinding.keyCode
-                && !toggleBinding.isModifierKey
-                && (toggleBinding.isModifierOnly || Self.hasRequiredModifiers(
-                    flags: event.flags,
-                    required: CGEventFlags(rawValue: toggleBinding.modifiers)
-                ))
-
-            switch regularKeyState.keyDown(
+            let route = ShortcutBindingRouter.routeRegularKey(
                 keyCode: keyCode,
-                isRepeat: isRepeat,
-                matchesBinding: toggleMatches
-            ) {
-            case .triggerAndSuppress:
-                DebugLogger.event("toggle.requested", metadata: [
-                    .state("backend", "event_tap")
-                ])
-                triggerToggle()
-                return nil
-            case .suppress:
-                return nil
-            case .passThrough:
-                break
-            }
-
-            let hanjaMatches = keyCode == hanjaBinding.keyCode
-                && !hanjaBinding.isModifierKey
-                && keyCode != toggleBinding.keyCode
-                && (hanjaBinding.isModifierOnly || Self.hasRequiredModifiers(
-                    flags: event.flags,
-                    required: CGEventFlags(rawValue: hanjaBinding.modifiers)
-                ))
-            let hanjaSuppressionAllowed = hanjaMatches && HanjaShortcutSuppressionPolicy.allowsSuppression(
+                modifiers: event.flags.rawValue,
+                toggleBinding: toggleBinding,
+                hanjaBinding: hanjaBinding,
+                priTypeToggleEnabled: priTypeToggleEnabled
+            )
+            let suppressionAllowed = route != .hanja || HanjaShortcutSuppressionPolicy.allowsSuppression(
                 binding: hanjaBinding,
                 sessionState: HanjaShortcutSessionStateStore.shared.state
             )
@@ -391,15 +365,26 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             switch regularKeyState.keyDown(
                 keyCode: keyCode,
                 isRepeat: isRepeat,
-                matchesBinding: hanjaMatches,
-                suppressionAllowed: hanjaSuppressionAllowed
+                matchesBinding: route != nil,
+                suppressionAllowed: suppressionAllowed
             ) {
             case .triggerAndSuppress:
-                DebugLogger.event("hanja.requested", metadata: [
-                    .state("backend", "event_tap")
-                ])
-                triggerHanjaLookup()
-                return nil
+                switch route {
+                case .toggle:
+                    DebugLogger.event("toggle.requested", metadata: [
+                        .state("backend", "event_tap")
+                    ])
+                    triggerToggle()
+                    return nil
+                case .hanja:
+                    DebugLogger.event("hanja.requested", metadata: [
+                        .state("backend", "event_tap")
+                    ])
+                    triggerHanjaLookup()
+                    return nil
+                case nil:
+                    return Unmanaged.passUnretained(event)
+                }
             case .suppress:
                 return nil
             case .passThrough:
@@ -465,11 +450,6 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         )
     }
     
-    /// Check if event flags contain required modifier flags
-    private static func hasRequiredModifiers(flags: CGEventFlags, required: CGEventFlags) -> Bool {
-        return flags.intersection(required) == required
-    }
-
     private func tearDownEventTap() {
         if let eventTap {
             CGEvent.tapEnable(tap: eventTap, enable: false)

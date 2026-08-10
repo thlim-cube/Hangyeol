@@ -272,7 +272,13 @@ public final class IOKitManager: @unchecked Sendable {
         let hanjaUsage = Self.hidUsage(for: hanjaBinding.keyCode)
 
         // Check for toggle key (only for modifier-only bindings)
-        if priTypeToggleEnabled && toggleBinding.isModifierOnly, let expectedUsage = toggleUsage {
+        let toggleRoute = ShortcutBindingRouter.routeModifierKey(
+            keyCode: toggleBinding.keyCode,
+            toggleBinding: toggleBinding,
+            hanjaBinding: hanjaBinding,
+            priTypeToggleEnabled: priTypeToggleEnabled
+        )
+        if toggleRoute == .toggle, let expectedUsage = toggleUsage {
             switch togglePressState.handle(usage: usage, pressed: pressed, toggleUsage: expectedUsage) {
             case .pressed:
                 toggleTraceLifecycle.begin()
@@ -317,10 +323,15 @@ public final class IOKitManager: @unchecked Sendable {
             resetTogglePressState()
         }
 
-        if hanjaBinding.isModifierOnly,
-           let expectedUsage = hanjaUsage, usage == expectedUsage,
-           hanjaBinding.keyCode != toggleBinding.keyCode {
-            // Hanja key (only if different from toggle key)
+        let hanjaRoute = ShortcutBindingRouter.routeModifierKey(
+            keyCode: hanjaBinding.keyCode,
+            toggleBinding: toggleBinding,
+            hanjaBinding: hanjaBinding,
+            priTypeToggleEnabled: priTypeToggleEnabled
+        )
+        if hanjaRoute == .hanja,
+           let expectedUsage = hanjaUsage, usage == expectedUsage {
+            // Hanja key
             if pressed && !hanjaKeyIsDown {
                 hanjaKeyIsDown = true
                 

@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// 전환키 감시를 실제로 소유한 시스템 backend입니다.
 enum ToggleMonitorBackend: String, Equatable, Sendable {
@@ -221,6 +222,79 @@ enum SuppressedKeyAction: Equatable {
     case passThrough
     case suppress
     case triggerAndSuppress
+}
+
+enum ShortcutBindingRoute: Equatable {
+    case toggle
+    case hanja
+}
+
+/// Key Recorder가 저장하는 modifier snapshot과 동일한 규칙으로
+/// 한/영 전환과 한자 단축키 중 하나만 선택합니다.
+enum ShortcutBindingRouter {
+    private static let recordedModifierMask = CGEventFlags([
+        .maskCommand,
+        .maskAlternate,
+        .maskControl,
+        .maskShift
+    ])
+
+    static func conflicts(_ lhs: KeyBinding, _ rhs: KeyBinding) -> Bool {
+        lhs.keyCode == rhs.keyCode
+            && normalizedModifiers(lhs.modifiers) == normalizedModifiers(rhs.modifiers)
+    }
+
+    static func routeRegularKey(
+        keyCode: Int64,
+        modifiers: UInt64,
+        toggleBinding: KeyBinding,
+        hanjaBinding: KeyBinding,
+        priTypeToggleEnabled: Bool
+    ) -> ShortcutBindingRoute? {
+        if priTypeToggleEnabled,
+           matchesRegularKey(toggleBinding, keyCode: keyCode, modifiers: modifiers) {
+            return .toggle
+        }
+        if matchesRegularKey(hanjaBinding, keyCode: keyCode, modifiers: modifiers) {
+            return .hanja
+        }
+        return nil
+    }
+
+    static func routeModifierKey(
+        keyCode: Int64,
+        toggleBinding: KeyBinding,
+        hanjaBinding: KeyBinding,
+        priTypeToggleEnabled: Bool
+    ) -> ShortcutBindingRoute? {
+        if priTypeToggleEnabled, matchesModifierKey(toggleBinding, keyCode: keyCode) {
+            return .toggle
+        }
+        if matchesModifierKey(hanjaBinding, keyCode: keyCode) {
+            return .hanja
+        }
+        return nil
+    }
+
+    private static func matchesRegularKey(
+        _ binding: KeyBinding,
+        keyCode: Int64,
+        modifiers: UInt64
+    ) -> Bool {
+        !binding.isModifierKey
+            && binding.keyCode == keyCode
+            && normalizedModifiers(binding.modifiers) == normalizedModifiers(modifiers)
+    }
+
+    private static func matchesModifierKey(_ binding: KeyBinding, keyCode: Int64) -> Bool {
+        binding.isModifierKey
+            && binding.isModifierOnly
+            && binding.keyCode == keyCode
+    }
+
+    private static func normalizedModifiers(_ modifiers: UInt64) -> UInt64 {
+        CGEventFlags(rawValue: modifiers).intersection(recordedModifierMask).rawValue
+    }
 }
 
 /// Event tap에서 IMK client를 조회하지 않고 판단할 수 있는 마지막 client 상태입니다.
