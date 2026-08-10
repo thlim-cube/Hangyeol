@@ -15,6 +15,7 @@
 "status.korean" = "한글";
 "status.english" = "영문";
 "status.monitor" = "전환키 감시";
+"status.monitorLimitations" = "감시 제한";
 "status.monitorStarting" = "시작 중";
 "status.monitorWaitingForPermission" = "권한 대기 중";
 "status.monitorUnavailable" = "사용 불가";
@@ -22,6 +23,9 @@
 "status.systemSecureInput" = "시스템 보안 입력";
 "status.active" = "활성";
 "status.inactive" = "비활성";
+"status.unsupportedIOKitToggleBinding" = "IOKit에서 %@ 전환키 미지원";
+"status.unsupportedIOKitHanjaBinding" = "IOKit에서 %@ 한자키 미지원";
+"status.iokitOpenFailed" = "IOKit 연결 실패 (오류 %d)";
 
 /* Keyboard Layout */
 "keyboard.title" = "자판 배열";

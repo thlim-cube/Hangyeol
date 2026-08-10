@@ -14,8 +14,7 @@ public protocol StatusBarUpdating: AnyObject {
 /// The currently active system-wide toggle-key monitor.
 ///
 /// This is deliberately a small presentation contract. The monitor remains the
-/// owner of its lifecycle; the status bar only reports the backend selected by
-/// the launch wiring.
+/// owner of its lifecycle; the status bar renders the central monitor status.
 public enum InputMonitorBackend: Sendable, Equatable {
     case starting
     case waitingForAccessibility
@@ -26,11 +25,12 @@ public enum InputMonitorBackend: Sendable, Equatable {
 
 struct InputHealthMetadata: Sendable {
     let monitorBackend: InputMonitorBackend
+    let monitorHasLimitations: Bool
     let accessibilityGranted: Bool
     let secureInputActive: Bool
 
     var needsAttention: Bool {
-        !accessibilityGranted || monitorBackend == .unavailable
+        !accessibilityGranted || monitorBackend == .unavailable || monitorHasLimitations
     }
 
     var isStarting: Bool {
@@ -39,6 +39,30 @@ struct InputHealthMetadata: Sendable {
 
     var usesFallback: Bool {
         monitorBackend == .iokitFallback
+    }
+}
+
+struct InputMonitorPresentation: Equatable {
+    let backend: InputMonitorBackend
+    let limitations: [ToggleMonitorIssue]
+
+    init(status: ToggleMonitorStatus) {
+        switch status {
+        case .stopped, .starting, .transitioning:
+            backend = .starting
+            limitations = []
+        case .running(backend: .eventTap, limitations: let issues):
+            backend = .cgEventTap
+            limitations = issues
+        case .running(backend: .iokit, limitations: let issues):
+            backend = .iokitFallback
+            limitations = issues
+        case .unavailable(let issue):
+            backend = issue == .accessibilityPermissionRequired
+                ? .waitingForAccessibility
+                : .unavailable
+            limitations = [issue]
+        }
     }
 }
 
@@ -59,9 +83,12 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate
     private var statusItem: NSStatusItem?
     private var lastMode: InputMode?
     private var monitorBackend: InputMonitorBackend = .starting
+    private var monitorLimitations: [ToggleMonitorIssue] = []
+    private var monitorStatusObserver: NSObjectProtocol?
     private var healthSummaryItem: NSMenuItem?
     private var currentModeItem: NSMenuItem?
     private var monitorBackendItem: NSMenuItem?
+    private var monitorLimitationsItem: NSMenuItem?
     private var accessibilityItem: NSMenuItem?
     private var secureInputItem: NSMenuItem?
     
@@ -86,6 +113,7 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate
         }
 
         setupMenu()
+        observeToggleMonitorStatus()
         refreshInputHealth()
         DebugLogger.log("StatusBarManager: Created status item with menu")
     }
@@ -119,10 +147,12 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate
         healthSummaryItem = metadataMenuItem()
         currentModeItem = metadataMenuItem()
         monitorBackendItem = metadataMenuItem()
+        monitorLimitationsItem = metadataMenuItem()
         accessibilityItem = metadataMenuItem()
         secureInputItem = metadataMenuItem()
 
-        [healthSummaryItem, currentModeItem, monitorBackendItem, accessibilityItem, secureInputItem]
+        [healthSummaryItem, currentModeItem, monitorBackendItem, monitorLimitationsItem,
+         accessibilityItem, secureInputItem]
             .compactMap { $0 }
             .forEach(menu.addItem)
 
@@ -168,6 +198,7 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate
         let mode = lastMode ?? .korean
         let metadata = InputHealthMetadata(
             monitorBackend: monitorBackend,
+            monitorHasLimitations: !monitorLimitations.isEmpty,
             accessibilityGranted: AXIsProcessTrusted(),
             secureInputActive: IsSecureEventInputEnabled()
         )
@@ -189,6 +220,8 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate
         healthSummaryItem?.image = menuImage(health.symbol)
         currentModeItem?.title = "\(L10n.status.currentMode): \(modeLabel(mode))"
         monitorBackendItem?.title = "\(L10n.status.monitor): \(monitorLabel(monitorBackend))"
+        monitorLimitationsItem?.isHidden = monitorLimitations.isEmpty
+        monitorLimitationsItem?.title = "\(L10n.status.monitorLimitations): \(monitorLimitations.map(monitorIssueLabel).joined(separator: " · "))"
         accessibilityItem?.title = "\(L10n.system.accessibility): \(metadata.accessibilityGranted ? L10n.system.accessibilityGranted : L10n.status.permissionRequired)"
         secureInputItem?.title = "\(L10n.status.systemSecureInput): \(metadata.secureInputActive ? L10n.status.active : L10n.status.inactive)"
 
@@ -214,6 +247,46 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate
         case .iokitFallback: return "IOKit"
         case .unavailable: return L10n.status.monitorUnavailable
         }
+    }
+
+    @MainActor
+    private func monitorIssueLabel(_ issue: ToggleMonitorIssue) -> String {
+        switch issue {
+        case .accessibilityPermissionRequired:
+            return L10n.status.permissionRequired
+        case .unsupportedIOKitToggleBinding(let binding):
+            return String(format: L10n.status.unsupportedIOKitToggleBinding, binding)
+        case .unsupportedIOKitHanjaBinding(let binding):
+            return String(format: L10n.status.unsupportedIOKitHanjaBinding, binding)
+        case .iokitOpenFailed(let code):
+            return String(format: L10n.status.iokitOpenFailed, code)
+        }
+    }
+
+    @MainActor
+    private func observeToggleMonitorStatus() {
+        guard monitorStatusObserver == nil else { return }
+        monitorStatusObserver = NotificationCenter.default.addObserver(
+            forName: .toggleMonitorStatusChanged,
+            object: ToggleMonitorStatusStore.shared,
+            queue: .main
+        ) { [weak self] notification in
+            guard let status = notification.userInfo?["status"] as? ToggleMonitorStatus else {
+                return
+            }
+            Task { @MainActor [weak self] in
+                self?.applyToggleMonitorStatus(status)
+            }
+        }
+        applyToggleMonitorStatus(ToggleMonitorStatusStore.shared.status)
+    }
+
+    @MainActor
+    private func applyToggleMonitorStatus(_ status: ToggleMonitorStatus) {
+        let presentation = InputMonitorPresentation(status: status)
+        monitorBackend = presentation.backend
+        monitorLimitations = presentation.limitations
+        refreshInputHealth()
     }
     
     // MARK: - Menu Actions
@@ -259,8 +332,12 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate
     /// text payload is accepted, so the health UI cannot expose typed content.
     public func setMonitorBackend(_ backend: InputMonitorBackend) {
         Task { @MainActor [weak self] in
-            guard let self, self.monitorBackend != backend else { return }
+            guard let self,
+                  self.monitorBackend != backend || !self.monitorLimitations.isEmpty else {
+                return
+            }
             self.monitorBackend = backend
+            self.monitorLimitations = []
             self.refreshInputHealth()
         }
     }
@@ -269,6 +346,10 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate
     
     @MainActor
     public func remove() {
+        if let monitorStatusObserver {
+            NotificationCenter.default.removeObserver(monitorStatusObserver)
+            self.monitorStatusObserver = nil
+        }
         if let item = statusItem {
             NSStatusBar.system.removeStatusItem(item)
             statusItem = nil
@@ -276,6 +357,7 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate
         healthSummaryItem = nil
         currentModeItem = nil
         monitorBackendItem = nil
+        monitorLimitationsItem = nil
         accessibilityItem = nil
         secureInputItem = nil
     }

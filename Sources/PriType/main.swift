@@ -120,7 +120,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         RightCommandSuppressor.shared.onTapFailed = {
             DebugLogger.log("CGEventTap stopped repeatedly — activating IOKit fallback")
             let started = IOKitManager.shared.start()
-            StatusBarManager.shared.setMonitorBackend(started ? .iokitFallback : .unavailable)
             DebugLogger.log("IOKit fallback start = \(started)")
         }
         
@@ -129,12 +128,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         
         // IOKit backup: Only start and activate actual toggle if CGEventTap failed
         if eventTapStarted {
-            StatusBarManager.shared.setMonitorBackend(.cgEventTap)
             DebugLogger.log("Primary: CGEventTap started successfully")
         } else {
             DebugLogger.log("Primary: CGEventTap FAILED - IOKit taking over as primary")
             let started = IOKitManager.shared.start()
-            StatusBarManager.shared.setMonitorBackend(started ? .iokitFallback : .unavailable)
             DebugLogger.log("Primary: IOKit fallback start = \(started)")
         }
         

@@ -54,6 +54,7 @@ public enum L10n {
         public static var korean: String { localized("status.korean") }
         public static var english: String { localized("status.english") }
         public static var monitor: String { localized("status.monitor") }
+        public static var monitorLimitations: String { localized("status.monitorLimitations") }
         public static var monitorStarting: String { localized("status.monitorStarting") }
         public static var monitorWaitingForPermission: String { localized("status.monitorWaitingForPermission") }
         public static var monitorUnavailable: String { localized("status.monitorUnavailable") }
@@ -61,6 +62,9 @@ public enum L10n {
         public static var systemSecureInput: String { localized("status.systemSecureInput") }
         public static var active: String { localized("status.active") }
         public static var inactive: String { localized("status.inactive") }
+        public static var unsupportedIOKitToggleBinding: String { localized("status.unsupportedIOKitToggleBinding") }
+        public static var unsupportedIOKitHanjaBinding: String { localized("status.unsupportedIOKitHanjaBinding") }
+        public static var iokitOpenFailed: String { localized("status.iokitOpenFailed") }
     }
     
     // MARK: - Keyboard Layout

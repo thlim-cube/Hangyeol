@@ -23,11 +23,13 @@ struct StatusBarHealthTests {
     func unavailableInputMonitoringNeedsAttention() {
         let missingPermission = InputHealthMetadata(
             monitorBackend: .waitingForAccessibility,
+            monitorHasLimitations: false,
             accessibilityGranted: false,
             secureInputActive: false
         )
         let unavailableMonitor = InputHealthMetadata(
             monitorBackend: .unavailable,
+            monitorHasLimitations: false,
             accessibilityGranted: true,
             secureInputActive: false
         )
@@ -40,11 +42,13 @@ struct StatusBarHealthTests {
     func primaryAndFallbackMonitoringMetadata() {
         let primary = InputHealthMetadata(
             monitorBackend: .cgEventTap,
+            monitorHasLimitations: false,
             accessibilityGranted: true,
             secureInputActive: false
         )
         let fallback = InputHealthMetadata(
             monitorBackend: .iokitFallback,
+            monitorHasLimitations: false,
             accessibilityGranted: true,
             secureInputActive: true
         )
@@ -54,5 +58,25 @@ struct StatusBarHealthTests {
         #expect(!fallback.needsAttention)
         #expect(fallback.usesFallback)
         #expect(fallback.secureInputActive)
+    }
+
+    @Test("IOKit limitations are mapped to visible degraded health")
+    func fallbackLimitationsNeedAttention() {
+        let status = ToggleMonitorStatus.running(
+            backend: .iokit,
+            limitations: [.unsupportedIOKitToggleBinding("Control+Space")]
+        )
+        let presentation = InputMonitorPresentation(status: status)
+        let health = InputHealthMetadata(
+            monitorBackend: presentation.backend,
+            monitorHasLimitations: !presentation.limitations.isEmpty,
+            accessibilityGranted: true,
+            secureInputActive: false
+        )
+
+        #expect(presentation.backend == .iokitFallback)
+        #expect(presentation.limitations == [.unsupportedIOKitToggleBinding("Control+Space")])
+        #expect(health.needsAttention)
+        #expect(health.usesFallback)
     }
 }
