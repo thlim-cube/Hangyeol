@@ -97,7 +97,6 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     final class SessionRetirementSnapshot {
         let session: InputSession
         fileprivate let focusLossActivation: InputSession.FocusLossActivation
-        private let preparationLock = NSLock()
         private var didPrepareForReentrantActivation = false
 
         fileprivate init(session: InputSession) {
@@ -106,11 +105,9 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         }
 
         fileprivate func consumeReentrantActivationPreparation() -> Bool {
-            preparationLock.withLock {
-                guard !didPrepareForReentrantActivation else { return false }
-                didPrepareForReentrantActivation = true
-                return true
-            }
+            guard !didPrepareForReentrantActivation else { return false }
+            didPrepareForReentrantActivation = true
+            return true
         }
     }
 

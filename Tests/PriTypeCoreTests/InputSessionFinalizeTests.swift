@@ -488,7 +488,7 @@ struct InputSessionFinalizeTests {
     func secureCleanupAbandonsInvalidMarkedText() {
         let invalidations: [(String, (FakeIMKTextInput) -> Void)] = [
             ("unreadable", { client in
-                client.attributedSubstringOverride = { _ in nil }
+                client.attributedSubstringUnavailable = true
             }),
             ("garbage", { client in
                 client.markedRangeValue = NSRange(
