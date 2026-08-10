@@ -59,9 +59,9 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     /// activateServer can refresh its context, and replaced when a different client appears.
     private var session: InputSession?
 
-    /// Non-nil only while an outer `deactivateServer` can synchronously re-enter
-    /// `activateServer` through the deactivating client's final `insertText`.
-    private var deactivationInProgress: DeactivationSnapshot?
+    /// Non-nil while retiring a session can synchronously re-enter `activateServer`
+    /// through the retiring client's final `insertText`.
+    private var sessionRetirementInProgress: SessionRetirementSnapshot?
 
     /// Session-derived views for collaborators (Hanja lookup in `HangulComposer`).
     public var currentAdapter: (any HangulComposerDelegate)? { session?.adapter }
@@ -94,7 +94,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
     // MARK: - Session Management
 
-    final class DeactivationSnapshot {
+    final class SessionRetirementSnapshot {
         let session: InputSession
         fileprivate let focusLossActivation: InputSession.FocusLossActivation
         private let preparationLock = NSLock()
@@ -122,12 +122,26 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         )
     }
 
-    private func replaceSession(client: IMKTextInput, context: ClientContext) -> InputSession {
+    private func replaceSession(client: IMKTextInput, context: ClientContext) -> InputSession? {
         publishHanjaShortcutSessionState(.unknown)
         if let previous = session {
+            let retirement = Self.captureSessionRetirementSnapshot(session: previous)
+            let enclosingRetirement = sessionRetirementInProgress
+            sessionRetirementInProgress = retirement
+            defer {
+                if sessionRetirementInProgress === retirement {
+                    sessionRetirementInProgress = enclosingRetirement
+                }
+            }
             previous.composer.dismissHanjaCandidates()
             previous.finalize(reason: .sessionReplacement)
-            previous.disarmFocusLossFinalizer()
+            guard Self.finishSessionRetirement(
+                retirement,
+                currentSession: session,
+                retire: previous.disarmFocusLossFinalizer
+            ) else {
+                return nil
+            }
         }
         CursorRectResolver.invalidateCache()
 
@@ -148,10 +162,16 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         return newSession
     }
 
+    static func captureSessionRetirementSnapshot(
+        session: InputSession?
+    ) -> SessionRetirementSnapshot? {
+        session.map(SessionRetirementSnapshot.init)
+    }
+
     static func captureDeactivationSnapshot(
         session: InputSession?,
         sender: Any?
-    ) -> DeactivationSnapshot? {
+    ) -> SessionRetirementSnapshot? {
         guard let session else { return nil }
         if let senderClient = sender as? IMKTextInput,
            !session.matches(senderClient) {
@@ -161,23 +181,25 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             ])
             return nil
         }
-        return DeactivationSnapshot(session: session)
+        return SessionRetirementSnapshot(session: session)
     }
 
     /// A reentrant activation is the earliest safe point to discard the old field's
-    /// Hanja/cursor context. The outer deactivate must later leave the new activation
+    /// Hanja/cursor context. The outer retirement must later leave the new activation
     /// itself untouched.
-    static func prepareForActivationDuringDeactivation(_ snapshot: DeactivationSnapshot?) {
+    static func prepareForActivationDuringSessionRetirement(
+        _ snapshot: SessionRetirementSnapshot?
+    ) {
         guard let snapshot,
               snapshot.consumeReentrantActivationPreparation() else { return }
         snapshot.session.finishHostCommitBoundary()
     }
 
     @discardableResult
-    static func finishDeactivation(
-        _ snapshot: DeactivationSnapshot?,
+    static func finishSessionRetirement(
+        _ snapshot: SessionRetirementSnapshot?,
         currentSession: InputSession?,
-        retireController: () -> Void
+        retire: () -> Void
     ) -> Bool {
         guard let snapshot,
               currentSession === snapshot.session,
@@ -185,10 +207,42 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             return false
         }
 
-        snapshot.session.finishHostCommitBoundary()
-        snapshot.session.disarmFocusLossFinalizer()
-        retireController()
+        retire()
         return true
+    }
+
+    @discardableResult
+    static func finishDeactivation(
+        _ snapshot: SessionRetirementSnapshot?,
+        currentSession: InputSession?,
+        retireController: () -> Void
+    ) -> Bool {
+        guard let snapshot else { return false }
+        return finishSessionRetirement(snapshot, currentSession: currentSession) {
+            snapshot.session.finishHostCommitBoundary()
+            snapshot.session.disarmFocusLossFinalizer()
+            retireController()
+        }
+    }
+
+    @discardableResult
+    static func retireSessionForControllerHandoff(
+        _ snapshot: SessionRetirementSnapshot?,
+        currentSession: () -> InputSession?,
+        fieldIdentityMayHaveChanged: Bool,
+        retireController: () -> Void
+    ) -> Bool {
+        guard let snapshot else { return false }
+        snapshot.session.prepareForControllerHandoff(
+            fieldIdentityMayHaveChanged: fieldIdentityMayHaveChanged
+        )
+        return finishSessionRetirement(
+            snapshot,
+            currentSession: currentSession()
+        ) {
+            snapshot.session.finishControllerHandoff()
+            retireController()
+        }
     }
 
     /// Complete process-wide retirement only if a reentrant activation did not
@@ -217,13 +271,32 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     }
 
     private func retireForControllerHandoff(incomingClient: IMKTextInput?) {
-        Self.prepareForActivationDuringDeactivation(deactivationInProgress)
+        Self.prepareForActivationDuringSessionRetirement(sessionRetirementInProgress)
         let mayReuseField = incomingClient.map { session?.matches($0) == true } ?? true
-        session?.retireForControllerHandoff(fieldIdentityMayHaveChanged: mayReuseField)
-        NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
-        NotificationCenter.default.removeObserver(self, name: .romanKeyboardLayoutPreferenceChanged, object: nil)
-        CursorRectResolver.invalidateCache()
-        DebugLogger.event("input.controller_handoff")
+        guard let retirement = Self.captureSessionRetirementSnapshot(session: session) else {
+            NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
+            NotificationCenter.default.removeObserver(self, name: .romanKeyboardLayoutPreferenceChanged, object: nil)
+            CursorRectResolver.invalidateCache()
+            DebugLogger.event("input.controller_handoff")
+            return
+        }
+        let enclosingRetirement = sessionRetirementInProgress
+        sessionRetirementInProgress = retirement
+        defer {
+            if sessionRetirementInProgress === retirement {
+                sessionRetirementInProgress = enclosingRetirement
+            }
+        }
+        _ = Self.retireSessionForControllerHandoff(
+            retirement,
+            currentSession: { self.session },
+            fieldIdentityMayHaveChanged: mayReuseField
+        ) {
+            NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
+            NotificationCenter.default.removeObserver(self, name: .romanKeyboardLayoutPreferenceChanged, object: nil)
+            CursorRectResolver.invalidateCache()
+            DebugLogger.event("input.controller_handoff")
+        }
     }
 
     /// Event-tap callbacks cannot call IMK/client APIs. Publish only the content-free
@@ -245,7 +318,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     ///   different field of the same app, e.g. a password field).
     /// - Finder lightweight context ⇒ re-analyze per keystroke (desktop vs. rename
     ///   field can only be told apart by coordinates at keystroke time).
-    private func ensureSession(for client: IMKTextInput) -> InputSession {
+    private func ensureSession(for client: IMKTextInput) -> InputSession? {
         if let session, session.matches(client) {
             _ = session.refreshContextForInputBoundary(using: { client in
                 ClientContextDetector.analyze(client: client)
@@ -258,6 +331,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             client: client,
             context: ClientContextDetector.analyze(client: client)
         )
+        guard let newSession else { return nil }
         syncRomanKeyboardLayout(for: client)
         return newSession
     }
@@ -487,7 +561,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         #if DEBUG
         assert(Thread.isMainThread, "IMK activateServer must run on main thread")
         #endif
-        Self.prepareForActivationDuringDeactivation(deactivationInProgress)
+        Self.prepareForActivationDuringSessionRetirement(sessionRetirementInProgress)
         // The currently active owner invalidates its snapshot before IMK probing or
         // handoff. Once the claim completes, this controller republishes unknown.
         Self.sharedController?.publishHanjaShortcutSessionState(.unknown)
@@ -509,10 +583,10 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
                 DebugLogger.event("input.session_reactivated")
             } else {
                 // Analyze context lightly at activation and upgrade at first keyDown.
-                let newSession = replaceSession(
+                guard let newSession = replaceSession(
                     client: client,
                     context: ClientContextDetector.analyzeForActivation(client: client)
-                )
+                ) else { return }
                 newSession.markContextStale()
                 DebugLogger.event("input.session_activated", metadata: [
                     .flag("lightweight", newSession.context.isLightweight)
@@ -558,13 +632,14 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // deactivateServer runs, native hosts like KakaoTalk have already resigned and
         // ignore insertText. If the observer already committed, this is a no-op.
         let deactivation = Self.captureDeactivationSnapshot(session: session, sender: sender)
+        let enclosingRetirement = sessionRetirementInProgress
         if let deactivation {
             publishHanjaShortcutSessionState(.unknown)
-            deactivationInProgress = deactivation
+            sessionRetirementInProgress = deactivation
         }
         defer {
-            if deactivationInProgress === deactivation {
-                deactivationInProgress = nil
+            if sessionRetirementInProgress === deactivation {
+                sessionRetirementInProgress = enclosingRetirement
             }
         }
         _ = deactivation?.session.finalize(reason: .deactivateServer)
@@ -657,7 +732,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         #endif
 
         // 1. Resolve the session FIRST — all subsequent logic uses its fresh context.
-        let session = ensureSession(for: client)
+        guard let session = ensureSession(for: client) else { return false }
         let composer = session.composer
 
         // 2. Duplicate-keyDown suppression. Some hosts (observed: KakaoTalk) deliver
@@ -810,7 +885,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             return
         }
         guard let currentSession = session else { return }
-        let activeSession = ensureSession(for: currentSession.client)
+        guard let activeSession = ensureSession(for: currentSession.client) else { return }
         let isSecureInput = shouldPassThroughSecureInput(
             client: activeSession.client,
             context: activeSession.context

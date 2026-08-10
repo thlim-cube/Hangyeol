@@ -464,14 +464,22 @@ final class InputSession: @unchecked Sendable {
     /// Retire this session before another IMK controller becomes process-active.
     /// This runs at the new controller's activation boundary, which is earlier than
     /// the old controller's potentially late `deactivateServer` callback.
-    func retireForControllerHandoff(fieldIdentityMayHaveChanged: Bool) {
+    func prepareForControllerHandoff(fieldIdentityMayHaveChanged: Bool) {
         composer.dismissHanjaCandidates()
         if fieldIdentityMayHaveChanged {
             markContextStale()
         }
         finalize(reason: .sessionReplacement)
+    }
+
+    func finishControllerHandoff() {
         disarmFocusLossFinalizer()
         markContextStale()
+    }
+
+    func retireForControllerHandoff(fieldIdentityMayHaveChanged: Bool) {
+        prepareForControllerHandoff(fieldIdentityMayHaveChanged: fieldIdentityMayHaveChanged)
+        finishControllerHandoff()
     }
 
     // MARK: Finalize (the single composition-ending path)
