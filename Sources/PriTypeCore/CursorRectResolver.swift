@@ -213,26 +213,26 @@ public enum CursorRectResolver {
 
     /// Convert an Accessibility rect (top-left global coordinates) into AppKit's
     /// bottom-left global coordinates using the screen that contains the AX point.
-    /// Keeping screen selection explicit handles displays arranged left of or below
-    /// the main display without assuming `NSScreen.main.frame.height` is the desktop.
+    /// AX anchors (0, 0) to the menu-bar display, which AppKit exposes as the first
+    /// ("zero") screen even when `NSScreen.main` follows a focused window elsewhere.
     static func appKitRect(
         fromAccessibilityRect rect: NSRect,
-        screenFrames: [NSRect],
-        mainScreenFrame: NSRect
+        screenFrames: [NSRect]
     ) -> NSRect? {
         let scalars = [rect.origin.x, rect.origin.y, rect.size.width, rect.size.height]
         guard scalars.allSatisfy(\.isFinite), rect.size.width >= 0, rect.size.height >= 0 else {
             return nil
         }
+        guard let zeroScreenFrame = screenFrames.first else { return nil }
 
         let axPoint = rect.origin
         guard let screenFrame = screenFrames.first(where: {
-            accessibilityFrame(for: $0, mainScreenFrame: mainScreenFrame).contains(axPoint)
+            accessibilityFrame(for: $0, zeroScreenFrame: zeroScreenFrame).contains(axPoint)
         }) else {
             return nil
         }
 
-        let axScreenFrame = accessibilityFrame(for: screenFrame, mainScreenFrame: mainScreenFrame)
+        let axScreenFrame = accessibilityFrame(for: screenFrame, zeroScreenFrame: zeroScreenFrame)
         let yOffsetWithinScreen = rect.origin.y - axScreenFrame.minY
         return NSRect(
             x: rect.origin.x,
@@ -242,10 +242,10 @@ public enum CursorRectResolver {
         )
     }
 
-    private static func accessibilityFrame(for screenFrame: NSRect, mainScreenFrame: NSRect) -> NSRect {
+    private static func accessibilityFrame(for screenFrame: NSRect, zeroScreenFrame: NSRect) -> NSRect {
         NSRect(
             x: screenFrame.minX,
-            y: mainScreenFrame.maxY - screenFrame.maxY,
+            y: zeroScreenFrame.maxY - screenFrame.maxY,
             width: screenFrame.width,
             height: screenFrame.height
         )
@@ -386,7 +386,6 @@ public enum CursorRectResolver {
         DebugLogger.event("hanja.accessibility_bounds_received")
 
         let screenFrames = NSScreen.screens.map(\.frame)
-        guard let mainScreenFrame = NSScreen.main?.frame else { return nil }
 
         // Chrome returns (0, y, 0, 0) — only y is valid
         // If we have a valid y but x/width/height are zero, supplement from element position
@@ -409,8 +408,7 @@ public enum CursorRectResolver {
                 let supplemented = NSRect(x: pos.x, y: bounds.origin.y, width: 0, height: defaultHeight)
                 guard let result = appKitRect(
                     fromAccessibilityRect: supplemented,
-                    screenFrames: screenFrames,
-                    mainScreenFrame: mainScreenFrame
+                    screenFrames: screenFrames
                 ) else { return nil }
                 DebugLogger.event("hanja.accessibility_bounds_supplemented")
 
@@ -421,8 +419,7 @@ public enum CursorRectResolver {
         // Normal case: full bounds available
         guard let result = appKitRect(
             fromAccessibilityRect: bounds,
-            screenFrames: screenFrames,
-            mainScreenFrame: mainScreenFrame
+            screenFrames: screenFrames
         ) else { return nil }
 
         guard isValidCursorRect(result) else {
@@ -462,12 +459,10 @@ public enum CursorRectResolver {
         // Use the bottom-left of the element as a rough caret position.
         let defaultHeight: CGFloat = 18
         let screenFrames = NSScreen.screens.map(\.frame)
-        guard let mainScreenFrame = NSScreen.main?.frame,
-              let elementRect = appKitRect(
-                  fromAccessibilityRect: NSRect(origin: pos, size: size),
-                  screenFrames: screenFrames,
-                  mainScreenFrame: mainScreenFrame
-              ) else { return nil }
+        guard let elementRect = appKitRect(
+            fromAccessibilityRect: NSRect(origin: pos, size: size),
+            screenFrames: screenFrames
+        ) else { return nil }
         let result = NSRect(x: elementRect.minX, y: elementRect.minY, width: 0, height: defaultHeight)
 
         DebugLogger.event("hanja.cursor_resolved", metadata: [

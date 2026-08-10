@@ -30,22 +30,22 @@ struct HanjaCursorGeometryTests {
     func convertsLeftDisplayAccessibilityRect() throws {
         let converted = try #require(CursorRectResolver.appKitRect(
             fromAccessibilityRect: NSRect(x: -1_000, y: 100, width: 0, height: 18),
-            screenFrames: [main, left, below],
-            mainScreenFrame: main
+            screenFrames: [main, left, below]
         ))
 
         #expect(converted == NSRect(x: -1_000, y: 962, width: 0, height: 18))
     }
 
-    @Test("Converts AX coordinates using a display below the main display")
-    func convertsBelowDisplayAccessibilityRect() throws {
+    @Test("Keeps the AX origin on the zero screen when focus is on a display below")
+    func convertsBelowDisplayAgainstZeroScreen() throws {
+        let focusedScreenFrame = below
         let converted = try #require(CursorRectResolver.appKitRect(
             fromAccessibilityRect: NSRect(x: 500, y: 1_200, width: 0, height: 18),
-            screenFrames: [main, left, below],
-            mainScreenFrame: main
+            screenFrames: [main, left, focusedScreenFrame]
         ))
 
         #expect(converted == NSRect(x: 500, y: -138, width: 0, height: 18))
+        #expect(focusedScreenFrame.contains(converted.origin))
     }
 
     @Test("Rejects non-finite, subnormal, and off-screen coordinates")
