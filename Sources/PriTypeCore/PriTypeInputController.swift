@@ -113,12 +113,28 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             composer: makeComposer(),
             invalidateHanjaShortcutSessionState: { [weak self] in
                 self?.publishHanjaShortcutSessionState(.unknown)
+            },
+            retireActiveControllerAfterFocusLoss: { [weak self] retiredSession in
+                self?.retireAfterAppFocusLoss(retiredSession)
             }
         )
         newSession.composer.updateKeyboardLayout(id: ConfigurationManager.shared.keyboardId)
         session = newSession
         newSession.armFocusLossFinalizer()
         return newSession
+    }
+
+    /// Complete process-wide retirement only if a reentrant activation did not
+    /// replace the session while the old host accepted its focus-loss commit.
+    private func retireAfterAppFocusLoss(_ retiredSession: InputSession) {
+        guard session === retiredSession else { return }
+        CursorRectResolver.invalidateCache()
+        NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .romanKeyboardLayoutPreferenceChanged, object: nil)
+        Self.activeControllerRegistry.release(self)
+        DebugLogger.event("input.controller_retired", metadata: [
+            .state("reason", "app_focus_loss")
+        ])
     }
 
     /// IMK creates one controller per client input session. A newly activated
@@ -733,6 +749,12 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         #if DEBUG
         assert(Thread.isMainThread, "External Hanja lookup must run on main thread")
         #endif
+        guard Self.sharedController === self else {
+            DebugLogger.event("hanja.lookup_skipped", metadata: [
+                .state("reason", "inactive_controller")
+            ])
+            return
+        }
         guard let currentSession = session else { return }
         let activeSession = ensureSession(for: currentSession.client)
         let isSecureInput = shouldPassThroughSecureInput(

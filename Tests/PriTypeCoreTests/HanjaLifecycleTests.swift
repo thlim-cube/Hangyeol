@@ -368,6 +368,125 @@ struct HanjaCandidateLifecycleTests {
         #expect(client.document == "가")
     }
 
+    @Test("App focus loss retires an open candidate interaction without client writes")
+    func appFocusLossRetiresCandidateInteraction() throws {
+        let presenter = MockHanjaCandidatePresenter()
+        let client = FakeIMKTextInput()
+        client.document = "가"
+        client.selectedRangeValue = NSRange(location: 1, length: 0)
+        let composer = makeComposer(presenter: presenter)
+        var retirementCount = 0
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: composer,
+            retireActiveControllerAfterFocusLoss: { _ in
+                retirementCount += 1
+            }
+        )
+        _ = session.prepareForNonSecureClientWrites()
+        let shortcut = TestEventFactory.keyEvent(
+            char: "x",
+            keyCode: 7,
+            modifiers: .command
+        )!
+        _ = composer.handle(shortcut, delegate: session.adapter)
+        composer.triggerHanjaLookup()
+        let retainedSelection = try #require(presenter.selectionCallbacks.first)
+        composer.localTextBuffer = "가"
+        let insertCount = client.insertCalls.count
+        let markCount = client.markCalls.count
+
+        #expect(presenter.isVisible)
+        #expect(!session.handleAppDeactivation())
+
+        #expect(!presenter.isVisible)
+        #expect(presenter.dismissCount == 1)
+        #expect(composer.localTextBuffer.isEmpty)
+        #expect(session.contextNeedsRefresh)
+        #expect(retirementCount == 1)
+
+        retainedSelection(HanjaEntry(
+            hangul: "가",
+            hanja: "可",
+            meaning: "synthetic test"
+        ))
+        #expect(client.insertCalls.count == insertCount)
+        #expect(client.markCalls.count == markCount)
+        #expect(client.document == "가")
+    }
+
+    @Test("App focus loss commits an active composition exactly once before retirement")
+    func appFocusLossCommitsActiveCompositionOnce() {
+        let presenter = MockHanjaCandidatePresenter()
+        let client = FakeIMKTextInput()
+        let composer = makeComposer(presenter: presenter)
+        var retirementCount = 0
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: composer,
+            retireActiveControllerAfterFocusLoss: { _ in
+                retirementCount += 1
+            }
+        )
+        _ = session.prepareForNonSecureClientWrites()
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: session.adapter
+        )
+
+        #expect(session.handleAppDeactivation())
+        #expect(client.document == "가")
+        #expect(client.insertCalls.count == 1)
+        #expect(!composer.hasActiveComposition)
+        #expect(composer.localTextBuffer.isEmpty)
+        #expect(session.contextNeedsRefresh)
+        #expect(retirementCount == 1)
+
+        #expect(!session.finalize(reason: .deactivateServer))
+        #expect(client.insertCalls.count == 1)
+    }
+
+    @Test("A reentrant activation during focus-loss commit keeps the newer owner active")
+    func appFocusLossDoesNotRetireReentrantActivation() {
+        let client = FakeIMKTextInput()
+        let composer = makeComposer(presenter: MockHanjaCandidatePresenter())
+        var retirementCount = 0
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: ""),
+            composer: composer,
+            retireActiveControllerAfterFocusLoss: { _ in
+                retirementCount += 1
+            }
+        )
+        _ = session.prepareForNonSecureClientWrites()
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        client.onInsertText = {
+            // Same-session activateServer re-arms the focus observer synchronously.
+            session.armFocusLossFinalizer()
+        }
+
+        #expect(session.handleAppDeactivation())
+        client.onInsertText = nil
+
+        #expect(client.document == "ㄱ")
+        #expect(session.contextNeedsRefresh)
+        #expect(retirementCount == 0)
+
+        // The newer activation remains responsible for its own later focus loss.
+        #expect(!session.handleAppDeactivation())
+        #expect(retirementCount == 1)
+    }
+
     @Test("Composer keeps only a weak fallback delegate")
     func composerDoesNotRetainFallbackDelegate() {
         let presenter = MockHanjaCandidatePresenter()

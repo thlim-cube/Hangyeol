@@ -12,6 +12,7 @@ final class FakeIMKTextInput: NSObject, IMKTextInput {
     var insertCalls: [(String, NSRange)] = []
     var markCalls: [String] = []
     var firstRectValue = NSRect.zero
+    var onInsertText: (() -> Void)?
 
     private func plainString(_ value: Any?) -> String {
         if let attributed = value as? NSAttributedString { return attributed.string }
@@ -37,6 +38,7 @@ final class FakeIMKTextInput: NSObject, IMKTextInput {
         markedText = ""
         markedRangeValue = NSRange(location: NSNotFound, length: 0)
         selectedRangeValue = NSRange(location: document.utf16.count, length: 0)
+        onInsertText?()
     }
 
     func setMarkedText(_ string: Any!, selectionRange: NSRange, replacementRange: NSRange) {

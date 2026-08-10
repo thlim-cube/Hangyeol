@@ -67,6 +67,11 @@ final class InputSession: @unchecked Sendable {
     /// Commits the composition early on app-focus-loss (see `armFocusLossFinalizer`).
     private var focusLossObserver: Any?
 
+    /// Identifies the activation that installed `focusLossObserver`. A client insert
+    /// performed by the observer can synchronously reactivate the same IMK session;
+    /// the older callback must not disarm or retire that newer activation.
+    private var focusLossFinalizerGeneration: UInt64 = 0
+
     // Duplicate-keyDown suppression (some hosts, e.g. KakaoTalk, deliver the same
     // physical keyDown twice — double-processing input, notably one backspace
     // decomposing TWO jamo). Applies to every delivery mode; the duplicate is a
@@ -107,16 +112,22 @@ final class InputSession: @unchecked Sendable {
     /// lifecycle callback from an older session cannot overwrite the active state.
     private let invalidateHanjaShortcutSessionState: () -> Void
 
+    /// Releases the process-active controller only when this session still belongs to
+    /// it. Injected by the controller so focus-loss behavior remains session-testable.
+    private let retireActiveControllerAfterFocusLoss: (InputSession) -> Void
+
     init(
         client: IMKTextInput,
         context: ClientContext,
         composer: HangulComposer,
-        invalidateHanjaShortcutSessionState: @escaping () -> Void = {}
+        invalidateHanjaShortcutSessionState: @escaping () -> Void = {},
+        retireActiveControllerAfterFocusLoss: @escaping (InputSession) -> Void = { _ in }
     ) {
         self.client = client
         self.context = context
         self.composer = composer
         self.invalidateHanjaShortcutSessionState = invalidateHanjaShortcutSessionState
+        self.retireActiveControllerAfterFocusLoss = retireActiveControllerAfterFocusLoss
         self.adapter = TextDeliveryPolicy.makeAdapter(for: client, context: context)
     }
 
@@ -353,6 +364,29 @@ final class InputSession: @unchecked Sendable {
 
     // MARK: Focus-loss safety net
 
+    /// Testable body of the app-deactivation observer.
+    @discardableResult
+    func handleAppDeactivation(expectedFocusLossGeneration: UInt64? = nil) -> Bool {
+        let observedGeneration = expectedFocusLossGeneration ?? focusLossFinalizerGeneration
+        invalidateHanjaShortcutSessionState()
+        let didFinalize = finalize(reason: .appDeactivate)
+
+        // `finalize` must run while the old host still accepts its marked commit.
+        // Only then retire every non-text artifact and revoke this field generation.
+        composer.dismissHanjaCandidates()
+        composer.clearLocalBuffer()
+        markContextStale()
+
+        // `insertText` can synchronously cause activateServer to re-arm this session.
+        // Keep the newly installed observer and controller ownership in that case.
+        guard focusLossFinalizerGeneration == observedGeneration else {
+            return didFinalize
+        }
+        disarmFocusLossFinalizer()
+        retireActiveControllerAfterFocusLoss(self)
+        return didFinalize
+    }
+
     /// Observe the focused app's deactivation and finalize the composition THEN — early
     /// enough that the host (e.g. KakaoTalk) still accepts the insertText. By the time
     /// IMK's deactivateServer runs, native hosts have already resigned and drop it,
@@ -362,6 +396,7 @@ final class InputSession: @unchecked Sendable {
         disarmFocusLossFinalizer()
         let bundleId = context.bundleId
         guard !bundleId.isEmpty else { return }
+        let generation = focusLossFinalizerGeneration
         focusLossObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didDeactivateApplicationNotification,
             object: nil,
@@ -372,10 +407,7 @@ final class InputSession: @unchecked Sendable {
                   app.bundleIdentifier == bundleId else {
                 return
             }
-            // Event-tap shortcuts run outside IMK. Invalidate the content-free
-            // shortcut snapshot before this session stops being authoritative.
-            self.invalidateHanjaShortcutSessionState()
-            self.finalize(reason: .appDeactivate)
+            self.handleAppDeactivation(expectedFocusLossGeneration: generation)
         }
     }
 
@@ -383,6 +415,7 @@ final class InputSession: @unchecked Sendable {
     /// session owns its composer, so a late callback cannot flush another session's
     /// preedit, but disarming still prevents a redundant commit to an inactive host.
     func disarmFocusLossFinalizer() {
+        focusLossFinalizerGeneration &+= 1
         if let observer = focusLossObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             focusLossObserver = nil
