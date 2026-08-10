@@ -721,7 +721,6 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         performLookup: (HangulComposer) -> Void
     ) -> Bool {
         guard !isSecureInput else {
-            session.composer.dismissHanjaCandidates()
             session.discardForSecureInput()
             return false
         }

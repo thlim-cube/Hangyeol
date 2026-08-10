@@ -213,6 +213,44 @@ struct HanjaCandidateLifecycleTests {
         #expect(composer.localTextBuffer == "안전")
     }
 
+    @Test("Secure discard invalidates a retained candidate callback without client writes")
+    func secureDiscardInvalidatesRetainedCandidateCallback() throws {
+        let presenter = MockHanjaCandidatePresenter()
+        let client = FakeIMKTextInput()
+        client.document = "가"
+        client.selectedRangeValue = NSRange(location: 1, length: 0)
+        let composer = makeComposer(presenter: presenter)
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: composer
+        )
+        let shortcut = TestEventFactory.keyEvent(
+            char: "x",
+            keyCode: 7,
+            modifiers: .command
+        )!
+        _ = composer.handle(shortcut, delegate: session.adapter)
+        composer.triggerHanjaLookup()
+        let retainedSelection = try #require(presenter.selectionCallbacks.first)
+        let insertCount = client.insertCalls.count
+        let markCount = client.markCalls.count
+        #expect(presenter.isVisible)
+
+        session.discardForSecureInput()
+
+        #expect(!presenter.isVisible)
+        #expect(presenter.dismissCount == 1)
+        retainedSelection(HanjaEntry(
+            hangul: "가",
+            hanja: "可",
+            meaning: "synthetic test"
+        ))
+        #expect(client.insertCalls.count == insertCount)
+        #expect(client.markCalls.count == markCount)
+        #expect(client.document == "가")
+    }
+
     @Test("Same client with a new input session invalidates a selection snapshot")
     func newSessionInvalidatesSnapshot() {
         let client = NSObject()

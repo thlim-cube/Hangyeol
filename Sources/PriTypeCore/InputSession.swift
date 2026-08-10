@@ -446,6 +446,7 @@ final class InputSession: @unchecked Sendable {
             deferredOwnedMarkedTextGeneration = ownerGeneration
         }
 
+        composer.dismissHanjaCandidates()
         composer.discardCompositionForPassThrough()
         direct?.resetPreeditTracking()
         lastNonSecureGeneration = nil
