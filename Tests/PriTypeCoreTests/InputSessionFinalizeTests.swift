@@ -67,6 +67,49 @@ struct InputSessionFinalizeTests {
         #expect(client.insertCalls.first?.1 == NSRange(location: 0, length: 1))
     }
 
+    @Test("Secure discard defers owned marked fallback until nonsecure resume")
+    func secureDiscardDefersOwnedFallbackCleanup() {
+        let (session, composer, client) = makeDirectFallbackSession()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        #expect(client.markedText == "ㄱ")
+
+        session.discardForSecureInput()
+
+        #expect(!composer.hasActiveComposition)
+        #expect(client.markedText == "ㄱ")
+        #expect(client.insertCalls.isEmpty)
+
+        #expect(session.reconcileDeferredMarkedTextAfterSecureInput())
+        #expect(client.markedText.isEmpty)
+        #expect(client.insertCalls.count == 1)
+        #expect(client.insertCalls.first?.0 == "")
+        #expect(client.insertCalls.first?.1 == NSRange(location: 0, length: 1))
+        #expect(!session.reconcileDeferredMarkedTextAfterSecureInput())
+        #expect(client.insertCalls.count == 1)
+    }
+
+    @Test("Secure discard followed by lifecycle handoff never writes to the client")
+    func secureDiscardLifecycleHandoffDoesNotWrite() {
+        let (session, composer, client) = makeDirectFallbackSession()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        session.discardForSecureInput()
+
+        session.retireForControllerHandoff()
+        #expect(!session.finalize(reason: .deactivateServer))
+
+        #expect(!composer.hasActiveComposition)
+        #expect(client.markedText == "ㄱ")
+        #expect(client.insertCalls.isEmpty)
+    }
+
     @Test("Changing from marked to direct delivery finalizes through the old adapter")
     func markedToDirectFinalizesBeforeAdapterReplacement() {
         let client = FakeIMKTextInput()

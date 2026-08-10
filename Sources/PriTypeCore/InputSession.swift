@@ -64,6 +64,11 @@ final class InputSession: @unchecked Sendable {
     // property of the host's event delivery, not of how we render composition.
     private var keyEventDeduplicator = KeyEventDeduplicator()
 
+    /// PriType rendered marked text through a direct-insertion fallback, then had to
+    /// enter Secure Input without touching the client. This ownership survives
+    /// ordinary lifecycle finalizers, which do not prove that client writes are safe.
+    private var hasDeferredOwnedMarkedTextCleanup = false
+
     init(client: IMKTextInput, context: ClientContext, composer: HangulComposer) {
         self.client = client
         self.context = context
@@ -279,6 +284,24 @@ final class InputSession: @unchecked Sendable {
         return true
     }
 
+    /// Clear PriType-owned marked text left behind when Secure Input forced a
+    /// write-free discard. Callers must invoke this only after the current client has
+    /// passed the nonsecure gate; generic lifecycle callbacks cannot establish that.
+    @discardableResult
+    func reconcileDeferredMarkedTextAfterSecureInput() -> Bool {
+        guard hasDeferredOwnedMarkedTextCleanup else { return false }
+        hasDeferredOwnedMarkedTextCleanup = false
+
+        let markedRange = client.markedRange()
+        guard markedRange.location != NSNotFound, markedRange.length > 0 else {
+            return false
+        }
+
+        client.insertText("", replacementRange: markedRange)
+        DebugLogger.event("composition.deferred_marked_fallback_cleared")
+        return true
+    }
+
     /// The marked-text finalize, callable against any client. `PriTypeInputController`
     /// uses this directly when IMK hands it a sender that is not this session's client.
     static func finalizeMarkedComposition(
@@ -308,7 +331,14 @@ final class InputSession: @unchecked Sendable {
     /// WITHOUT touching the client (no insertText/setMarkedText — those can trigger
     /// host warning beeps in password fields), and clear direct-insertion tracking so
     /// a stale live-preedit length can never delete real text on the next keystroke.
+    /// If direct insertion had degraded to marked text, preserve only PriType's
+    /// cleanup ownership; the client write itself remains deferred until a later
+    /// nonsecure gate explicitly allows it.
     func discardForSecureInput() {
+        if let direct = adapter as? DirectInsertionAdapter,
+           direct.usesMarkedTextFallback {
+            hasDeferredOwnedMarkedTextCleanup = true
+        }
         composer.discardCompositionForPassThrough()
         (adapter as? DirectInsertionAdapter)?.resetPreeditTracking()
     }

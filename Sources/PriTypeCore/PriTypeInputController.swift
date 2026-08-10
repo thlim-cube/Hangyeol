@@ -555,6 +555,11 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             return false
         }
 
+        // A previous Secure Input pass-through may have left PriType-owned marked
+        // text in the host. This is the first point that proves client writes are
+        // safe again; lifecycle callbacks alone must never perform this cleanup.
+        _ = session.reconcileDeferredMarkedTextAfterSecureInput()
+
         // Apply a pending macOS ownership/source boundary only after the secure
         // client check. This makes the first normal key use Korean without allowing
         // an observer or activation callback to insert text into a password field.
@@ -657,7 +662,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             session.discardForSecureInput()
             return false
         }
-
+        _ = session.reconcileDeferredMarkedTextAfterSecureInput()
         reconcileOwnership()
         performLookup(session.composer)
         return true
