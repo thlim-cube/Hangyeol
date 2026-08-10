@@ -490,6 +490,12 @@ struct InputSessionFinalizeTests {
             ("unreadable", { client in
                 client.attributedSubstringOverride = { _ in nil }
             }),
+            ("garbage", { client in
+                client.markedRangeValue = NSRange(
+                    location: DirectInsertionPlanner.maxReasonableLocation,
+                    length: 1
+                )
+            }),
             ("overflowing", { client in
                 client.markedRangeValue = NSRange(location: Int.max - 1, length: 2)
             })

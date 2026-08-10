@@ -574,11 +574,13 @@ final class InputSession: @unchecked Sendable {
         }
 
         let markedRange = client.markedRange()
-        let (_, rangeOverflow) = markedRange.location.addingReportingOverflow(markedRange.length)
+        let (rangeEnd, rangeOverflow) = markedRange.location.addingReportingOverflow(markedRange.length)
         guard markedRange.location != NSNotFound,
               markedRange.location >= 0,
+              markedRange.location < DirectInsertionPlanner.maxReasonableLocation,
               markedRange.length > 0,
-              !rangeOverflow else {
+              !rangeOverflow,
+              rangeEnd < DirectInsertionPlanner.maxReasonableLocation else {
             DebugLogger.event("composition.deferred_marked_fallback_abandoned", metadata: [
                 .state("reason", "marked_range_invalid")
             ])
