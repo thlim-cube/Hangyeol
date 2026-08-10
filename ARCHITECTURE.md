@@ -68,7 +68,8 @@ keyDown ──► PriTypeInputController.handle()
 과거 KakaoTalk 계열 버그(stranded preedit, 마지막 글자 유실, 이모티콘 팝업 깜빡임)는 조합 종료 이벤트마다 commit 시퀀스가 조금씩 달랐던 데서 왔다. 현재는 모든 종료 이벤트가 `InputSession.finalize(reason:)` 하나로 수렴하며, 검증된 **1-op commit**(`insertText` + `replacementRange = NSNotFound`, 호스트가 자신의 marked text를 composition-end로 확정)만 사용한다. 번들 ID 하드코딩 없이 모든 호스트에 동일하게 동작하는 멱등 안전망이다.
 
 - 포커스 상실: 세션이 소유한 `NSWorkspace` 비활성 옵저버가 IMK `deactivateServer`보다 먼저 finalize한다(네이티브 호스트가 이미 resign한 뒤의 insertText는 무시되기 때문). 옵저버는 세션 자신의 앱과만 비교하며, `deactivateServer`에서 반드시 disarm해 stale 옵저버가 이후 세션의 조합을 엉뚱한 클라이언트로 흘리는 것을 막는다.
-- 직접 삽입(실험) 모드: 조합 글자가 이미 실제 텍스트로 문서에 있으므로 finalize는 재삽입 없이 엔진만 flush하고 live-preedit 추적을 초기화한다.
+- 마우스 클릭: `flagsChanged`를 포함한 입력기는 InputMethodKit의 기본 외부-click commit 대상이 아니므로 mouse-down mask와 `IMKMouseHandling` callback을 명시적으로 등록한다. marked range 밖 클릭 또는 marked range가 없는 직접 삽입 클릭만 finalize하고, 실제 caret 이동은 호스트에 통과시킨다.
+- 직접 삽입(실험) 모드: 조합 글자가 실제 텍스트인 동안은 재삽입 없이 엔진만 flush한다. 문서 접근 실패로 marked text에 fallback한 상태는 canonical marked finalize를 사용하고, PriType가 소유한 잔여 marked range만 안전하게 정리한다.
 
 ## 한/영 전환 흐름
 
@@ -167,10 +168,11 @@ libhangul preedit: ᄆ (U+1106)
 
 | 파일 | 역할 |
 |---|---|
-| **HangulComposer** | 한글 조합 엔진. libhangul 컨텍스트를 감싸고, 키 이벤트 → 초·중·종성 조합 → preedit/commit 변환을 담당한다. `inputMode`가 한/영 단일 source of truth다. 영어 내부 모드에서는 조합 없이 모든 키를 `return false`로 순수 pass-through하며(로컬 버퍼 미사용), 영문 텍스트 편의(더블스페이스 마침표 등)는 macOS가 소유한다. |
+| **HangulComposer** | 세션별 한글 조합 엔진. libhangul 컨텍스트를 감싸고, 키 이벤트 → 초·중·종성 조합 → preedit/commit 변환을 담당한다. 한/영 상태는 공유 `InputModeStore`에서 읽지만 preedit/commit 상태는 다른 client와 공유하지 않는다. |
+| **InputModeStore** | 프로세스 전역 한/영 단일 source of truth. 탭·앱·controller 전환에도 마지막 mode를 유지하되 libhangul 조합 상태는 보관하지 않는다. |
 | **HangulComposerTypes** | `HangulComposerDelegate` 프로토콜(insertText, setMarkedText, textBeforeCursor, replaceTextBeforeCursor)과 `InputMode` enum 정의. |
 | **PriTypeInputController** | `IMKInputController` 서브클래스. IMK 수명 주기(`activateServer` → `handle()` → `deactivateServer`)만 담당하는 얇은 edge. 세션 스코프 상태는 전부 `InputSession`에 위임하고, 모든 조합 종료 이벤트를 `session.finalize(reason:)`로 라우팅한다. |
-| **InputSession** | 활성 입력 세션 1개의 단일 소유자: 클라이언트, 분석된 `ClientContext`, delivery 어댑터, 중복 keyDown 상태, 포커스 상실 안전망(NSWorkspace 옵저버). `finalize(reason:)`이 조합 종료의 유일한 경로(1-op commit, 멱등, 호스트 무관)다. |
+| **InputSession** | 활성 입력 세션 1개의 단일 소유자: 클라이언트, `HangulComposer`, 분석된 `ClientContext`, delivery 어댑터, 중복 keyDown 상태, 포커스 상실 안전망(NSWorkspace 옵저버). `finalize(reason:)`이 조합 종료의 유일한 경로(1-op commit, 멱등, 호스트 무관)다. |
 | **TextDelivery** | 조합 출력이 호스트에 도달하는 방식. `TextDeliveryPolicy.mode(for:)`가 단일 결정 지점이고, `MarkedTextAdapter`(canonical marked text), `DirectInsertionAdapter`(실험: 실제 텍스트 in-place rewrite), `ImmediateModeAdapter`(Finder 바탕화면) 세 어댑터를 제공한다. 조합 밑줄: `PreeditUnderline`이 엔진별 invisible 속성을 보내지만(분류는 `ClientCompatibilityPolicy.compositionRenderer`), **macOS 26부터는 전송 계층이 IME 속성을 전부 폐기하고 시스템 스타일(`NSUnderline=2`+액센트색)을 재생성하므로 marked text 밑줄은 숨길 수 없다**(13종 페이로드 실측, `PreeditUnderline` 주석 참고). 구버전 macOS에서만 유효. 밑줄 없는 입력은 직접 삽입 모드가 유일한 경로다. |
 | **CursorRectResolver** | 한자 후보창 좌표 전략 체인(firstRect → attributes → 캐시 → AX → 마우스)과 좌표 유효성 검증. |
 | **ClientContextDetector** | 입력 클라이언트 분석기. 번들 ID, `validAttributesForMarkedText`, 좌표 휴리스틱을 조합해 `ClientContext` 구조체를 생성한다. Finder 바탕화면은 좌표 기반(`y < 50`)으로 판별한다. |

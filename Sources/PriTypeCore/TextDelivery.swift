@@ -210,6 +210,10 @@ final class ImmediateModeAdapter: BaseClientAdapter {
 final class DirectInsertionAdapter: BaseClientAdapter {
     override var deliveryMode: InputDeliveryMode { .directInsertion }
 
+    /// Whether this session currently renders its PriType-owned preedit through the
+    /// canonical marked-text protocol after document access became unreliable.
+    var usesMarkedTextFallback: Bool { fellBackToMarked }
+
     /// UTF-16 length of the live (in-progress) syllable currently sitting in the
     /// document as real text. 0 when there is no live preedit.
     private var livePreeditLength: Int = 0

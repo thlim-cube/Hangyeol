@@ -295,11 +295,41 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         composer.updateKeyboardLayout(id: newId)
     }
 
-    // Match the native IMK path used by DINKIssTyle: ask IMK for flagsChanged
-    // so TIS can drive Caps Lock language switching, then pass modifier events
-    // through without doing any work in handle().
+    // Keep flagsChanged for Caps Lock/TIS ownership and explicitly opt into mouse
+    // down delivery. InputMethodKit's default outside-click commit only applies when
+    // this mask is exactly keyDown, so the mouse callback below owns that boundary.
     override public func recognizedEvents(_ sender: Any!) -> Int {
-        Int(NSEvent.EventTypeMask.keyDown.rawValue | NSEvent.EventTypeMask.flagsChanged.rawValue)
+        Int(
+            NSEvent.EventTypeMask.keyDown.rawValue
+                | NSEvent.EventTypeMask.flagsChanged.rawValue
+                | NSEvent.EventTypeMask.leftMouseDown.rawValue
+                | NSEvent.EventTypeMask.rightMouseDown.rawValue
+                | NSEvent.EventTypeMask.otherMouseDown.rawValue
+        )
+    }
+
+    override public func mouseDown(
+        onCharacterIndex index: Int,
+        coordinate point: NSPoint,
+        withModifier flags: Int,
+        continueTracking keepTracking: UnsafeMutablePointer<ObjCBool>!,
+        client sender: Any!
+    ) -> Bool {
+        keepTracking?.pointee = false
+        guard let client = sender as? IMKTextInput,
+              let session,
+              session.matches(client),
+              MouseCompositionPolicy.shouldFinalize(
+                  characterIndex: index,
+                  markedRange: client.markedRange(),
+                  hasActiveComposition: session.composer.hasActiveComposition
+              ) else {
+            return false
+        }
+
+        session.finalize(reason: .mouseCommit)
+        session.composer.clearLocalBuffer()
+        return false // The host still owns caret movement and selection.
     }
 
     // MARK: - Keystroke Pipeline

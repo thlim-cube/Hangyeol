@@ -157,6 +157,19 @@ final class InputSession: @unchecked Sendable {
     @discardableResult
     func finalize(reason: CompositionFinalizeReason) -> Bool {
         guard composer.hasActiveComposition else {
+            if let direct = adapter as? DirectInsertionAdapter,
+               direct.usesMarkedTextFallback {
+                // The engine can become empty before a host clears the fallback
+                // marked range. It is safe to reconcile only because the adapter
+                // explicitly records that PriType created this marked text.
+                let markedRange = client.markedRange()
+                if markedRange.location != NSNotFound, markedRange.length > 0 {
+                    client.insertText("", replacementRange: markedRange)
+                    direct.resetPreeditTracking()
+                    DebugLogger.log("InputSession: cleared owned marked fallback reason=\(reason.rawValue)")
+                    return true
+                }
+            }
             // Nothing to commit, but the session-ending event (e.g. a mouse click)
             // likely moved the caret — stale direct-insertion tracking must never
             // survive it, or the next keystroke could rewrite unrelated text.
@@ -167,7 +180,8 @@ final class InputSession: @unchecked Sendable {
         // EXPERIMENTAL direct insertion: the in-progress syllable is ALREADY real text
         // in the document. Re-inserting it here would duplicate the character. Just end
         // the engine's composition and clear the adapter's live-preedit tracking.
-        if let direct = adapter as? DirectInsertionAdapter {
+        if let direct = adapter as? DirectInsertionAdapter,
+           !direct.usesMarkedTextFallback {
             _ = composer.flushCommitString()   // flush engine + update buffer; do NOT insert
             direct.resetPreeditTracking()
             DebugLogger.log("InputSession: finalize[\(reason.rawValue)] direct-insertion (already in document, no re-insert)")
@@ -175,6 +189,7 @@ final class InputSession: @unchecked Sendable {
         }
 
         Self.finalizeMarkedComposition(composer: composer, client: client, reason: reason)
+        (adapter as? DirectInsertionAdapter)?.resetPreeditTracking()
         return true
     }
 
