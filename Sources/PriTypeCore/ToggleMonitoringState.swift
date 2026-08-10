@@ -286,25 +286,70 @@ struct ReleaseTogglePressState {
     }
 }
 
+/// IOKit modifier press 하나의 DEBUG 지연 trace를 물리 down부터 release까지 보존합니다.
+struct IOKitToggleTraceLifecycle {
+    private(set) var hasPendingTrace = false
+
+    #if DEBUG
+    private var pendingTrace: ToggleLatencyTrace?
+    #endif
+
+    mutating func begin() {
+        cancel()
+        hasPendingTrace = true
+
+        #if DEBUG
+        pendingTrace = ToggleLatencyTrace.begin(source: .iokitFallback)
+        #endif
+    }
+
+    mutating func finish() -> ToggleLatencyTrace? {
+        guard hasPendingTrace else { return nil }
+        hasPendingTrace = false
+
+        #if DEBUG
+        defer { pendingTrace = nil }
+        return pendingTrace
+        #else
+        // Release builds retain only the no-op trace API and perform no timing work.
+        return ToggleLatencyTrace.begin(source: .iokitFallback)
+        #endif
+    }
+
+    mutating func cancel() {
+        guard hasPendingTrace else { return }
+        hasPendingTrace = false
+
+        #if DEBUG
+        pendingTrace?.mark(.ignored)
+        pendingTrace = nil
+        #endif
+    }
+}
+
 enum ModifierKeyTransition: Equatable {
     case down
     case up
     case unknown
 }
 
-/// aggregate flags만 제공되는 `flagsChanged`에서 실제 side keyCode 순서를 보존합니다.
+/// `flagsChanged`의 side keyCode와 현재 물리 키 상태를 함께 보존합니다.
 struct ModifierKeyPressState {
     private(set) var pressedKeyCodes: Set<Int64> = []
     private var suppressedKeyCodes: Set<Int64> = []
 
-    mutating func observe(keyCode: Int64, aggregateMaskIsSet: Bool) -> ModifierKeyTransition {
-        if pressedKeyCodes.remove(keyCode) != nil {
-            return .up
+    mutating func observe(keyCode: Int64, physicalKeyIsDown: Bool) -> ModifierKeyTransition {
+        if physicalKeyIsDown {
+            return pressedKeyCodes.insert(keyCode).inserted ? .down : .unknown
         }
-        guard aggregateMaskIsSet else { return .unknown }
 
-        pressedKeyCodes.insert(keyCode)
-        return .down
+        return pressedKeyCodes.remove(keyCode) == nil ? .unknown : .up
+    }
+
+    /// Event tap 시작/재활성화 중 놓친 down/up을 현재 물리 상태로 교정합니다.
+    mutating func resynchronize(pressedKeyCodes physicalKeyCodes: Set<Int64>) {
+        pressedKeyCodes = physicalKeyCodes
+        suppressedKeyCodes.formIntersection(physicalKeyCodes)
     }
 
     mutating func suppressUntilRelease(keyCode: Int64) {
@@ -313,6 +358,10 @@ struct ModifierKeyPressState {
 
     mutating func consumeSuppressedRelease(keyCode: Int64) -> Bool {
         suppressedKeyCodes.remove(keyCode) != nil
+    }
+
+    func isSuppressed(keyCode: Int64) -> Bool {
+        suppressedKeyCodes.contains(keyCode)
     }
 
     func hasPressedSibling(of keyCode: Int64, sharingKeyCodes: Set<Int64>) -> Bool {

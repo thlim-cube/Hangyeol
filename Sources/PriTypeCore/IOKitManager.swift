@@ -46,6 +46,7 @@ public final class IOKitManager: @unchecked Sendable {
     
     /// Track one modifier-only down/chord/release cycle.
     private var togglePressState = ReleaseTogglePressState()
+    private var toggleTraceLifecycle = IOKitToggleTraceLifecycle()
     
     /// Track hanja key state
     private var hanjaKeyIsDown = false
@@ -263,7 +264,7 @@ public final class IOKitManager: @unchecked Sendable {
             )
         }
         if !priTypeToggleEnabled {
-            togglePressState.reset()
+            resetTogglePressState()
         }
         
         // Get HID usages for configured keys
@@ -274,6 +275,7 @@ public final class IOKitManager: @unchecked Sendable {
         if priTypeToggleEnabled && toggleBinding.isModifierOnly, let expectedUsage = toggleUsage {
             switch togglePressState.handle(usage: usage, pressed: pressed, toggleUsage: expectedUsage) {
             case .pressed:
+                toggleTraceLifecycle.begin()
                 DebugLogger.event("toggle.physical_down", metadata: [
                     .state("backend", "iokit")
                 ])
@@ -283,19 +285,27 @@ public final class IOKitManager: @unchecked Sendable {
                     .state("reason", "repeat")
                 ])
             case .chorded:
+                toggleTraceLifecycle.cancel()
                 DebugLogger.event("toggle.chord_detected", metadata: [
                     .state("backend", "iokit")
                 ])
             case .released(shouldToggle: true):
+                guard let trace = toggleTraceLifecycle.finish() else {
+                    DebugLogger.event("toggle.ignored", metadata: [
+                        .state("source", "iokit"),
+                        .state("reason", "missing_trace")
+                    ])
+                    break
+                }
                 DebugLogger.event("toggle.requested", metadata: [
                     .state("backend", "iokit")
                 ])
                 let callback = onRightCommandToggle
-                let trace = ToggleLatencyTrace.begin(source: .iokitFallback)
                 DispatchQueue.main.async {
                     callback?(trace)
                 }
             case .released(shouldToggle: false):
+                toggleTraceLifecycle.cancel()
                 DebugLogger.event("toggle.ignored", metadata: [
                     .state("source", "iokit"),
                     .state("reason", "used_as_modifier")
@@ -304,7 +314,7 @@ public final class IOKitManager: @unchecked Sendable {
                 break
             }
         } else {
-            togglePressState.reset()
+            resetTogglePressState()
         }
 
         if hanjaBinding.isModifierOnly,
@@ -380,7 +390,12 @@ public final class IOKitManager: @unchecked Sendable {
     }
 
     private func resetKeyState() {
-        togglePressState.reset()
+        resetTogglePressState()
         hanjaKeyIsDown = false
+    }
+
+    private func resetTogglePressState() {
+        togglePressState.reset()
+        toggleTraceLifecycle.cancel()
     }
 }

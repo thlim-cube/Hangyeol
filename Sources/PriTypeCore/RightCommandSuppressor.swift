@@ -152,6 +152,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         CGEvent.tapEnable(tap: eventTap, enable: true)
 
         resetKeyState()
+        resynchronizeModifierKeyState()
         tapDisableTracker.reset()
         ToggleMonitorStatusStore.shared.markRunning(.eventTap)
         
@@ -204,6 +205,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 ])
                 if let tap = eventTap {
                     CGEvent.tapEnable(tap: tap, enable: true)
+                    resynchronizeModifierKeyState()
                 }
             case .ignore:
                 break
@@ -243,9 +245,11 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 return Unmanaged.passUnretained(event)
             }
 
-            let modifierMask = Self.modifierMask(for: keyCode)
-            let maskIsSet = modifierMask.rawValue != 0 && event.flags.contains(modifierMask)
-            let transition = modifierKeyState.observe(keyCode: keyCode, aggregateMaskIsSet: maskIsSet)
+            let physicalKeyIsDown = Self.modifierKeyIsPhysicallyDown(keyCode)
+            let transition = modifierKeyState.observe(
+                keyCode: keyCode,
+                physicalKeyIsDown: physicalKeyIsDown
+            )
 
             if transition == .up, modifierKeyState.consumeSuppressedRelease(keyCode: keyCode) {
                 if suppressedToggleModifierKeyCode == keyCode {
@@ -431,6 +435,22 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         default: return []
         }
     }
+
+    static let trackedModifierKeyCodes: Set<Int64> = [54, 55, 61, 58, 62, 59, 56, 60]
+
+    static func physicallyPressedModifierKeyCodes(
+        keyState: (Int64) -> Bool
+    ) -> Set<Int64> {
+        Set(trackedModifierKeyCodes.filter(keyState))
+    }
+
+    private static func modifierKeyIsPhysicallyDown(_ keyCode: Int64) -> Bool {
+        guard trackedModifierKeyCodes.contains(keyCode) else { return false }
+        return CGEventSource.keyState(
+            .combinedSessionState,
+            key: CGKeyCode(keyCode)
+        )
+    }
     
     /// Check if event flags contain required modifier flags
     private static func hasRequiredModifiers(flags: CGEventFlags, required: CGEventFlags) -> Bool {
@@ -455,6 +475,22 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         regularKeyState.reset()
         suppressedToggleModifierKeyCode = nil
         suppressedHanjaModifierKeyCode = nil
+    }
+
+    private func resynchronizeModifierKeyState() {
+        let physicallyPressed = Self.physicallyPressedModifierKeyCodes { keyCode in
+            Self.modifierKeyIsPhysicallyDown(keyCode)
+        }
+        modifierKeyState.resynchronize(pressedKeyCodes: physicallyPressed)
+
+        if let keyCode = suppressedToggleModifierKeyCode,
+           !modifierKeyState.isSuppressed(keyCode: keyCode) {
+            suppressedToggleModifierKeyCode = nil
+        }
+        if let keyCode = suppressedHanjaModifierKeyCode,
+           !modifierKeyState.isSuppressed(keyCode: keyCode) {
+            suppressedHanjaModifierKeyCode = nil
+        }
     }
 
     private func triggerToggle() {

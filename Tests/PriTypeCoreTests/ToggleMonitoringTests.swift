@@ -117,21 +117,107 @@ struct SuppressedKeyPairTests {
         #expect(state.handle(usage: 0xE7, pressed: false, toggleUsage: 0xE7) == .none)
     }
 
+    @Test("IOKit trace spans physical down through a valid release")
+    func iokitTraceSpansPress() {
+        var pressState = ReleaseTogglePressState()
+        var traceLifecycle = IOKitToggleTraceLifecycle()
+
+        #expect(pressState.handle(usage: 0xE7, pressed: true, toggleUsage: 0xE7) == .pressed)
+        traceLifecycle.begin()
+        #expect(traceLifecycle.hasPendingTrace)
+
+        #expect(pressState.handle(usage: 0xE7, pressed: true, toggleUsage: 0xE7) == .repeatIgnored)
+        #expect(traceLifecycle.hasPendingTrace)
+
+        #expect(pressState.handle(usage: 0xE7, pressed: false, toggleUsage: 0xE7) == .released(shouldToggle: true))
+        guard case .some = traceLifecycle.finish() else {
+            Issue.record("Physical-down trace must survive until the valid release")
+            return
+        }
+        #expect(!traceLifecycle.hasPendingTrace)
+    }
+
+    @Test("Chord and reset cancel an in-flight IOKit trace")
+    func iokitTraceCancellation() {
+        var pressState = ReleaseTogglePressState()
+        var traceLifecycle = IOKitToggleTraceLifecycle()
+
+        #expect(pressState.handle(usage: 0xE7, pressed: true, toggleUsage: 0xE7) == .pressed)
+        traceLifecycle.begin()
+        #expect(pressState.handle(usage: 0x04, pressed: true, toggleUsage: 0xE7) == .chorded)
+        traceLifecycle.cancel()
+        #expect(!traceLifecycle.hasPendingTrace)
+        guard case .none = traceLifecycle.finish() else {
+            Issue.record("A cancelled trace must not reach the toggle callback")
+            return
+        }
+
+        pressState.reset()
+        #expect(pressState.handle(usage: 0xE7, pressed: true, toggleUsage: 0xE7) == .pressed)
+        traceLifecycle.begin()
+        pressState.reset()
+        traceLifecycle.cancel()
+        #expect(!traceLifecycle.hasPendingTrace)
+    }
+
     @Test("Opposite-side modifiers retain independent keyCode state")
     func oppositeSideModifierState() {
         var state = ModifierKeyPressState()
 
-        #expect(state.observe(keyCode: 54, aggregateMaskIsSet: true) == .down)
+        #expect(state.observe(keyCode: 54, physicalKeyIsDown: true) == .down)
         state.suppressUntilRelease(keyCode: 54)
-        #expect(state.observe(keyCode: 55, aggregateMaskIsSet: true) == .down)
+        #expect(state.observe(keyCode: 55, physicalKeyIsDown: true) == .down)
         #expect(state.hasPressedSibling(of: 54, sharingKeyCodes: [54, 55]))
 
         // Releasing Right Command while Left Command remains down still uses
-        // the exact right-side keyCode instead of the aggregate Command flag.
-        #expect(state.observe(keyCode: 54, aggregateMaskIsSet: true) == .up)
+        // its actual physical state instead of the aggregate Command flag.
+        #expect(state.observe(keyCode: 54, physicalKeyIsDown: false) == .up)
         let consumedRelease = state.consumeSuppressedRelease(keyCode: 54)
         #expect(consumedRelease)
         #expect(!state.hasPressedSibling(of: 55, sharingKeyCodes: [54, 55]))
+    }
+
+    @Test("Startup resync classifies a missed-down release as up")
+    func modifierStartupResync() {
+        var state = ModifierKeyPressState()
+
+        state.resynchronize(pressedKeyCodes: [54, 55])
+        #expect(state.observe(keyCode: 54, physicalKeyIsDown: false) == .up)
+        #expect(state.pressedKeyCodes == [55])
+
+        // A release queued just before the snapshot is fail-closed even when
+        // the sibling keeps the aggregate Command flag set.
+        var queuedReleaseState = ModifierKeyPressState()
+        queuedReleaseState.resynchronize(pressedKeyCodes: [55])
+        #expect(queuedReleaseState.observe(keyCode: 54, physicalKeyIsDown: false) == .unknown)
+        #expect(state.observe(keyCode: 55, physicalKeyIsDown: false) == .up)
+        #expect(state.pressedKeyCodes.isEmpty)
+    }
+
+    @Test("Restart resync preserves only physically held suppressed releases")
+    func modifierRestartResync() {
+        var state = ModifierKeyPressState()
+
+        #expect(state.observe(keyCode: 54, physicalKeyIsDown: true) == .down)
+        state.suppressUntilRelease(keyCode: 54)
+        #expect(state.observe(keyCode: 55, physicalKeyIsDown: true) == .down)
+        state.resynchronize(pressedKeyCodes: [54])
+
+        #expect(state.isSuppressed(keyCode: 54))
+        #expect(state.observe(keyCode: 55, physicalKeyIsDown: false) == .unknown)
+        #expect(state.observe(keyCode: 54, physicalKeyIsDown: false) == .up)
+        let consumedRelease = state.consumeSuppressedRelease(keyCode: 54)
+        #expect(consumedRelease)
+    }
+
+    @Test("Physical modifier snapshot keeps exact sides and excludes lock state")
+    func physicalModifierSnapshot() {
+        let physicallyDown: Set<Int64> = [54, 60, 57]
+        let snapshot = RightCommandSuppressor.physicallyPressedModifierKeyCodes {
+            physicallyDown.contains($0)
+        }
+
+        #expect(snapshot == [54, 60])
     }
 }
 
