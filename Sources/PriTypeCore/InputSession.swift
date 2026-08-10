@@ -49,6 +49,11 @@ final class InputSession: @unchecked Sendable {
         fileprivate let generation: UInt64
     }
 
+    struct ContextStateLease {
+        fileprivate let revision: UInt64
+        fileprivate let generation: UInt64
+    }
+
     private enum ContextRefreshRequirement: Equatable {
         case none
         case sameClientReactivation
@@ -99,6 +104,12 @@ final class InputSession: @unchecked Sendable {
     /// that a later marked range still belongs to PriType's previous preedit.
     private var contextGeneration: UInt64 = 0
 
+    /// Changes whenever a synchronous client callback can invalidate an in-flight
+    /// context analysis. This is separate from the field generation because merely
+    /// marking a field unknown must revoke the outer analysis before a replacement
+    /// field has been classified.
+    private var contextStateRevision: UInt64 = 0
+
     /// The most recent generation that explicitly passed the nonsecure gate. A new
     /// session remains unclassified until the controller authorizes it at an input
     /// boundary; lifecycle callbacks can never grant this permission themselves.
@@ -108,10 +119,10 @@ final class InputSession: @unchecked Sendable {
     /// Cleanup requires both the same field generation and the same normalized text.
     private var deferredMarkedTextCleanupToken: DeferredMarkedTextCleanupToken?
 
-    /// A custom toggle changed PriType's internal mode while Secure Input prevented
-    /// `overrideKeyboardWithKeyboardNamed:`. The next nonsecure input boundary must
-    /// synchronize the Roman layout before the newly selected mode handles a key.
-    private var needsDeferredRomanKeyboardLayoutSync = false
+    /// A newly activated or still-unclassified field must not receive
+    /// `overrideKeyboardWithKeyboardNamed:`. Its first nonsecure input boundary
+    /// synchronizes the Roman layout before the selected mode handles a key.
+    private var needsDeferredRomanKeyboardLayoutSync = true
     #if DEBUG
     private var deferredRomanKeyboardLayoutTrace: ToggleLatencyTrace?
     #endif
@@ -138,6 +149,7 @@ final class InputSession: @unchecked Sendable {
         self.invalidateHanjaShortcutSessionState = invalidateHanjaShortcutSessionState
         self.retireActiveControllerAfterFocusLoss = retireActiveControllerAfterFocusLoss
         self.adapter = TextDeliveryPolicy.makeAdapter(for: client, context: context)
+        configureClientWriteValidator(on: adapter)
     }
 
     deinit {
@@ -159,11 +171,13 @@ final class InputSession: @unchecked Sendable {
         _ newContext: ClientContext,
         fieldIdentityMayHaveChanged: Bool = false
     ) {
+        contextStateRevision &+= 1
         invalidateHanjaShortcutSessionState()
         let oldBundleId = context.bundleId
         context = newContext
         if fieldIdentityMayHaveChanged {
             composer.clearLocalBuffer()
+            CursorRectResolver.invalidateCache()
             contextGeneration &+= 1
         }
         contextRefreshRequirement = .none
@@ -173,6 +187,7 @@ final class InputSession: @unchecked Sendable {
     }
 
     func markContextStale() {
+        contextStateRevision &+= 1
         invalidateHanjaShortcutSessionState()
         composer.resetTextConvenienceState()
         contextRefreshRequirement = .fieldIdentityMayHaveChanged
@@ -183,6 +198,7 @@ final class InputSession: @unchecked Sendable {
     /// client's live marked range can be checked together. Never downgrade a proven
     /// Tab, commit, deactivate, mouse, or controller-handoff boundary.
     func markContextStaleForSameClientReactivation() {
+        contextStateRevision &+= 1
         invalidateHanjaShortcutSessionState()
         guard contextRefreshRequirement == .none else { return }
         contextRefreshRequirement = .sameClientReactivation
@@ -206,7 +222,13 @@ final class InputSession: @unchecked Sendable {
         using analyze: (IMKTextInput) -> ClientContext
     ) -> Bool {
         guard contextRefreshRequirement != .none else { return false }
+        let revision = contextStateRevision
+        let refreshRequirement = contextRefreshRequirement
         let newContext = analyze(client)
+        guard contextStateRevision == revision,
+              contextRefreshRequirement == refreshRequirement else {
+            return false
+        }
         let fieldIdentityMayHaveChanged: Bool
         switch contextRefreshRequirement {
         case .none:
@@ -215,6 +237,10 @@ final class InputSession: @unchecked Sendable {
             fieldIdentityMayHaveChanged = !canPreserveMarkedComposition(in: newContext)
         case .fieldIdentityMayHaveChanged:
             fieldIdentityMayHaveChanged = true
+        }
+        guard contextStateRevision == revision,
+              contextRefreshRequirement == refreshRequirement else {
+            return false
         }
         refreshContext(
             newContext,
@@ -245,14 +271,8 @@ final class InputSession: @unchecked Sendable {
         let expectedPreedit = composer.activePreeditForDisplay
         let expectedLength = expectedPreedit.utf16.count
         let markedRange = client.markedRange()
-        let (rangeEnd, overflow) = markedRange.location.addingReportingOverflow(markedRange.length)
-        guard expectedLength > 0,
-              markedRange.location != NSNotFound,
-              markedRange.location >= 0,
-              markedRange.location < DirectInsertionPlanner.maxReasonableLocation,
-              markedRange.length == expectedLength,
-              !overflow,
-              rangeEnd < DirectInsertionPlanner.maxReasonableLocation else {
+        guard markedRange.length == expectedLength,
+              Self.isReasonableMarkedRange(markedRange) else {
             return false
         }
 
@@ -271,7 +291,10 @@ final class InputSession: @unchecked Sendable {
             return true
         }
         guard context.isLightweight, context.isFinder else { return false }
-        refreshContext(analyze(client), fieldIdentityMayHaveChanged: true)
+        let revision = contextStateRevision
+        let newContext = analyze(client)
+        guard contextStateRevision == revision else { return false }
+        refreshContext(newContext, fieldIdentityMayHaveChanged: true)
         return true
     }
 
@@ -286,7 +309,9 @@ final class InputSession: @unchecked Sendable {
         // before replacing the adapter, otherwise marked text or direct-insertion
         // tracking can be stranded when the experimental setting changes at runtime.
         finalize(reason: .deliveryModeChange)
-        adapter = TextDeliveryPolicy.makeAdapter(for: client, context: context)
+        let replacement = TextDeliveryPolicy.makeAdapter(for: client, context: context)
+        configureClientWriteValidator(on: replacement)
+        adapter = replacement
     }
 
     /// Client writes are safe only for the same analyzed field generation that
@@ -295,6 +320,100 @@ final class InputSession: @unchecked Sendable {
         !contextNeedsRefresh && lastNonSecureGeneration == contextGeneration
     }
 
+    var clientWriteGeneration: UInt64? {
+        clientWritesAreConfirmedSafe ? contextGeneration : nil
+    }
+
+    func captureContextStateLease() -> ContextStateLease? {
+        guard !contextNeedsRefresh else { return nil }
+        return ContextStateLease(
+            revision: contextStateRevision,
+            generation: contextGeneration
+        )
+    }
+
+    func isCurrent(_ lease: ContextStateLease) -> Bool {
+        !contextNeedsRefresh
+            && contextStateRevision == lease.revision
+            && contextGeneration == lease.generation
+    }
+
+    func captureOwnedTextBeforeCursor(
+        expectedText: String
+    ) -> (generation: UInt64, selectionLocation: Int)? {
+        guard let generation = clientWriteGeneration,
+              let range = ownedTextRangeBeforeCursor(
+                expectedText: expectedText,
+                generation: generation,
+                expectedSelectionLocation: nil
+              ) else {
+            return nil
+        }
+        return (generation, NSMaxRange(range))
+    }
+
+    /// Replace the exact PriType-owned text immediately before the caret. A client
+    /// object can outlive its focused field, so generation, caret shape, bounds, and
+    /// current content must all still match at the moment of the write.
+    @discardableResult
+    func replaceOwnedTextBeforeCursor(
+        expectedText: String,
+        replacement: String,
+        generation: UInt64,
+        expectedSelectionLocation: Int,
+        isStillOwned: () -> Bool
+    ) -> Bool {
+        guard let replacementRange = ownedTextRangeBeforeCursor(
+            expectedText: expectedText,
+            generation: generation,
+            expectedSelectionLocation: expectedSelectionLocation
+        ),
+              isStillOwned(),
+              clientWriteGeneration == generation,
+              client.selectedRange() == NSRange(
+                location: expectedSelectionLocation,
+                length: 0
+              ),
+              clientWriteGeneration == generation else {
+            return false
+        }
+
+        client.insertText(replacement, replacementRange: replacementRange)
+        return true
+    }
+
+    private func ownedTextRangeBeforeCursor(
+        expectedText: String,
+        generation: UInt64,
+        expectedSelectionLocation: Int?
+    ) -> NSRange? {
+        guard clientWriteGeneration == generation else { return nil }
+
+        let expectedLength = expectedText.utf16.count
+        let selection = client.selectedRange()
+        guard expectedLength > 0,
+              selection.location != NSNotFound,
+              selection.location >= expectedLength,
+              selection.location < DirectInsertionPlanner.maxReasonableLocation,
+              selection.length == 0,
+              expectedSelectionLocation.map({ $0 == selection.location }) ?? true else {
+            return nil
+        }
+
+        let replacementRange = NSRange(
+            location: selection.location - expectedLength,
+            length: expectedLength
+        )
+        guard let currentText = client.attributedSubstring(from: replacementRange)?.string,
+              currentText.utf16.count == replacementRange.length,
+              currentText.precomposedStringWithCanonicalMapping
+                == expectedText.precomposedStringWithCanonicalMapping,
+              client.selectedRange() == selection,
+              clientWriteGeneration == generation else {
+            return nil
+        }
+        return replacementRange
+    }
     /// Mouse clicks inside a live marked composition keep composing. A marked-text
     /// fallback left behind after the engine emptied has nothing left to keep, so any
     /// click must reconcile it through `finalize`.
@@ -512,10 +631,15 @@ final class InputSession: @unchecked Sendable {
             if let direct = adapter as? DirectInsertionAdapter,
                direct.usesMarkedTextFallback {
                 // The engine can become empty before a host clears the fallback
-                // marked range. It is safe to reconcile only because the adapter
-                // explicitly records that PriType created this marked text.
+                // marked range. Reconcile only while the current host content still
+                // matches the exact fallback this adapter rendered.
                 let markedRange = client.markedRange()
-                if markedRange.location != NSNotFound, markedRange.length > 0 {
+                if Self.confirmedMarkedTextMatch(
+                    in: client,
+                    range: markedRange,
+                    expectedText: direct.markedTextFallbackContent
+                ) == true,
+                   clientWritesAreConfirmedSafe {
                     client.insertText("", replacementRange: markedRange)
                     direct.resetPreeditTracking()
                     DebugLogger.event("composition.marked_fallback_cleared", metadata: [
@@ -523,6 +647,12 @@ final class InputSession: @unchecked Sendable {
                     ])
                     return true
                 }
+                direct.resetPreeditTracking()
+                DebugLogger.event("composition.marked_fallback_abandoned", metadata: [
+                    .state("reason", reason.diagnosticLabel),
+                    .state("cause", "marked_text_changed")
+                ])
+                return false
             }
             // Nothing to commit, but the session-ending event (e.g. a mouse click)
             // likely moved the caret — stale direct-insertion tracking must never
@@ -548,7 +678,35 @@ final class InputSession: @unchecked Sendable {
             return true
         }
 
-        Self.finalizeMarkedComposition(composer: composer, client: client, reason: reason)
+        let expectedMarkedText = composer.activePreeditForDisplay
+        let markedRange = client.markedRange()
+        if Self.confirmedMarkedTextMatch(
+            in: client,
+            range: markedRange,
+            expectedText: expectedMarkedText
+        ) == false {
+            discardCompositionWithoutClientWrite(rebuildAdapter: false)
+            DebugLogger.event("composition.discarded", metadata: [
+                .state("reason", reason.diagnosticLabel),
+                .state("cause", "marked_text_changed")
+            ])
+            return true
+        }
+        guard clientWritesAreConfirmedSafe else {
+            discardCompositionWithoutClientWrite(rebuildAdapter: false)
+            DebugLogger.event("composition.discarded", metadata: [
+                .state("reason", reason.diagnosticLabel),
+                .state("cause", "client_write_revoked")
+            ])
+            return true
+        }
+
+        Self.finalizeMarkedComposition(
+            composer: composer,
+            client: client,
+            markedRange: markedRange,
+            reason: reason
+        )
         (adapter as? DirectInsertionAdapter)?.resetPreeditTracking()
         return true
     }
@@ -582,30 +740,26 @@ final class InputSession: @unchecked Sendable {
         }
 
         let markedRange = client.markedRange()
-        let (rangeEnd, rangeOverflow) = markedRange.location.addingReportingOverflow(markedRange.length)
-        guard markedRange.location != NSNotFound,
-              markedRange.location >= 0,
-              markedRange.location < DirectInsertionPlanner.maxReasonableLocation,
-              markedRange.length > 0,
-              !rangeOverflow,
-              rangeEnd < DirectInsertionPlanner.maxReasonableLocation else {
+        guard Self.isReasonableMarkedRange(markedRange) else {
             DebugLogger.event("composition.deferred_marked_fallback_abandoned", metadata: [
                 .state("reason", "marked_range_invalid")
             ])
             return false
         }
 
-        guard let currentMarkedText = client.attributedSubstring(from: markedRange)?.string,
-              currentMarkedText.utf16.count == markedRange.length else {
+        guard Self.confirmedMarkedTextMatch(
+            in: client,
+            range: markedRange,
+            expectedText: token.normalizedContent
+        ) == true else {
             DebugLogger.event("composition.deferred_marked_fallback_abandoned", metadata: [
-                .state("reason", "marked_text_unavailable")
+                .state("reason", "marked_text_unverified")
             ])
             return false
         }
-        let normalizedCurrentText = currentMarkedText.precomposedStringWithCanonicalMapping
-        guard normalizedCurrentText == token.normalizedContent else {
+        guard clientWriteGeneration == token.generation else {
             DebugLogger.event("composition.deferred_marked_fallback_abandoned", metadata: [
-                .state("reason", "marked_text_changed")
+                .state("reason", "client_write_revoked")
             ])
             return false
         }
@@ -615,9 +769,9 @@ final class InputSession: @unchecked Sendable {
         return true
     }
 
-    /// Remember that the secure toggle's mode write still needs a client keyboard
-    /// layout sync. Repeated secure toggles collapse to the latest mode and trace.
-    func deferRomanKeyboardLayoutSync(trace: ToggleLatencyTrace) {
+    /// Remember that a client keyboard-layout sync must wait until the current field
+    /// passes the nonsecure gate. Repeated requests collapse to the latest trace.
+    func deferRomanKeyboardLayoutSync(trace: ToggleLatencyTrace? = nil) {
         #if DEBUG
         deferredRomanKeyboardLayoutTrace?.mark(.superseded)
         deferredRomanKeyboardLayoutTrace = trace
@@ -625,14 +779,15 @@ final class InputSession: @unchecked Sendable {
         needsDeferredRomanKeyboardLayoutSync = true
     }
 
-    /// Apply a secure-toggle layout sync only after the current field has passed the
-    /// nonsecure gate. Clear state before the callback so a reentrant toggle cannot be
-    /// overwritten by the older request completing.
+    /// Apply a deferred layout sync only after the current field has passed the
+    /// nonsecure gate. Clear state before the callback so a reentrant request cannot
+    /// be overwritten by the older request completing.
     @discardableResult
     func reconcileDeferredRomanKeyboardLayoutSync(
         using synchronize: (IMKTextInput, InputMode) -> Void
     ) -> Bool {
-        guard needsDeferredRomanKeyboardLayoutSync else { return false }
+        guard needsDeferredRomanKeyboardLayoutSync,
+              let contextLease = captureContextStateLease() else { return false }
         needsDeferredRomanKeyboardLayoutSync = false
         #if DEBUG
         let trace = deferredRomanKeyboardLayoutTrace
@@ -643,11 +798,20 @@ final class InputSession: @unchecked Sendable {
         #if DEBUG
         trace?.mark(.keyboardOverride)
         #endif
+        guard isCurrent(contextLease) else {
+            if !needsDeferredRomanKeyboardLayoutSync {
+                needsDeferredRomanKeyboardLayoutSync = true
+                #if DEBUG
+                deferredRomanKeyboardLayoutTrace = trace
+                #endif
+            }
+            return false
+        }
         return true
     }
 
-    /// A later nonsecure toggle performs its own forced layout sync, superseding any
-    /// layout work deferred by an earlier secure toggle.
+    /// A forced layout sync supersedes any work deferred while the field was
+    /// unclassified or secure.
     func cancelDeferredRomanKeyboardLayoutSync() {
         guard needsDeferredRomanKeyboardLayoutSync else { return }
         needsDeferredRomanKeyboardLayoutSync = false
@@ -683,7 +847,15 @@ final class InputSession: @unchecked Sendable {
         guard rebuildAdapter else { return }
         let resolved = TextDeliveryPolicy.mode(for: context)
         if adapter.deliveryMode != resolved {
-            adapter = TextDeliveryPolicy.makeAdapter(for: client, context: context)
+            let replacement = TextDeliveryPolicy.makeAdapter(for: client, context: context)
+            configureClientWriteValidator(on: replacement)
+            adapter = replacement
+        }
+    }
+
+    private func configureClientWriteValidator(on adapter: BaseClientAdapter) {
+        adapter.setClientWriteValidator { [weak self] in
+            self?.clientWritesAreConfirmedSafe == true
         }
     }
 
@@ -692,9 +864,9 @@ final class InputSession: @unchecked Sendable {
     static func finalizeMarkedComposition(
         composer: HangulComposer,
         client: IMKTextInput,
+        markedRange: NSRange,
         reason: CompositionFinalizeReason
     ) {
-        let markedRange = client.markedRange()
         let committed = composer.flushCommitString()
         DebugLogger.event("composition.finalized", metadata: [
             .state("reason", reason.diagnosticLabel),
@@ -710,6 +882,44 @@ final class InputSession: @unchecked Sendable {
         } else if markedRange.location != NSNotFound, markedRange.length > 0 {
             client.insertText("", replacementRange: markedRange)
         }
+    }
+
+    private static func isReasonableMarkedRange(_ range: NSRange) -> Bool {
+        let (rangeEnd, overflow) = range.location.addingReportingOverflow(range.length)
+        return range.location != NSNotFound
+            && range.location >= 0
+            && range.location < DirectInsertionPlanner.maxReasonableLocation
+            && range.length > 0
+            && !overflow
+            && rangeEnd < DirectInsertionPlanner.maxReasonableLocation
+    }
+
+    /// `nil` means the host cannot expose marked content, where canonical
+    /// `NSNotFound` commit remains the compatibility fallback. Readable content must
+    /// stay identical across a second range/content snapshot before it is touched.
+    private static func confirmedMarkedTextMatch(
+        in client: IMKTextInput,
+        range: NSRange,
+        expectedText: String
+    ) -> Bool? {
+        guard isReasonableMarkedRange(range) else { return false }
+        guard let first = client.attributedSubstring(from: range)?.string else {
+            return range.length == expectedText.utf16.count ? nil : false
+        }
+        guard first.utf16.count == range.length else { return false }
+        let normalizedExpected = expectedText.precomposedStringWithCanonicalMapping
+        guard first.precomposedStringWithCanonicalMapping == normalizedExpected else {
+            return false
+        }
+
+        let confirmedRange = client.markedRange()
+        guard confirmedRange == range,
+              let confirmed = client.attributedSubstring(from: confirmedRange)?.string,
+              confirmed.utf16.count == confirmedRange.length,
+              confirmed.precomposedStringWithCanonicalMapping == normalizedExpected else {
+            return false
+        }
+        return true
     }
 
     /// Secure text fields must receive raw key events. Drop the engine's composition

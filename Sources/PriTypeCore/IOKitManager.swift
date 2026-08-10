@@ -51,9 +51,6 @@ public final class IOKitManager: @unchecked Sendable {
     /// Track hanja key state
     private var hanjaKeyIsDown = false
     
-    /// Debounce for Hanja trigger
-    private var lastHanjaTriggerTime: DispatchTime = .init(uptimeNanoseconds: 0)
-    
     /// Callback when hanja key is pressed
     public var onRightOptionHanja: (@Sendable () -> Void)?
     
@@ -335,19 +332,6 @@ public final class IOKitManager: @unchecked Sendable {
             if pressed && !hanjaKeyIsDown {
                 hanjaKeyIsDown = true
                 
-                // Debounce: ignore if last trigger was within 500ms
-                let now = DispatchTime.now()
-                let elapsed = now.uptimeNanoseconds - lastHanjaTriggerTime.uptimeNanoseconds
-                let elapsedMs = elapsed / 1_000_000
-                if elapsedMs < 500 {
-                    DebugLogger.event("hanja.request_debounced", metadata: [
-                        .state("backend", "iokit"),
-                        .durationMicroseconds("elapsed", elapsed / 1_000)
-                    ])
-                    return
-                }
-                lastHanjaTriggerTime = now
-                
                 DebugLogger.event("hanja.requested", metadata: [
                     .state("backend", "iokit")
                 ])
@@ -376,7 +360,9 @@ public final class IOKitManager: @unchecked Sendable {
             limitations.append(.unsupportedIOKitToggleBinding(toggleBinding.displayName))
         }
 
-        if hanjaBinding != toggleBinding,
+        let hanjaIsShadowedByToggle = priTypeToggleEnabled
+            && ShortcutBindingRouter.conflicts(toggleBinding, hanjaBinding)
+        if !hanjaIsShadowedByToggle,
            (!hanjaBinding.isModifierOnly || hidUsage(for: hanjaBinding.keyCode) == nil) {
             limitations.append(.unsupportedIOKitHanjaBinding(hanjaBinding.displayName))
         }

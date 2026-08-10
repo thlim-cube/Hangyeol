@@ -66,6 +66,11 @@ public class HangulComposer: @unchecked Sendable {
 
     /// Candidate presenter (injected in lifecycle tests so no real panel is opened).
     private let candidateWindow: any HanjaCandidatePresenting
+
+    /// Production controllers provide a field/caret lease before a selectable panel
+    /// is shown. Standalone composers may still exercise panel lifecycle behavior,
+    /// but their callbacks cannot edit a client because they have no lease.
+    private let captureHanjaSelectionLease: ((UInt64, String) -> HanjaSelectionSnapshot?)?
     
     // MARK: - Private Properties
     
@@ -163,12 +168,14 @@ public class HangulComposer: @unchecked Sendable {
         statusBar: StatusBarUpdating,
         configuration: ConfigurationProviding,
         inputModeStore: InputModeStore,
-        candidateWindow: any HanjaCandidatePresenting
+        candidateWindow: any HanjaCandidatePresenting,
+        captureHanjaSelectionLease: ((UInt64, String) -> HanjaSelectionSnapshot?)? = nil
     ) {
         self.statusBar = statusBar
         self.configuration = configuration
         self.inputModeStore = inputModeStore
         self.candidateWindow = candidateWindow
+        self.captureHanjaSelectionLease = captureHanjaSelectionLease
         self.textConvenience = TextConvenienceHandler(
             isDoubleSpacePeriodEnabled: {
                 configuration.doubleSpacePeriodEnabled
@@ -847,25 +854,37 @@ public class HangulComposer: @unchecked Sendable {
         // Commit preedit AFTER capturing cursor position
         if hadPreedit {
             commitComposition(delegate: delegate)
+            guard hanjaGeneration == snapshotGeneration,
+                  hanjaPresentationID == presentationID,
+                  hanjaMode else {
+                DebugLogger.event("hanja.lookup_skipped", metadata: [
+                    .state("reason", "invalidated_during_commit")
+                ])
+                return true
+            }
         }
         
-        // Capture replacement lengths for the retained selection callback.
-        let replacementLength = searchKey.utf16.count
-        let replacementCharacterCount = searchKey.count
+        // Capture immutable lookup state for the retained selection callback.
+        let selectionSearchKey = searchKey
+        let replacementLength = selectionSearchKey.utf16.count
+        let replacementCharacterCount = selectionSearchKey.count
         
-        // Snapshot: Capture client identity at show time for validation at select time.
-        // Use ObjectIdentifier instead of weak reference: if the weak ref is deallocated,
-        // validation would be skipped and hanja could be inserted into a wrong client.
-        let selectionSnapshot: HanjaSelectionSnapshot? = {
-            guard let client = inputClient, let sessionID = controller?.activeSessionIdentifier else {
-                return nil
-            }
-            return HanjaSelectionSnapshot(
-                generation: snapshotGeneration,
-                clientID: ObjectIdentifier(client as AnyObject),
-                sessionID: sessionID
-            )
-        }()
+        // Production callbacks require the current session's client, field generation,
+        // caret, and source text to remain owned at selection time.
+        let selectionSnapshot = captureHanjaSelectionLease?(
+            snapshotGeneration,
+            selectionSearchKey
+        )
+        guard (captureHanjaSelectionLease == nil || selectionSnapshot != nil),
+              hanjaGeneration == snapshotGeneration,
+              hanjaPresentationID == presentationID,
+              hanjaMode else {
+            DebugLogger.event("hanja.lookup_skipped", metadata: [
+                .state("reason", "selection_not_owned")
+            ])
+            invalidateHanjaState()
+            return true
+        }
         
         candidateWindow.show(
             presentationID: presentationID,
@@ -885,10 +904,10 @@ public class HangulComposer: @unchecked Sendable {
                 guard let snapshot = selectionSnapshot,
                       let activeController = PriTypeInputController.sharedController,
                       let activeSessionID = activeController.activeSessionIdentifier,
-                      let client = activeController.activeSessionClient,
+                      let activeClient = activeController.activeSessionClient,
                       snapshot.matches(
                           generation: self.hanjaGeneration,
-                          clientID: ObjectIdentifier(client as AnyObject),
+                          clientID: ObjectIdentifier(activeClient as AnyObject),
                           sessionID: activeSessionID
                       ) else {
                     DebugLogger.event("hanja.selection_aborted", metadata: [
@@ -898,13 +917,16 @@ public class HangulComposer: @unchecked Sendable {
                     return
                 }
 
-                let selRange = client.selectedRange()
-                if selRange.location != NSNotFound && selRange.location < 10000000 && selRange.location >= replacementLength {
-                    let replaceRange = NSRange(location: selRange.location - replacementLength, length: replacementLength)
-                    client.insertText(entry.hanja, replacementRange: replaceRange)
-                } else {
-                    // Fallback: just insert
-                    client.insertText(entry.hanja, replacementRange: NSRange(location: NSNotFound, length: NSNotFound))
+                guard activeController.applyHanjaSelection(
+                    snapshot: snapshot,
+                    expectedText: selectionSearchKey,
+                    replacement: entry.hanja
+                ) else {
+                    DebugLogger.event("hanja.selection_aborted", metadata: [
+                        .state("reason", "field_not_owned")
+                    ])
+                    self.invalidateHanjaState()
+                    return
                 }
 
                 self.localTextBuffer = String(self.localTextBuffer.dropLast(replacementCharacterCount)) + entry.hanja
@@ -932,6 +954,10 @@ public class HangulComposer: @unchecked Sendable {
     public static func isValidCursorRect(_ rect: NSRect) -> Bool {
         CursorRectResolver.isValidCursorRect(rect)
     }
+
+    func ownsHanjaSelection(generation: UInt64) -> Bool {
+        hanjaGeneration == generation && hanjaMode && inputMode == .korean
+    }
 }
 
 /// Identity captured when a candidate panel opens. InputMethodKit may reuse the
@@ -941,6 +967,8 @@ struct HanjaSelectionSnapshot {
     let generation: UInt64
     let clientID: ObjectIdentifier
     let sessionID: ObjectIdentifier
+    let fieldGeneration: UInt64
+    let selectionLocation: Int
 
     func matches(
         generation: UInt64,

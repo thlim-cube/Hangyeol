@@ -74,6 +74,24 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         guard let session, !session.contextNeedsRefresh else { return nil }
         return session.client
     }
+    func captureHanjaSelectionLease(
+        generation: UInt64,
+        expectedText: String
+    ) -> HanjaSelectionSnapshot? {
+        guard Self.sharedController === self,
+              let session,
+              let anchor = session.captureOwnedTextBeforeCursor(expectedText: expectedText),
+              session.composer.ownsHanjaSelection(generation: generation) else {
+            return nil
+        }
+        return HanjaSelectionSnapshot(
+            generation: generation,
+            clientID: ObjectIdentifier(session.client as AnyObject),
+            sessionID: ObjectIdentifier(session),
+            fieldGeneration: anchor.generation,
+            selectionLocation: anchor.selectionLocation
+        )
+    }
 
     #if DEBUG
     private var debugHandleLogCount = 0
@@ -115,7 +133,14 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         HangulComposer(
             statusBar: StatusBarManager.shared,
             configuration: ConfigurationManager.shared,
-            inputModeStore: Self.sharedInputModeStore
+            inputModeStore: Self.sharedInputModeStore,
+            candidateWindow: HanjaCandidateWindow.shared,
+            captureHanjaSelectionLease: { [weak self] generation, expectedText in
+                self?.captureHanjaSelectionLease(
+                    generation: generation,
+                    expectedText: expectedText
+                )
+            }
         )
     }
 
@@ -259,12 +284,15 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     /// controller can arrive before the old controller's `deactivateServer`, so claim
     /// process-wide ownership only after retiring the previous controller while its
     /// host still accepts the composition commit.
-    private func claimProcessActiveController(incomingClient: IMKTextInput?) {
-        Self.activeControllerRegistry.claim(self) { previous in
+    @discardableResult
+    private func claimProcessActiveController(incomingClient: IMKTextInput?) -> Bool {
+        let acquired = Self.activeControllerRegistry.claim(self) { previous in
             previous.publishHanjaShortcutSessionState(.unknown)
             previous.retireForControllerHandoff(incomingClient: incomingClient)
         }
+        guard acquired else { return false }
         publishHanjaShortcutSessionState(.unknown)
+        return true
     }
 
     private func retireForControllerHandoff(incomingClient: IMKTextInput?) {
@@ -320,6 +348,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             _ = session.refreshContextForInputBoundary(using: { client in
                 ClientContextDetector.analyze(client: client)
             })
+            guard !session.contextNeedsRefresh else { return nil }
             return session
         }
 
@@ -328,8 +357,6 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             client: client,
             context: ClientContextDetector.analyze(client: client)
         )
-        guard let newSession else { return nil }
-        syncRomanKeyboardLayout(for: client)
         return newSession
     }
 
@@ -439,6 +466,10 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
     // MARK: - Mode Transitions (한/영)
 
+    public func performPriTypeModeTransition(source: InputModeCoordinator.ToggleSource) {
+        performPriTypeModeTransition(source: source, trace: .begin(source: source))
+    }
+
     public func performPriTypeModeTransition(
         source: InputModeCoordinator.ToggleSource,
         trace: ToggleLatencyTrace
@@ -462,8 +493,14 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             shouldPassThroughSecureInput: { client, context in
                 self.shouldPassThroughSecureInput(client: client, context: context)
             },
+            publishSecureInputState: { isSecureInput in
+                self.publishHanjaShortcutSessionState(isSecureInput ? .secure : .nonsecure)
+            },
             syncRomanKeyboardLayout: { client, mode in
                 self.syncRomanKeyboardLayout(for: client, mode: mode, force: true)
+            },
+            transactionIsCurrent: {
+                Self.sharedController === self && self.session === activeSession
             }
         )
     }
@@ -480,9 +517,12 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         trace: ToggleLatencyTrace,
         analyzeContext: (IMKTextInput) -> ClientContext,
         shouldPassThroughSecureInput: (IMKTextInput, ClientContext) -> Bool,
-        syncRomanKeyboardLayout: (IMKTextInput, InputMode) -> Void
+        publishSecureInputState: (Bool) -> Void = { _ in },
+        syncRomanKeyboardLayout: (IMKTextInput, InputMode) -> Void,
+        transactionIsCurrent: () -> Bool = { true }
     ) -> Bool {
         _ = session.refreshContextForInputBoundary(using: analyzeContext)
+        guard let contextLease = session.captureContextStateLease() else { return false }
 
         let composer = session.composer
         let nextMode = composer.inputMode.toggled
@@ -498,7 +538,10 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         Self.pendingToggleTrace = trace
         #endif
 
-        if shouldPassThroughSecureInput(session.client, session.context) {
+        let isSecureInput = shouldPassThroughSecureInput(session.client, session.context)
+        guard session.isCurrent(contextLease), transactionIsCurrent() else { return false }
+        publishSecureInputState(isSecureInput)
+        if isSecureInput {
             session.discardForSecureInput()
             session.deferRomanKeyboardLayoutSync(trace: trace)
             composer.setInputMode(nextMode)
@@ -507,14 +550,33 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         }
 
         _ = session.prepareForNonSecureClientWrites()
+        guard let writeLease = session.captureContextStateLease() else { return false }
         session.ensureAdapterMatchesPolicy()
         session.cancelDeferredRomanKeyboardLayoutSync()
         session.finalize(reason: .modeTransition)
         trace.mark(.finalize)
+        guard session.isCurrent(writeLease), transactionIsCurrent() else {
+            if transactionIsCurrent() {
+                session.discardForSecureInput()
+                session.deferRomanKeyboardLayoutSync(trace: trace)
+                composer.setInputMode(nextMode)
+                trace.mark(.modeWrite)
+            }
+            return false
+        }
         composer.clearLocalBuffer()
         CursorRectResolver.invalidateCache()
         syncRomanKeyboardLayout(session.client, nextMode)
         trace.mark(.keyboardOverride)
+        guard session.isCurrent(writeLease), transactionIsCurrent() else {
+            if transactionIsCurrent() {
+                session.discardForSecureInput()
+                session.deferRomanKeyboardLayoutSync(trace: trace)
+                composer.setInputMode(nextMode)
+                trace.mark(.modeWrite)
+            }
+            return false
+        }
         composer.setInputMode(nextMode)
         trace.mark(.modeWrite)
         return true
@@ -525,30 +587,44 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     /// activation callbacks are allowed to mark the boundary but never commit text.
     @discardableResult
     func reconcileMacOSOwnedInputSourceBoundary() -> Bool {
-        guard let session else { return false }
+        guard let session,
+              Self.sharedController === self else { return false }
 
         DebugLogger.event("input_mode.ownership_reconciliation_started", metadata: [
             .state("from", session.composer.inputMode == .korean ? "korean" : "english")
         ])
-        Self.applyMacOSOwnedInputSourceBoundary(to: session) {
-            self.syncRomanKeyboardLayout(for: session.client, mode: .korean, force: true)
-        }
-        return true
+        return Self.applyMacOSOwnedInputSourceBoundary(
+            to: session,
+            syncRomanKeyboardLayout: {
+                self.syncRomanKeyboardLayout(for: session.client, mode: .korean, force: true)
+            },
+            transactionIsCurrent: {
+                Self.sharedController === self && self.session === session
+            }
+        )
     }
 
     /// Testable transaction body. The controller remains the only production mode
     /// writer; the ownership monitor can only ask it to execute this path.
     static func applyMacOSOwnedInputSourceBoundary(
         to session: InputSession,
-        syncRomanKeyboardLayout: () -> Void
-    ) {
+        syncRomanKeyboardLayout: () -> Void,
+        transactionIsCurrent: () -> Bool = { true }
+    ) -> Bool {
+        guard let lease = session.captureContextStateLease(),
+              transactionIsCurrent() else { return false }
         let composer = session.composer
         composer.dismissHanjaCandidates()
+        guard session.isCurrent(lease), transactionIsCurrent() else { return false }
         session.finalize(reason: .inputSourceOwnership)
+        guard session.isCurrent(lease), transactionIsCurrent() else { return false }
         composer.clearLocalBuffer()
         CursorRectResolver.invalidateCache()
+        session.cancelDeferredRomanKeyboardLayoutSync()
         syncRomanKeyboardLayout()
+        guard session.isCurrent(lease), transactionIsCurrent() else { return false }
         composer.setInputMode(.korean)
+        return true
     }
 
     // MARK: - IMK Lifecycle
@@ -563,14 +639,17 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // handoff. Once the claim completes, this controller republishes unknown.
         Self.sharedController?.publishHanjaShortcutSessionState(.unknown)
         super.activateServer(sender)
-        claimProcessActiveController(incomingClient: sender as? IMKTextInput)
+        guard claimProcessActiveController(incomingClient: sender as? IMKTextInput) else {
+            DebugLogger.event("input.activation_aborted", metadata: [
+                .state("reason", "newer_owner")
+            ])
+            return
+        }
         session?.composer.dismissHanjaCandidates()
         CursorRectResolver.invalidateCache()
         // NOTE: Focus changes never reset the shared InputModeStore. Korean/English
         // state is process-global, while libhangul composition remains session-owned.
         if let client = sender as? IMKTextInput {
-            syncRomanKeyboardLayout(for: client, force: true)
-
             if let session, session.matches(client) {
                 // Electron/Chromium may activate the same client repeatedly without
                 // deactivation. Keep that session's composer so an in-flight syllable
@@ -673,7 +752,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
     @objc private func handleRomanKeyboardLayoutPreferenceChange() {
         guard let session else { return }
-        syncRomanKeyboardLayout(for: session.client, force: true)
+        session.deferRomanKeyboardLayoutSync()
     }
 
     // Keep flagsChanged for Caps Lock/TIS ownership and explicitly opt into mouse
@@ -718,6 +797,16 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         #endif
         guard let event = event, let client = sender as? IMKTextInput else { return false }
 
+        if Self.sharedController !== self {
+            guard Self.sharedController == nil,
+                  claimProcessActiveController(incomingClient: client) else {
+                DebugLogger.event("input.handle_ignored", metadata: [
+                    .state("reason", "inactive_controller")
+                ])
+                return false
+            }
+        }
+
         guard event.type == .keyDown else {
             return false
         }
@@ -761,7 +850,15 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         composer.markKeystroke(bundleId: session.context.bundleId)
 
         // 4. DYNAMIC CHECK: Secure Input (password fields) — raw pass-through.
-        if shouldPassThroughSecureInput(client: client, context: session.context) {
+        guard let contextLease = session.captureContextStateLease() else { return false }
+        let isSecureInput = shouldPassThroughSecureInput(client: client, context: session.context)
+        guard session.isCurrent(contextLease),
+              Self.sharedController === self,
+              self.session === session else {
+            return false
+        }
+        publishHanjaShortcutSessionState(isSecureInput ? .secure : .nonsecure)
+        if isSecureInput {
             return Self.routeSecureKeyDown(in: session, keyCode: event.keyCode)
         }
 
@@ -769,17 +866,28 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // text in the host. This is the first point that proves client writes are
         // safe again; lifecycle callbacks alone must never perform this cleanup.
         _ = session.prepareForNonSecureClientWrites()
+        guard let writeLease = session.captureContextStateLease() else { return false }
 
         // Apply a pending macOS ownership/source boundary only after the secure
         // client check. This makes the first normal key use Korean without allowing
         // an observer or activation callback to insert text into a password field.
         _ = InputModeCoordinator.shared.reconcileSystemOwnershipIfNeeded(for: self)
+        guard session.isCurrent(writeLease),
+              Self.sharedController === self,
+              self.session === session else {
+            return false
+        }
 
         // A custom toggle inside Secure Input changes only PriType's internal mode.
         // Synchronize the client keyboard layout now that this field passed the gate,
         // before the first key is interpreted in that mode.
         _ = session.reconcileDeferredRomanKeyboardLayoutSync { client, mode in
             self.syncRomanKeyboardLayout(for: client, mode: mode, force: true)
+        }
+        guard session.isCurrent(writeLease),
+              Self.sharedController === self,
+              self.session === session else {
+            return false
         }
 
         // 5. The delivery policy can flip mid-session (experimental flag toggled in
@@ -836,7 +944,6 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             ])
         }
 
-        publishHanjaShortcutSessionState(isSecureInput ? .secure : .nonsecure)
         return isSecureInput
     }
 
@@ -883,10 +990,17 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         }
         guard let currentSession = session else { return }
         guard let activeSession = ensureSession(for: currentSession.client) else { return }
+        guard let contextLease = activeSession.captureContextStateLease() else { return }
         let isSecureInput = shouldPassThroughSecureInput(
             client: activeSession.client,
             context: activeSession.context
         )
+        guard activeSession.isCurrent(contextLease),
+              Self.sharedController === self,
+              session === activeSession else {
+            return
+        }
+        publishHanjaShortcutSessionState(isSecureInput ? .secure : .nonsecure)
         Self.routeExternalHanjaLookup(
             in: activeSession,
             isSecureInput: isSecureInput,
@@ -914,10 +1028,88 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             return false
         }
         _ = session.prepareForNonSecureClientWrites()
+        guard let writeLease = session.captureContextStateLease() else { return false }
         reconcileOwnership()
+        guard session.isCurrent(writeLease) else { return false }
         session.ensureAdapterMatchesPolicy()
+        guard session.isCurrent(writeLease) else { return false }
         performLookup(session.composer)
         return true
+    }
+
+    @discardableResult
+    func applyHanjaSelection(
+        snapshot: HanjaSelectionSnapshot,
+        expectedText: String,
+        replacement: String
+    ) -> Bool {
+        guard Self.sharedController === self,
+              let session,
+              ObjectIdentifier(session) == snapshot.sessionID,
+              ObjectIdentifier(session.client as AnyObject) == snapshot.clientID else {
+            return false
+        }
+
+        _ = session.refreshContextForInputBoundary { client in
+            ClientContextDetector.analyze(client: client)
+        }
+        guard Self.sharedController === self,
+              self.session === session,
+              !session.contextNeedsRefresh,
+              ObjectIdentifier(session) == snapshot.sessionID,
+              ObjectIdentifier(session.client as AnyObject) == snapshot.clientID else {
+            return false
+        }
+
+        guard let contextLease = session.captureContextStateLease() else { return false }
+        let isSecureInput = shouldPassThroughSecureInput(
+            client: session.client,
+            context: session.context
+        )
+        guard Self.sharedController === self,
+              self.session === session,
+              session.isCurrent(contextLease) else {
+            return false
+        }
+        publishHanjaShortcutSessionState(isSecureInput ? .secure : .nonsecure)
+        return Self.routeHanjaSelection(
+            in: session,
+            snapshot: snapshot,
+            isSecureInput: isSecureInput,
+            expectedText: expectedText,
+            replacement: replacement,
+            selectionIsCurrent: {
+                session.composer.ownsHanjaSelection(generation: snapshot.generation)
+            }
+        )
+    }
+
+    @discardableResult
+    static func routeHanjaSelection(
+        in session: InputSession,
+        snapshot: HanjaSelectionSnapshot,
+        isSecureInput: Bool,
+        expectedText: String,
+        replacement: String,
+        selectionIsCurrent: () -> Bool = { true }
+    ) -> Bool {
+        guard ObjectIdentifier(session) == snapshot.sessionID,
+              ObjectIdentifier(session.client as AnyObject) == snapshot.clientID else {
+            return false
+        }
+        guard !isSecureInput else {
+            session.discardForSecureInput()
+            return false
+        }
+
+        _ = session.prepareForNonSecureClientWrites()
+        return session.replaceOwnedTextBeforeCursor(
+            expectedText: expectedText,
+            replacement: replacement,
+            generation: snapshot.fieldGeneration,
+            expectedSelectionLocation: snapshot.selectionLocation,
+            isStillOwned: selectionIsCurrent
+        )
     }
 
     // MARK: - Input Method Menu

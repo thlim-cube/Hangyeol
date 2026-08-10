@@ -114,6 +114,7 @@ enum PreeditUnderline {
 /// Subclasses override setMarkedText for different behaviors
 class BaseClientAdapter: NSObject, HangulComposerDelegate {
     let client: IMKTextInput
+    private var clientWriteIsAllowed: () -> Bool = { true }
 
     /// Host bundle id, for engine-tuned preedit styling.
     let bundleId: String
@@ -133,14 +134,27 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
         self.preeditAttributes = PreeditUnderline.attributes(forBundleId: bundleId)
     }
 
+    func setClientWriteValidator(_ validator: @escaping () -> Bool) {
+        clientWriteIsAllowed = validator
+    }
+
+    final func canWriteToClient() -> Bool {
+        clientWriteIsAllowed()
+    }
+
     func insertText(_ text: String) {
-        guard !text.isEmpty else { return }
+        _ = tryInsertText(text)
+    }
+
+    func tryInsertText(_ text: String) -> Bool {
+        guard !text.isEmpty, canWriteToClient() else { return false }
         // Canonical IMK commit: pass NSNotFound so the host replaces the current
         // marked text automatically. This matches Apple's own input methods and is
         // what native hosts (e.g. KakaoTalk) expect. Passing an explicit marked
         // range here desynced KakaoTalk's composition (stranded marked text +
         // missing commit on focus loss).
         client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: NSNotFound))
+        return true
     }
 
     func setMarkedText(_ text: String) {
@@ -160,11 +174,19 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
     }
 
     func replaceTextBeforeCursor(length: Int, with text: String) {
+        _ = tryReplaceTextBeforeCursor(length: length, with: text)
+    }
+
+    func tryReplaceTextBeforeCursor(length: Int, with text: String) -> Bool {
         let selRange = client.selectedRange()
-        guard selRange.location != NSNotFound, selRange.location < 10000000, selRange.location >= length else { return }
+        guard canWriteToClient(),
+              selRange.location != NSNotFound,
+              selRange.location < 10000000,
+              selRange.location >= length else { return false }
 
         let replacementRange = NSRange(location: selRange.location - length, length: length)
         client.insertText(text, replacementRange: replacementRange)
+        return true
     }
 }
 
@@ -173,6 +195,7 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
 /// Standard adapter with invisible-underline marked text for composition display
 final class MarkedTextAdapter: BaseClientAdapter {
     override func setMarkedText(_ text: String) {
+        guard canWriteToClient() else { return }
         // Canonical marked-text protocol, matching Apple's own input methods:
         // set the marked text directly with replacementRange = NSNotFound (an
         // empty string clears the composition). No visible underline on composing
@@ -216,6 +239,10 @@ final class DirectInsertionAdapter: BaseClientAdapter {
     /// canonical marked-text protocol after document access became unreliable.
     var usesMarkedTextFallback: Bool { fellBackToMarked }
 
+    /// Exact marked text last rendered by this adapter. Lifecycle cleanup may touch
+    /// the host only while the current marked range still contains this content.
+    private(set) var markedTextFallbackContent = ""
+
     /// UTF-16 length of the live (in-progress) syllable currently sitting in the
     /// document as real text. 0 when there is no live preedit.
     private var livePreeditLength: Int = 0
@@ -244,25 +271,30 @@ final class DirectInsertionAdapter: BaseClientAdapter {
         livePreeditText = ""
         expectedCaret = NSNotFound
         fellBackToMarked = false
+        markedTextFallbackContent = ""
         preservingUnverifiedLivePreedit = false
     }
 
-    private func renderMarkedFallback(_ text: String) {
+    private func renderMarkedFallback(_ text: String) -> Bool {
+        guard canWriteToClient() else { return false }
+        markedTextFallbackContent = text
         let attributed = NSAttributedString(string: text, attributes: preeditAttributes)
         client.setMarkedText(
             attributed,
             selectionRange: NSRange(location: text.utf16.count, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
         )
+        return true
     }
 
     /// Replace the live-preedit region (if any) with `text` as REAL text.
     /// `keepingLive` = true means `text` is the new live preedit; false means it is
     /// a finalized commit that becomes permanent (tracked length resets to 0).
-    private func rewriteLivePreedit(with text: String, keepingLive: Bool) {
+    @discardableResult
+    private func rewriteLivePreedit(with text: String, keepingLive: Bool) -> Bool {
+        guard canWriteToClient() else { return false }
         if fellBackToMarked {
-            renderMarkedFallback(text)
-            return
+            return renderMarkedFallback(text)
         }
 
         if preservingUnverifiedLivePreedit {
@@ -273,7 +305,7 @@ final class DirectInsertionAdapter: BaseClientAdapter {
             if !keepingLive || text.isEmpty {
                 resetPreeditTracking()
             }
-            return
+            return false
         }
 
         let tStart = CFAbsoluteTimeGetCurrent()
@@ -289,9 +321,9 @@ final class DirectInsertionAdapter: BaseClientAdapter {
         // permanent text (for example, Space) into marked fallback would let the next
         // preedit replace it when selectedRange remains unavailable.
         if livePreeditLength == 0, !keepingLive, !hasUsableCaret {
-            super.insertText(text)
+            let inserted = super.tryInsertText(text)
             expectedCaret = NSNotFound
-            return
+            return inserted
         }
 
         // Once real preedit text exists, an unusable selection cannot safely be
@@ -307,7 +339,7 @@ final class DirectInsertionAdapter: BaseClientAdapter {
             DebugLogger.event("delivery.fail_closed", metadata: [
                 .state("reason", "invalid_selection_with_live_preedit")
             ])
-            return
+            return false
         }
 
         // CARET-STABILITY GUARD — prevents the direct-insertion corruption class.
@@ -356,16 +388,17 @@ final class DirectInsertionAdapter: BaseClientAdapter {
             livePreeditLength = 0
             livePreeditText = ""
             expectedCaret = NSNotFound
-            renderMarkedFallback(text)
+            let rendered = renderMarkedFallback(text)
             DebugLogger.event("delivery.fallback", metadata: [
                 .state("from", "direct_insertion"),
                 .state("to", "marked_text"),
                 .state("reason", "invalid_selection")
             ])
-            return
+            return rendered
         }
 
         let tBeforeInsert = CFAbsoluteTimeGetCurrent()
+        guard canWriteToClient() else { return false }
         client.insertText(text, replacementRange: plan.replaceRange)
         let tEnd = CFAbsoluteTimeGetCurrent()
 
@@ -385,18 +418,18 @@ final class DirectInsertionAdapter: BaseClientAdapter {
                 .count("live_preedit_length", livePreeditLength)
             ])
         }
+        return true
     }
 
-    override func insertText(_ text: String) {
+    override func tryInsertText(_ text: String) -> Bool {
         if fellBackToMarked {
-            super.insertText(text)   // base: NSNotFound auto-replaces marked text
-            return
+            return super.tryInsertText(text)   // base: NSNotFound auto-replaces marked text
         }
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty else { return false }
         // A finalized insert replaces the live preedit (if any) and becomes permanent.
         // This is also why a hard commit cannot double-insert: committing the live
         // syllable rewrites the same region it already occupies.
-        rewriteLivePreedit(with: text, keepingLive: false)
+        return rewriteLivePreedit(with: text, keepingLive: false)
     }
 
     override func setMarkedText(_ text: String) {
@@ -404,10 +437,13 @@ final class DirectInsertionAdapter: BaseClientAdapter {
         rewriteLivePreedit(with: text, keepingLive: true)
     }
 
-    override func replaceTextBeforeCursor(length: Int, with text: String) {
-        guard !preservingUnverifiedLivePreedit else { return }
+    override func tryReplaceTextBeforeCursor(length: Int, with text: String) -> Bool {
+        guard !preservingUnverifiedLivePreedit else { return false }
         // Committed-text edit (e.g. double-space period); no live preedit involved.
+        guard super.tryReplaceTextBeforeCursor(length: length, with: text) else {
+            return false
+        }
         livePreeditLength = 0
-        super.replaceTextBeforeCursor(length: length, with: text)
+        return true
     }
 }

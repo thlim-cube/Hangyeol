@@ -33,11 +33,14 @@ struct InputSessionFinalizeTests {
 
     private func makeMarkedSession() -> (InputSession, HangulComposer, FakeIMKTextInput) {
         let client = FakeIMKTextInput()
-        client.bundleID = "com.apple.TextEdit"
+        client.bundleID = "com.google.Chrome"
         let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
         let session = InputSession(
             client: client,
-            context: context(bundleId: client.bundleID, documentAccessSafe: true),
+            context: context(
+                bundleId: client.bundleID,
+                documentAccessSafe: true
+            ),
             composer: composer
         )
         _ = session.prepareForNonSecureClientWrites()
@@ -413,6 +416,171 @@ struct InputSessionFinalizeTests {
         #expect(client.insertCalls.first?.1 == NSRange(location: 0, length: 1))
     }
 
+    @Test("Empty-engine fallback never clears marked text replaced by the host")
+    func emptyEngineFallbackRejectsUnownedMarkedText() {
+        let (session, composer, client) = makeDirectFallbackSession()
+
+        session.adapter.setMarkedText("ㄱ")
+        #expect(!composer.hasActiveComposition)
+        #expect(client.markedText == "ㄱ")
+
+        client.document = "ㄴ"
+        client.markedText = "ㄴ"
+        client.markedRangeValue = NSRange(location: 0, length: 1)
+        client.selectedRangeValue = NSRange(location: 1, length: 0)
+
+        #expect(!session.finalize(reason: .mouseCommit))
+        #expect(client.document == "ㄴ")
+        #expect(client.markedText == "ㄴ")
+        #expect(client.insertCalls.isEmpty)
+    }
+
+    @Test("Marked finalize never commits over marked text replaced by the host")
+    func markedFinalizeRejectsUnownedMarkedText() {
+        let (session, composer, client) = makeMarkedSession()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        #expect(composer.hasActiveComposition)
+        #expect(client.markedText == "ㄱ")
+
+        client.document = "ㄴ"
+        client.markedText = "ㄴ"
+        client.markedRangeValue = NSRange(location: 0, length: 1)
+        client.selectedRangeValue = NSRange(location: 1, length: 0)
+
+        #expect(session.finalize(reason: .deactivateServer))
+        #expect(!composer.hasActiveComposition)
+        #expect(client.document == "ㄴ")
+        #expect(client.markedText == "ㄴ")
+        #expect(client.insertCalls.isEmpty)
+    }
+
+    @Test("An unproven marked range never commits old composition at a new caret")
+    func mouseBoundaryRejectsUnprovenMarkedOwnership() {
+        let cases: [(document: String, markedRange: NSRange, readbackUnavailable: Bool)] = [
+            ("UNRELATED", NSRange(location: NSNotFound, length: 0), false),
+            ("OTHER", NSRange(location: 0, length: 5), true)
+        ]
+
+        for testCase in cases {
+            let (session, composer, client) = makeMarkedSession()
+            _ = composer.handle(
+                TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+                delegate: session.adapter
+            )
+
+            client.document = testCase.document
+            client.markedText = testCase.markedRange.location == NSNotFound
+                ? ""
+                : testCase.document
+            client.markedRangeValue = testCase.markedRange
+            client.selectedRangeValue = NSRange(
+                location: client.document.utf16.count,
+                length: 0
+            )
+            client.attributedSubstringUnavailable = testCase.readbackUnavailable
+
+            #expect(session.reconcileMouseDown(
+                characterIndex: client.selectedRangeValue.location,
+                markedRange: client.markedRangeValue
+            ))
+            #expect(client.document == testCase.document)
+            #expect(client.insertCalls.isEmpty)
+            #expect(!composer.hasActiveComposition)
+            #expect(session.contextNeedsRefresh)
+        }
+    }
+
+    @Test("Canonical marked finalize remains available without document readback")
+    func markedFinalizeWithoutDocumentAccessUsesCanonicalCommit() {
+        let (session, composer, client) = makeMarkedSession()
+        client.attributedSubstringUnavailable = true
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+
+        #expect(session.finalize(reason: .deactivateServer))
+        #expect(client.document == "ㄱ")
+        #expect(client.insertCalls.count == 1)
+        #expect(client.insertCalls.first?.1.location == NSNotFound)
+    }
+
+    @Test("Marked ownership is rechecked after a reentrant client read")
+    func markedFinalizeRejectsReentrantOwnershipChange() {
+        for revokeContext in [false, true] {
+            let (session, composer, client) = makeMarkedSession()
+            _ = composer.handle(
+                TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+                delegate: session.adapter
+            )
+            client.onAttributedSubstring = {
+                client.onAttributedSubstring = nil
+                if revokeContext {
+                    session.markContextStale()
+                } else {
+                    client.document = "ㄴ"
+                    client.markedText = "ㄴ"
+                    client.markedRangeValue = NSRange(location: 0, length: 1)
+                    client.selectedRangeValue = NSRange(location: 1, length: 0)
+                }
+            }
+
+            #expect(session.finalize(reason: .deactivateServer))
+            #expect(client.insertCalls.isEmpty)
+            if revokeContext {
+                #expect(session.contextNeedsRefresh)
+                #expect(client.markedText == "ㄱ")
+            } else {
+                #expect(client.document == "ㄴ")
+                #expect(client.markedText == "ㄴ")
+            }
+        }
+    }
+
+    @Test("Same-client activation during delivery revokes subsequent client writes")
+    func deliveryReactivationRevokesSubsequentClientWrites() {
+        let (session, composer, client) = makeMarkedSession()
+        for event in [
+            TestEventFactory.keyEvent(char: "d", keyCode: 2)!,
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            TestEventFactory.keyEvent(char: "s", keyCode: 1)!
+        ] {
+            _ = composer.handle(event, delegate: session.adapter)
+        }
+
+        let markCountBeforeReactivation = client.markCalls.count
+        client.onInsertText = {
+            client.onInsertText = nil
+            client.selectedRangeValue = NSRange(location: NSNotFound, length: 0)
+            session.markContextStaleForSameClientReactivation()
+        }
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: session.adapter
+        )
+
+        #expect(client.document == "아")
+        #expect(client.markCalls.count == markCountBeforeReactivation)
+        #expect(client.markedText.isEmpty)
+        #expect(composer.hasActiveComposition)
+        #expect(session.contextNeedsRefresh)
+    }
+
+    @Test("A new session defers Roman layout sync until a nonsecure boundary")
+    func initialRomanLayoutSyncIsDeferred() {
+        let (session, _, _) = makeMarkedSession()
+        var synchronizedModes: [InputMode] = []
+
+        #expect(session.reconcileDeferredRomanKeyboardLayoutSync { _, mode in
+            synchronizedModes.append(mode)
+        })
+        #expect(synchronizedModes == [.korean])
+    }
+
     @Test("Secure discard defers owned marked fallback until nonsecure resume")
     func secureDiscardDefersOwnedFallbackCleanup() {
         let (session, composer, client) = makeDirectFallbackSession()
@@ -482,6 +650,28 @@ struct InputSessionFinalizeTests {
             #expect(client.insertCalls.isEmpty)
             #expect(client.markedText == "나")
         }
+    }
+
+    @Test("Secure cleanup rechecks marked ownership after client readback")
+    func secureCleanupRejectsReentrantMarkedTextChange() {
+        let (session, composer, client) = makeMarkedSession()
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        session.discardForSecureInput()
+        client.onAttributedSubstring = {
+            client.onAttributedSubstring = nil
+            client.document = "ㄴ"
+            client.markedText = "ㄴ"
+            client.markedRangeValue = NSRange(location: 0, length: 1)
+            client.selectedRangeValue = NSRange(location: 1, length: 0)
+        }
+
+        #expect(!session.prepareForNonSecureClientWrites())
+        #expect(client.document == "ㄴ")
+        #expect(client.markedText == "ㄴ")
+        #expect(client.insertCalls.isEmpty)
     }
 
     @Test("Secure cleanup abandons unreadable or overflowing marked text")
@@ -694,6 +884,27 @@ struct InputSessionFinalizeTests {
 
         #expect(client.markedText == "ㅏ")
         #expect(client.markedText != "가")
+        #expect(client.insertCalls.isEmpty)
+    }
+
+    @Test("Reentrant marked ownership read cannot erase a stronger field boundary")
+    func sameClientReactivationReadbackKeepsReentrantStaleBoundary() {
+        let (session, composer, client) = makeMarkedSession()
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        session.markContextStaleForSameClientReactivation()
+        client.onAttributedSubstring = {
+            client.onAttributedSubstring = nil
+            session.markContextStale()
+        }
+
+        #expect(!session.refreshContextIfNeeded { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+        #expect(session.contextNeedsRefresh)
+        #expect(client.markedText == "ㄱ")
         #expect(client.insertCalls.isEmpty)
     }
 

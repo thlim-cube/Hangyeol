@@ -38,6 +38,24 @@ public protocol HangulComposerDelegate: AnyObject {
     ///   - length: Number of characters to replace (counting backwards from cursor)
     ///   - text: The new text to insert
     func replaceTextBeforeCursor(length: Int, with text: String)
+
+    /// Success-reporting variants used when a caller must consume the original key
+    /// only after the client write actually happened. Default implementations assume
+    /// the existing Void callback succeeds, keeping external conformers compatible.
+    func tryInsertText(_ text: String) -> Bool
+    func tryReplaceTextBeforeCursor(length: Int, with text: String) -> Bool
+}
+
+public extension HangulComposerDelegate {
+    func tryInsertText(_ text: String) -> Bool {
+        insertText(text)
+        return true
+    }
+
+    func tryReplaceTextBeforeCursor(length: Int, with text: String) -> Bool {
+        replaceTextBeforeCursor(length: length, with: text)
+        return true
+    }
 }
 
 // MARK: - InputMode Enum

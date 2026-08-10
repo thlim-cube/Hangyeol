@@ -170,6 +170,29 @@ struct HangulComposerTests {
         #expect(delegate.markedText.isEmpty)
     }
 
+    @Test("English fallback consumes only successful client transformations")
+    func englishModeFallbackRequiresSuccessfulClientWrite() {
+        let configuration = MockConfiguration()
+        configuration.englishTextConvenienceFallbackEnabled = true
+        let (composer, delegate, _) = makeComposer(configuration: configuration)
+        composer.setInputMode(.english)
+
+        delegate.fullText = "h"
+        let space = TestEventFactory.keyEvent(char: " ", keyCode: KeyCode.space)!
+        #expect(!composer.handle(space, delegate: delegate))
+        delegate.fullText.append(" ")
+        delegate.replaceTextBeforeCursorSucceeds = false
+
+        #expect(!composer.handle(space, delegate: delegate))
+        #expect(delegate.fullText == "h ")
+
+        delegate.reset()
+        delegate.insertTextSucceeds = false
+        let letter = TestEventFactory.keyEvent(char: "a", keyCode: 0)!
+        #expect(!composer.handle(letter, delegate: delegate))
+        #expect(delegate.insertedTexts.isEmpty)
+    }
+
     @Test("English fallback resets space timing after host-owned keyDown")
     func englishFallbackResetsSpaceTimingAfterHostKeyDown() {
         let interveningEvents: [(String, NSEvent)] = [

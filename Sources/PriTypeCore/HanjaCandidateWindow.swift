@@ -37,6 +37,10 @@ public final class HanjaCandidateWindow: HanjaCandidatePresenting, @unchecked Se
     private var onSelect: (@Sendable (HanjaEntry) -> Void)?
     private var onDismiss: (@Sendable () -> Void)?
     private var presentationID: HanjaCandidatePresentationID?
+    private let legacyPresentationID = HanjaCandidatePresentationID(
+        ownerID: UUID(),
+        generation: 0
+    )
     
     public var isVisible: Bool {
         MainActor.assumeIsolated {
@@ -52,6 +56,50 @@ public final class HanjaCandidateWindow: HanjaCandidatePresenting, @unchecked Se
     }
     
     private init() {}
+
+    /// Source-compatible entry point for library clients. Legacy refreshes reuse one
+    /// presentation identity, while interaction still uses the generation-aware
+    /// implementation shared with PriType.
+    public func show(
+        entries: [HanjaEntry],
+        cursorRect: NSRect,
+        onSelect: @escaping @Sendable (HanjaEntry) -> Void,
+        onDismiss: @escaping @Sendable () -> Void
+    ) {
+        guard !entries.isEmpty else {
+            MainActor.assumeIsolated {
+                window?.orderOut(nil)
+                candidates = []
+                currentPage = 0
+                presentationID = nil
+                self.onSelect = nil
+                self.onDismiss = nil
+                onDismiss()
+            }
+            return
+        }
+        show(
+            presentationID: legacyPresentationID,
+            entries: entries,
+            cursorRect: cursorRect,
+            onSelect: onSelect,
+            onDismiss: onDismiss
+        )
+    }
+
+    /// Dismiss only the currently visible presentation.
+    public func dismiss() {
+        MainActor.assumeIsolated {
+            guard let presentationID else { return }
+            _ = dismissOnMain(presentationID: presentationID)
+        }
+    }
+
+    /// Handle input only for the currently visible presentation.
+    public func handleKey(_ event: NSEvent) -> Bool {
+        guard let presentationID = visiblePresentationID else { return false }
+        return handleKey(event, presentationID: presentationID)
+    }
     
     /// Show the candidate window with the given entries
     /// - Parameters:

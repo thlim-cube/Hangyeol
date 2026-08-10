@@ -365,6 +365,36 @@ struct ConfigurationManagerTests {
         #expect(config.smartDashSubstitutionEnabled)
         #expect(!config.refreshSystemTextFeatureSnapshot())
     }
+
+    @Test("Input-policy getters stay memory-only and refresh as one snapshot")
+    func inputPolicyGettersStayMemoryOnly() {
+        let defaults = InputPolicyReadCountingDefaults()
+        let config = ConfigurationManager(
+            defaults: defaults,
+            keyBindingDataReader: { _ in nil }
+        )
+        let directReadsAfterInitialization = defaults.experimentalDirectInsertionReadCount
+        let romanReadsAfterInitialization = defaults.respectCurrentRomanLayoutReadCount
+        let keyboardReadsAfterInitialization = defaults.keyboardIdReadCount
+
+        for _ in 0..<1_000 {
+            _ = config.experimentalDirectInsertion
+            _ = config.respectCurrentRomanKeyboardLayout
+            _ = config.keyboardId
+        }
+
+        #expect(defaults.experimentalDirectInsertionReadCount == directReadsAfterInitialization)
+        #expect(defaults.respectCurrentRomanLayoutReadCount == romanReadsAfterInitialization)
+        #expect(defaults.keyboardIdReadCount == keyboardReadsAfterInitialization)
+
+        defaults.simulatedExperimentalDirectInsertion = true
+        defaults.simulatedRespectCurrentRomanLayout = true
+        defaults.simulatedKeyboardId = "3"
+        #expect(config.refreshInputPolicySnapshot())
+        #expect(config.experimentalDirectInsertion)
+        #expect(config.respectCurrentRomanKeyboardLayout)
+        #expect(config.keyboardId == "3")
+    }
     
     @Test("System double-space-period setting is readable")
     func systemDoubleSpacePeriodSettingIsReadable() {
@@ -417,5 +447,68 @@ private final class SystemTextFeatureReadProbe: @unchecked Sendable {
         lock.withLock {
             self.values = values
         }
+    }
+}
+
+private final class InputPolicyReadCountingDefaults: UserDefaults, @unchecked Sendable {
+    private let countLock = NSLock()
+    private var storedReadCount = 0
+    private var storedRespectCurrentRomanLayoutReadCount = 0
+    private var storedKeyboardIdReadCount = 0
+    private var storedSimulatedExperimentalDirectInsertion = false
+    private var storedSimulatedRespectCurrentRomanLayout = false
+    private var storedSimulatedKeyboardId = "2"
+
+    var experimentalDirectInsertionReadCount: Int {
+        countLock.withLock { storedReadCount }
+    }
+
+    var respectCurrentRomanLayoutReadCount: Int {
+        countLock.withLock { storedRespectCurrentRomanLayoutReadCount }
+    }
+
+    var keyboardIdReadCount: Int {
+        countLock.withLock { storedKeyboardIdReadCount }
+    }
+
+    var simulatedExperimentalDirectInsertion: Bool {
+        get { countLock.withLock { storedSimulatedExperimentalDirectInsertion } }
+        set { countLock.withLock { storedSimulatedExperimentalDirectInsertion = newValue } }
+    }
+
+    var simulatedRespectCurrentRomanLayout: Bool {
+        get { countLock.withLock { storedSimulatedRespectCurrentRomanLayout } }
+        set { countLock.withLock { storedSimulatedRespectCurrentRomanLayout = newValue } }
+    }
+
+    var simulatedKeyboardId: String {
+        get { countLock.withLock { storedSimulatedKeyboardId } }
+        set { countLock.withLock { storedSimulatedKeyboardId = newValue } }
+    }
+
+    override func string(forKey defaultName: String) -> String? {
+        if defaultName == "com.pritype.keyboardId" {
+            return countLock.withLock {
+                storedKeyboardIdReadCount += 1
+                return storedSimulatedKeyboardId
+            }
+        }
+        return super.string(forKey: defaultName)
+    }
+
+    override func bool(forKey defaultName: String) -> Bool {
+        if defaultName == "com.pritype.experimentalDirectInsertion" {
+            return countLock.withLock {
+                storedReadCount += 1
+                return storedSimulatedExperimentalDirectInsertion
+            }
+        }
+        if defaultName == "com.pritype.respectCurrentRomanKeyboardLayout" {
+            return countLock.withLock {
+                storedRespectCurrentRomanLayoutReadCount += 1
+                return storedSimulatedRespectCurrentRomanLayout
+            }
+        }
+        return super.bool(forKey: defaultName)
     }
 }

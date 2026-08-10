@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-08-11
+
 ### 입력 정확도
 - 같은 물리 keyDown이 IMK에서 재전달될 때 이전 처리 결과와 관계없이 중복을 소비하도록 바꿨습니다. 50ms 추정 대신 이벤트 identity·전체 signature·동일 main-queue delivery turn을 사용해 Return 이중 실행을 막으면서 실제 빠른 연타는 보존합니다. 빈 `characters`의 Return/Numpad Enter도 keyCode로 조합을 확정합니다.
 - libhangul 조합을 client별 `InputSession`이 소유하고, process active controller는 이전 session을 retire한 뒤 교체합니다. 현재 field generation이 비보안으로 확인된 경우에만 조합을 client에 확정하고, stale·미확인 generation은 client write 없이 폐기합니다. activate/deactivate 순서 역전과 인계 중 lifecycle 재진입이 새 owner를 덮어쓰지 않습니다.

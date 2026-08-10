@@ -90,15 +90,16 @@ public final class TextConvenienceHandler: @unchecked Sendable {
                     let isValidChar = lastChar.isLetter || lastChar.isNumber || (checkHangul && isHangul(lastChar))
                     if isValidChar {
                         // Valid double-space condition - replace space with period
-                        delegate.replaceTextBeforeCursor(length: 1, with: ". ")
-                        buffer.removeLast()
-                        buffer.append(". ")
-                        lastWasSpace = false
-                        DebugLogger.event("text_convenience.applied", metadata: [
-                            .state("feature", "double_space_period"),
-                            .state("mode", "korean")
-                        ])
-                        return .convertedToPeriod
+                        if delegate.tryReplaceTextBeforeCursor(length: 1, with: ". ") {
+                            buffer.removeLast()
+                            buffer.append(". ")
+                            lastWasSpace = false
+                            DebugLogger.event("text_convenience.applied", metadata: [
+                                .state("feature", "double_space_period"),
+                                .state("mode", "korean")
+                            ])
+                            return .convertedToPeriod
+                        }
                     }
                 }
             }
@@ -167,7 +168,9 @@ public final class TextConvenienceHandler: @unchecked Sendable {
             return false
         }
 
-        delegate.replaceTextBeforeCursor(length: 1, with: ". ")
+        guard delegate.tryReplaceTextBeforeCursor(length: 1, with: ". ") else {
+            return false
+        }
         lastWasSpace = false
         DebugLogger.event("text_convenience.applied", metadata: [
             .state("feature", "double_space_period"),
@@ -191,7 +194,9 @@ public final class TextConvenienceHandler: @unchecked Sendable {
             return false
         }
 
-        delegate.insertText(String(typed).uppercased())
+        guard delegate.tryInsertText(String(typed).uppercased()) else {
+            return false
+        }
         DebugLogger.event("text_convenience.applied", metadata: [
             .state("feature", "auto_capitalization"),
             .state("mode", "english")
@@ -206,7 +211,9 @@ public final class TextConvenienceHandler: @unchecked Sendable {
             return false
         }
 
-        delegate.replaceTextBeforeCursor(length: 1, with: "—")
+        guard delegate.tryReplaceTextBeforeCursor(length: 1, with: "—") else {
+            return false
+        }
         DebugLogger.event("text_convenience.applied", metadata: [
             .state("feature", "smart_dash"),
             .state("mode", "english")
@@ -227,14 +234,16 @@ public final class TextConvenienceHandler: @unchecked Sendable {
         }
 
         let isOpening = shouldUseOpeningQuote(after: beforeCursor)
+        let replacement: String
         switch typed {
         case "\"":
-            delegate.insertText(isOpening ? "“" : "”")
+            replacement = isOpening ? "“" : "”"
         case "'":
-            delegate.insertText(isOpening ? "‘" : "’")
+            replacement = isOpening ? "‘" : "’"
         default:
             return false
         }
+        guard delegate.tryInsertText(replacement) else { return false }
 
         DebugLogger.event("text_convenience.applied", metadata: [
             .state("feature", "smart_quote"),

@@ -51,6 +51,30 @@ struct TextDeliveryPolicyTests {
         let ctx = context(bundleId: "com.google.Chrome", documentAccessSafe: true)
         #expect(TextDeliveryPolicy.mode(for: ctx) == .markedText)
     }
+
+    @Test("Adapter success APIs reject writes after ownership is revoked")
+    func adapterReportsRejectedClientWrites() {
+        let client = FakeIMKTextInput()
+        client.document = "a "
+        client.selectedRangeValue = NSRange(location: 2, length: 0)
+        let adapter = MarkedTextAdapter(client: client, bundleId: client.bundleID)
+        adapter.setClientWriteValidator { false }
+
+        #expect(!adapter.tryInsertText("A"))
+        #expect(!adapter.tryReplaceTextBeforeCursor(length: 1, with: ". "))
+        #expect(client.insertCalls.isEmpty)
+        #expect(client.document == "a ")
+
+        var directWriteAllowed = true
+        let direct = DirectInsertionAdapter(client: client, bundleId: client.bundleID)
+        direct.setClientWriteValidator { directWriteAllowed }
+        client.onSelectedRange = {
+            client.onSelectedRange = nil
+            directWriteAllowed = false
+        }
+        #expect(!direct.tryInsertText("A"))
+        #expect(client.insertCalls.isEmpty)
+    }
 }
 
 // MARK: - Composition renderer classification

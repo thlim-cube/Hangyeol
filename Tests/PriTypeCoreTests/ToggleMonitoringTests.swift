@@ -402,14 +402,52 @@ struct SuppressedKeyPairTests {
         #expect(state.observe(keyCode: 54, physicalKeyIsDown: true) == .down)
         state.suppressUntilRelease(keyCode: 54)
         #expect(state.observe(keyCode: 55, physicalKeyIsDown: true) == .down)
-        #expect(state.hasPressedSibling(of: 54, sharingKeyCodes: [54, 55]))
+        #expect(state.pressedKeyCodes == [54, 55])
 
         // Releasing Right Command while Left Command remains down still uses
         // its actual physical state instead of the aggregate Command flag.
         #expect(state.observe(keyCode: 54, physicalKeyIsDown: false) == .up)
         let consumedRelease = state.consumeSuppressedRelease(keyCode: 54)
         #expect(consumedRelease)
-        #expect(!state.hasPressedSibling(of: 55, sharingKeyCodes: [54, 55]))
+        #expect(state.pressedKeyCodes == [55])
+    }
+
+    @Test("A suppressed modifier never leaves its host-visible sibling family on")
+    func suppressedModifierKeepsHostVisibleSiblingPairCoherent() {
+        var state = ModifierKeyPressState()
+        let commandOnWithBothSides = CGEventFlags(rawValue:
+            CGEventFlags.maskCommand.rawValue
+                | CGEventFlags.maskAlphaShift.rawValue
+                | UInt64(NX_DEVICELCMDKEYMASK)
+                | UInt64(NX_DEVICERCMDKEYMASK)
+        )
+
+        #expect(state.observe(keyCode: 54, physicalKeyIsDown: true) == .down)
+        state.suppressUntilRelease(keyCode: 54)
+        #expect(state.observe(keyCode: 55, physicalKeyIsDown: true) == .down)
+
+        let siblingDownFlags = RightCommandSuppressor.hostVisibleModifierFlags(
+            commandOnWithBothSides,
+            pressedKeyCodes: state.hostVisiblePressedKeyCodes
+        )
+        #expect(siblingDownFlags.contains(.maskCommand))
+        #expect(siblingDownFlags.contains(.maskAlphaShift))
+        #expect(siblingDownFlags.rawValue & UInt64(NX_DEVICELCMDKEYMASK) != 0)
+        #expect(siblingDownFlags.rawValue & UInt64(NX_DEVICERCMDKEYMASK) == 0)
+
+        #expect(state.observe(keyCode: 55, physicalKeyIsDown: false) == .up)
+        let siblingUpFlags = RightCommandSuppressor.hostVisibleModifierFlags(
+            commandOnWithBothSides,
+            pressedKeyCodes: state.hostVisiblePressedKeyCodes
+        )
+        #expect(!siblingUpFlags.contains(.maskCommand))
+        #expect(siblingUpFlags.contains(.maskAlphaShift))
+        #expect(siblingUpFlags.rawValue & UInt64(NX_DEVICELCMDKEYMASK) == 0)
+        #expect(siblingUpFlags.rawValue & UInt64(NX_DEVICERCMDKEYMASK) == 0)
+
+        #expect(state.observe(keyCode: 54, physicalKeyIsDown: false) == .up)
+        let consumedRelease = state.consumeSuppressedRelease(keyCode: 54)
+        #expect(consumedRelease)
     }
 
     @Test("Startup resync classifies a missed-down release as up")
@@ -646,5 +684,24 @@ struct IOKitFallbackCapabilityTests {
         )
 
         #expect(limitations.isEmpty)
+    }
+
+    @Test("Native Caps Lock still reports an unsupported Hanja binding shared with toggle")
+    func nativeCapsLockReportsSharedHanjaLimitation() {
+        let controlSpace = KeyBinding(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue,
+            displayName: "Control + Space"
+        )
+
+        let limitations = IOKitManager.bindingLimitations(
+            toggleBinding: controlSpace,
+            hanjaBinding: controlSpace,
+            priTypeToggleEnabled: false
+        )
+
+        #expect(limitations == [
+            .unsupportedIOKitHanjaBinding("Control + Space")
+        ])
     }
 }

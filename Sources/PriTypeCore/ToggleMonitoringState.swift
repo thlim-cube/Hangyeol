@@ -519,6 +519,14 @@ struct ModifierKeyPressState {
     private(set) var pressedKeyCodes: Set<Int64> = []
     private var suppressedKeyCodes: Set<Int64> = []
 
+    var hostVisiblePressedKeyCodes: Set<Int64> {
+        pressedKeyCodes.subtracting(suppressedKeyCodes)
+    }
+
+    var hasSuppressedKeyCodes: Bool {
+        !suppressedKeyCodes.isEmpty
+    }
+
     mutating func observe(keyCode: Int64, physicalKeyIsDown: Bool) -> ModifierKeyTransition {
         if physicalKeyIsDown {
             return pressedKeyCodes.insert(keyCode).inserted ? .down : .unknown
@@ -543,10 +551,6 @@ struct ModifierKeyPressState {
 
     func isSuppressed(keyCode: Int64) -> Bool {
         suppressedKeyCodes.contains(keyCode)
-    }
-
-    func hasPressedSibling(of keyCode: Int64, sharingKeyCodes: Set<Int64>) -> Bool {
-        !pressedKeyCodes.intersection(sharingKeyCodes.subtracting([keyCode])).isEmpty
     }
 
     mutating func reset() {

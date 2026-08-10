@@ -52,9 +52,6 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     private var suppressedToggleModifierKeyCode: Int64?
     private var suppressedHanjaModifierKeyCode: Int64?
     
-    /// Debounce timer for Hanja trigger to prevent double-fire
-    private var lastHanjaTriggerTime: DispatchTime = .init(uptimeNanoseconds: 0)
-
     /// Track CGEventTap disable events for auto-recovery
     private var tapDisableTracker = TapDisableTracker()
     private var permanentlyHandedOff = false
@@ -246,6 +243,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                     }
                     return nil
                 }
+                sanitizeModifierFlagsForHost(event)
                 return Unmanaged.passUnretained(event)
             }
 
@@ -306,18 +304,6 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 suppressedHanjaModifierKeyCode = keyCode
                 modifierKeyState.suppressUntilRelease(keyCode: keyCode)
 
-                let now = DispatchTime.now()
-                let elapsed = now.uptimeNanoseconds - lastHanjaTriggerTime.uptimeNanoseconds
-                let elapsedMs = elapsed / 1_000_000
-                if elapsedMs < 500 {
-                    DebugLogger.event("hanja.request_debounced", metadata: [
-                        .state("backend", "event_tap"),
-                        .durationMicroseconds("elapsed", elapsed / 1_000)
-                    ])
-                    return nil
-                }
-                lastHanjaTriggerTime = now
-
                 DebugLogger.event("hanja.requested", metadata: [
                     .state("backend", "event_tap")
                 ])
@@ -325,6 +311,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 return nil
             }
 
+            sanitizeModifierFlagsForHost(event)
             return Unmanaged.passUnretained(event)
         }
 
@@ -392,26 +379,54 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             }
         }
 
-        // When the suppressed toggle modifier is held, strip only its modifier
-        // family unless the opposite-side modifier in that family is also down.
-        if type == .keyDown || type == .keyUp,
-           let toggleKeyCode = suppressedToggleModifierKeyCode {
-            let modifierMask = Self.modifierMask(for: toggleKeyCode)
-            let siblingKeyCodes = Self.modifierFamilyKeyCodes(for: toggleKeyCode)
-            if !modifierKeyState.hasPressedSibling(of: toggleKeyCode, sharingKeyCodes: siblingKeyCodes) {
-                var newFlags = event.flags
-                newFlags.remove(modifierMask)
-                event.flags = newFlags
-                DebugLogger.event("input.toggle_modifier_stripped")
-            }
-        }
+        sanitizeModifierFlagsForHost(event)
         
         return Unmanaged.passUnretained(event)
     }
     
     // MARK: - Helpers
     
-    /// Get the CGEventFlags modifier mask for a given keyCode
+    private func sanitizeModifierFlagsForHost(_ event: CGEvent) {
+        guard modifierKeyState.hasSuppressedKeyCodes else { return }
+        let sanitized = Self.hostVisibleModifierFlags(
+            event.flags,
+            pressedKeyCodes: modifierKeyState.hostVisiblePressedKeyCodes
+        )
+        guard sanitized != event.flags else { return }
+        event.flags = sanitized
+        DebugLogger.event("input.suppressed_modifier_stripped")
+    }
+
+    static func hostVisibleModifierFlags(
+        _ flags: CGEventFlags,
+        pressedKeyCodes: Set<Int64>
+    ) -> CGEventFlags {
+        let trackedRawMask = modifierFlagBitsByKeyCode.values.reduce(UInt64(0), |)
+            | CGEventFlags.maskCommand.rawValue
+            | CGEventFlags.maskAlternate.rawValue
+            | CGEventFlags.maskControl.rawValue
+            | CGEventFlags.maskShift.rawValue
+        var rawValue = flags.rawValue & ~trackedRawMask
+
+        for keyCode in pressedKeyCodes {
+            rawValue |= modifierFlagBitsByKeyCode[keyCode] ?? 0
+            rawValue |= modifierMask(for: keyCode).rawValue
+        }
+        return CGEventFlags(rawValue: rawValue)
+    }
+
+    private static let modifierFlagBitsByKeyCode: [Int64: UInt64] = [
+        55: UInt64(NX_DEVICELCMDKEYMASK),
+        54: UInt64(NX_DEVICERCMDKEYMASK),
+        58: UInt64(NX_DEVICELALTKEYMASK),
+        61: UInt64(NX_DEVICERALTKEYMASK),
+        59: UInt64(NX_DEVICELCTLKEYMASK),
+        62: UInt64(NX_DEVICERCTLKEYMASK),
+        56: UInt64(NX_DEVICELSHIFTKEYMASK),
+        60: UInt64(NX_DEVICERSHIFTKEYMASK)
+    ]
+
+    /// Get the CGEventFlags modifier mask for a given keyCode.
     private static func modifierMask(for keyCode: Int64) -> CGEventFlags {
         switch keyCode {
         case 54, 55: return .maskCommand       // Right/Left Command
@@ -420,17 +435,6 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         case 56, 60: return .maskShift          // Left/Right Shift
         case 57:     return .maskAlphaShift     // Caps Lock
         default:     return CGEventFlags(rawValue: 0)
-        }
-    }
-
-    private static func modifierFamilyKeyCodes(for keyCode: Int64) -> Set<Int64> {
-        switch keyCode {
-        case 54, 55: return [54, 55]
-        case 61, 58: return [61, 58]
-        case 62, 59: return [62, 59]
-        case 56, 60: return [56, 60]
-        case 57: return [57]
-        default: return []
         }
     }
 

@@ -34,6 +34,30 @@ struct TextConvenienceHandlerTests {
         
         #expect(result == .normalSpace)
     }
+
+    @Test("Rejected replacement keeps the second space as host input")
+    func rejectedReplacementDoesNotConsumeSpace() {
+        let handler = TextConvenienceHandler(isDoubleSpacePeriodEnabled: { true })
+        let delegate = MockComposerDelegate()
+        delegate.fullText = "Hello "
+        delegate.replaceTextBeforeCursorSucceeds = false
+        var buffer = "Hello "
+
+        _ = handler.handleDoubleSpacePeriod(
+            buffer: &buffer,
+            delegate: delegate,
+            checkHangul: false
+        )
+        let result = handler.handleDoubleSpacePeriod(
+            buffer: &buffer,
+            delegate: delegate,
+            checkHangul: false
+        )
+
+        #expect(result == .normalSpace)
+        #expect(delegate.fullText == "Hello ")
+        #expect(buffer == "Hello ")
+    }
     
     @Test("Reset space state prevents conversion")
     func resetSpaceState() {

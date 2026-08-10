@@ -13,7 +13,8 @@ final class ActiveOwnerHandoffRegistry<Owner: AnyObject>: @unchecked Sendable {
         lock.withLock { storedOwner }
     }
 
-    func claim(_ owner: Owner, retire: (Owner) -> Void) {
+    @discardableResult
+    func claim(_ owner: Owner, retire: (Owner) -> Void) -> Bool {
         let (previous, generation) = lock.withLock {
             // Record every claim intent, including a claim by the currently visible
             // owner. A retire callback can synchronously trigger a newer activation;
@@ -22,15 +23,16 @@ final class ActiveOwnerHandoffRegistry<Owner: AnyObject>: @unchecked Sendable {
             pendingOwner = storedOwner === owner ? nil : owner
             return (storedOwner, claimGeneration)
         }
-        guard previous !== owner else { return }
+        guard previous !== owner else { return true }
 
         if let previous {
             retire(previous)
         }
-        lock.withLock {
-            guard claimGeneration == generation, pendingOwner === owner else { return }
+        return lock.withLock {
+            guard claimGeneration == generation, pendingOwner === owner else { return false }
             storedOwner = owner
             pendingOwner = nil
+            return true
         }
     }
 

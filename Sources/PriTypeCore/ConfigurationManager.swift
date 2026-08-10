@@ -339,7 +339,10 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     private let systemTextFeatureLock = NSLock()
     private let systemTextFeatureRefreshLock = NSLock()
     private var systemTextFeatureSnapshot: SystemTextFeatureSnapshot
+    private var cachedKeyboardId: String
     private var cachedEnglishTextConvenienceFallbackEnabled: Bool
+    private var cachedExperimentalDirectInsertion: Bool
+    private var cachedRespectCurrentRomanKeyboardLayout: Bool
 
     private convenience init() {
         self.init(
@@ -360,8 +363,15 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
         self.systemTextFeatureSnapshot = ConfigurationManager.readSystemTextFeatureSnapshot(
             using: systemTextFeatureReader
         )
+        self.cachedKeyboardId = defaults.string(forKey: Keys.keyboardId) ?? "2"
         self.cachedEnglishTextConvenienceFallbackEnabled = defaults.bool(
             forKey: Keys.englishTextConvenienceFallbackEnabled
+        )
+        self.cachedExperimentalDirectInsertion = defaults.bool(
+            forKey: Keys.experimentalDirectInsertion
+        )
+        self.cachedRespectCurrentRomanKeyboardLayout = defaults.bool(
+            forKey: Keys.respectCurrentRomanKeyboardLayout
         )
         defaults.removeObject(forKey: "com.pritype.autoCapitalize")
         defaults.removeObject(forKey: "com.pritype.doubleSpacePeriod")
@@ -409,14 +419,18 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     /// When this value changes, a `PriTypeKeyboardLayoutChanged` notification is posted.
     public var keyboardId: String {
         get {
-            defaults.string(forKey: Keys.keyboardId) ?? "2"
+            systemTextFeatureLock.withLock { cachedKeyboardId }
         }
         set {
-            if keyboardId != newValue {
-                defaults.set(newValue, forKey: Keys.keyboardId)
-                // Notify observers (e.g. InputController) to update the engine
-                NotificationCenter.default.post(name: .keyboardLayoutChanged, object: nil)
+            let didChange = systemTextFeatureLock.withLock {
+                guard cachedKeyboardId != newValue else { return false }
+                cachedKeyboardId = newValue
+                return true
             }
+            guard didChange else { return }
+            defaults.set(newValue, forKey: Keys.keyboardId)
+            // Notify observers (e.g. InputController) to update the engine
+            NotificationCenter.default.post(name: .keyboardLayoutChanged, object: nil)
         }
     }
     
@@ -542,9 +556,16 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     /// Use the most recently selected ASCII-capable keyboard layout for English
     /// pass-through. Default OFF keeps the established ABC/US override.
     public var respectCurrentRomanKeyboardLayout: Bool {
-        get { defaults.bool(forKey: Keys.respectCurrentRomanKeyboardLayout) }
+        get {
+            systemTextFeatureLock.withLock { cachedRespectCurrentRomanKeyboardLayout }
+        }
         set {
-            guard respectCurrentRomanKeyboardLayout != newValue else { return }
+            let didChange = systemTextFeatureLock.withLock {
+                guard cachedRespectCurrentRomanKeyboardLayout != newValue else { return false }
+                cachedRespectCurrentRomanKeyboardLayout = newValue
+                return true
+            }
+            guard didChange else { return }
             defaults.set(newValue, forKey: Keys.respectCurrentRomanKeyboardLayout)
             NotificationCenter.default.post(name: .romanKeyboardLayoutPreferenceChanged, object: nil)
         }
@@ -624,6 +645,7 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
         ) { [weak self] _ in
             self?.refreshCapsLockInputSourceSwitchState()
             self?.refreshSystemTextFeatureSnapshot()
+            self?.refreshInputPolicySnapshot()
         })
 
         let distributedCenter = DistributedNotificationCenter.default()
@@ -740,8 +762,38 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     /// vehicle — see Docs/KoreanWindowsInputFeasibility.md. Enable via Settings or:
     ///   defaults write com.pritype.inputmethod.v2 com.pritype.experimentalDirectInsertion -bool YES
     public var experimentalDirectInsertion: Bool {
-        get { defaults.bool(forKey: Keys.experimentalDirectInsertion) }
-        set { defaults.set(newValue, forKey: Keys.experimentalDirectInsertion) }
+        get {
+            systemTextFeatureLock.withLock { cachedExperimentalDirectInsertion }
+        }
+        set {
+            let didChange = systemTextFeatureLock.withLock {
+                guard cachedExperimentalDirectInsertion != newValue else { return false }
+                cachedExperimentalDirectInsertion = newValue
+                return true
+            }
+            guard didChange else { return }
+            defaults.set(newValue, forKey: Keys.experimentalDirectInsertion)
+        }
+    }
+
+    /// Refresh input-path policies at a low-frequency preference boundary.
+    /// Keyboard callbacks read only the lock-protected snapshot.
+    @discardableResult
+    public func refreshInputPolicySnapshot() -> Bool {
+        let refreshedKeyboardId = defaults.string(forKey: Keys.keyboardId) ?? "2"
+        let refreshedDirectInsertion = defaults.bool(forKey: Keys.experimentalDirectInsertion)
+        let refreshedRomanLayout = defaults.bool(forKey: Keys.respectCurrentRomanKeyboardLayout)
+        return systemTextFeatureLock.withLock {
+            guard cachedKeyboardId != refreshedKeyboardId
+                    || cachedExperimentalDirectInsertion != refreshedDirectInsertion
+                    || cachedRespectCurrentRomanKeyboardLayout != refreshedRomanLayout else {
+                return false
+            }
+            cachedKeyboardId = refreshedKeyboardId
+            cachedExperimentalDirectInsertion = refreshedDirectInsertion
+            cachedRespectCurrentRomanKeyboardLayout = refreshedRomanLayout
+            return true
+        }
     }
 
     // MARK: - Update Settings

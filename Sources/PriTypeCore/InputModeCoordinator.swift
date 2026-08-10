@@ -70,6 +70,10 @@ public final class InputModeCoordinator: @unchecked Sendable {
         })
     }
 
+    public func requestToggle(source: ToggleSource) {
+        requestToggle(source: source, trace: .begin(source: source))
+    }
+
     public func requestToggle(source: ToggleSource, trace: ToggleLatencyTrace) {
         guard Thread.isMainThread else {
             DispatchQueue.main.async {

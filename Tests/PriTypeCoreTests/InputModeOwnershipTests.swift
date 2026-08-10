@@ -256,9 +256,9 @@ struct InputModeOwnershipTests {
         #expect(presentation.state.displayedMode == .korean)
 
         var didSyncLayout = false
-        PriTypeInputController.applyMacOSOwnedInputSourceBoundary(to: session) {
+        #expect(PriTypeInputController.applyMacOSOwnedInputSourceBoundary(to: session) {
             didSyncLayout = true
-        }
+        })
 
         #expect(didSyncLayout)
         #expect(composer.inputMode == .korean)
@@ -267,6 +267,46 @@ struct InputModeOwnershipTests {
         #expect(!composer.hasActiveComposition)
         #expect(client.document == "ㄱ")
         #expect(client.insertCalls.count == 1)
+    }
+
+    @Test("A reentrant ownership boundary aborts before layout and mode writes")
+    func reentrantSystemBoundaryAbortsWrites() {
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.google.Chrome"
+        let store = InputModeStore()
+        let composer = makeComposer(store: store)
+        let session = InputSession(
+            client: client,
+            context: ClientContext(
+                bundleId: client.bundleID,
+                hasTextInputCapability: true,
+                isLikelyDesktopArea: false,
+                documentAccessSafe: true
+            ),
+            composer: composer
+        )
+        _ = session.prepareForNonSecureClientWrites()
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        makeComposer(store: store).setInputMode(.english)
+        var didSyncLayout = false
+        client.onInsertText = {
+            client.onInsertText = nil
+            session.markContextStaleForSameClientReactivation()
+        }
+
+        let reconciled = PriTypeInputController.applyMacOSOwnedInputSourceBoundary(
+            to: session,
+            syncRomanKeyboardLayout: {
+                didSyncLayout = true
+            }
+        )
+        #expect(!reconciled)
+        #expect(!didSyncLayout)
+        #expect(composer.inputMode == .english)
+        #expect(session.contextNeedsRefresh)
     }
 
     @Test("Pending ownership reconciles before a nonsecure external Hanja lookup")
@@ -293,8 +333,12 @@ struct InputModeOwnershipTests {
             isSecureInput: false,
             reconcileOwnership: {
                 guard tracker.hasPendingKoreanReconciliation else { return }
-                PriTypeInputController.applyMacOSOwnedInputSourceBoundary(to: session) {}
-                tracker.markReconciled()
+                if PriTypeInputController.applyMacOSOwnedInputSourceBoundary(
+                    to: session,
+                    syncRomanKeyboardLayout: {}
+                ) {
+                    tracker.markReconciled()
+                }
             },
             performLookup: { lookupComposer in
                 modeAtLookup = lookupComposer.inputMode
@@ -339,8 +383,12 @@ struct InputModeOwnershipTests {
             reconcileOwnership: {
                 didReconcile = true
                 guard tracker.hasPendingKoreanReconciliation else { return }
-                PriTypeInputController.applyMacOSOwnedInputSourceBoundary(to: session) {}
-                tracker.markReconciled()
+                if PriTypeInputController.applyMacOSOwnedInputSourceBoundary(
+                    to: session,
+                    syncRomanKeyboardLayout: {}
+                ) {
+                    tracker.markReconciled()
+                }
             },
             performLookup: { _ in
                 didLookup = true
@@ -408,11 +456,12 @@ struct ProcessWideInputOwnershipTests {
         var ownerAfterReentrantClaim: Owner?
 
         registry.claim(first) { _ in }
-        registry.claim(second) { _ in
+        let outerClaimAcquired = registry.claim(second) { _ in
             registry.claim(third) { _ in }
             ownerAfterReentrantClaim = registry.owner
         }
 
+        #expect(!outerClaimAcquired)
         #expect(ownerAfterReentrantClaim === third)
         #expect(registry.owner === third)
     }

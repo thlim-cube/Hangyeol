@@ -13,6 +13,8 @@ final class FakeIMKTextInput: NSObject, IMKTextInput {
     var markCalls: [String] = []
     var firstRectValue = NSRect.zero
     var onInsertText: (() -> Void)?
+    var onAttributedSubstring: (() -> Void)?
+    var onSelectedRange: (() -> Void)?
     var attributedSubstringUnavailable = false
 
     private func plainString(_ value: Any?) -> String {
@@ -54,21 +56,32 @@ final class FakeIMKTextInput: NSObject, IMKTextInput {
         }
     }
 
-    func selectedRange() -> NSRange { selectedRangeValue }
+    func selectedRange() -> NSRange {
+        let result = selectedRangeValue
+        onSelectedRange?()
+        return result
+    }
     func markedRange() -> NSRange { markedRangeValue }
     func attributedSubstring(from range: NSRange) -> NSAttributedString! {
         guard !attributedSubstringUnavailable else { return nil }
+        let result: NSAttributedString?
         if range == markedRangeValue,
            range.location != NSNotFound,
            range.length == markedText.utf16.count {
-            return NSAttributedString(string: markedText)
+            result = NSAttributedString(string: markedText)
+        } else {
+            let (end, overflow) = range.location.addingReportingOverflow(range.length)
+            if range.location != NSNotFound,
+               !overflow,
+               end <= document.utf16.count {
+                let units = Array(document.utf16)[range.location..<end]
+                result = NSAttributedString(string: String(decoding: units, as: UTF16.self))
+            } else {
+                result = nil
+            }
         }
-        let (end, overflow) = range.location.addingReportingOverflow(range.length)
-        guard range.location != NSNotFound,
-              !overflow,
-              end <= document.utf16.count else { return nil }
-        let units = Array(document.utf16)[range.location..<end]
-        return NSAttributedString(string: String(decoding: units, as: UTF16.self))
+        onAttributedSubstring?()
+        return result
     }
     func length() -> Int { document.utf16.count }
     func characterIndex(

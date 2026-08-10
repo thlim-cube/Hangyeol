@@ -25,6 +25,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         // focus changes; key handling reads only their in-memory values.
         ConfigurationManager.shared.refreshCapsLockInputSourceSwitchState()
         ConfigurationManager.shared.refreshSystemTextFeatureSnapshot()
+        ConfigurationManager.shared.refreshInputPolicySnapshot()
         workspaceActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
@@ -32,6 +33,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         ) { _ in
             ConfigurationManager.shared.refreshCapsLockInputSourceSwitchState()
             ConfigurationManager.shared.refreshSystemTextFeatureSnapshot()
+            ConfigurationManager.shared.refreshInputPolicySnapshot()
         }
         
         // Initialize IMK Server

@@ -508,7 +508,9 @@ struct HanjaCandidateLifecycleTests {
         let snapshot = HanjaSelectionSnapshot(
             generation: 7,
             clientID: ObjectIdentifier(client),
-            sessionID: ObjectIdentifier(originalSession)
+            sessionID: ObjectIdentifier(originalSession),
+            fieldGeneration: 3,
+            selectionLocation: 1
         )
 
         #expect(snapshot.matches(
@@ -521,6 +523,141 @@ struct HanjaCandidateLifecycleTests {
             clientID: ObjectIdentifier(client),
             sessionID: ObjectIdentifier(nextSession)
         ))
+    }
+
+    @Test("Hanja selection writes only over the leased matching source text")
+    func hanjaSelectionRequiresFieldLeaseAndMatchingSource() throws {
+        let client = FakeIMKTextInput()
+        client.document = "가"
+        client.selectedRangeValue = NSRange(location: 1, length: 0)
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: makeComposer(presenter: MockHanjaCandidatePresenter())
+        )
+        _ = session.prepareForNonSecureClientWrites()
+        let fieldGeneration = try #require(session.clientWriteGeneration)
+        let snapshot = HanjaSelectionSnapshot(
+            generation: 7,
+            clientID: ObjectIdentifier(client),
+            sessionID: ObjectIdentifier(session),
+            fieldGeneration: fieldGeneration,
+            selectionLocation: 1
+        )
+
+        #expect(PriTypeInputController.routeHanjaSelection(
+            in: session,
+            snapshot: snapshot,
+            isSecureInput: false,
+            expectedText: "가",
+            replacement: "可"
+        ))
+        #expect(client.document == "可")
+        #expect(client.insertCalls.count == 1)
+    }
+
+    @Test("Hanja selection fails closed for secure, invalid, or changed fields")
+    func hanjaSelectionFailsClosedWithoutSourceProof() throws {
+        let scenarios: [(name: String, secure: Bool, document: String, selection: NSRange)] = [
+            ("secure", true, "가", NSRange(location: 1, length: 0)),
+            ("invalid selection", false, "가", NSRange(location: NSNotFound, length: 0)),
+            ("changed source", false, "나", NSRange(location: 1, length: 0)),
+            ("moved caret", false, "가X가", NSRange(location: 3, length: 0))
+        ]
+
+        for scenario in scenarios {
+            let client = FakeIMKTextInput()
+            client.document = scenario.document
+            client.selectedRangeValue = scenario.selection
+            let session = InputSession(
+                client: client,
+                context: context(bundleId: client.bundleID),
+                composer: makeComposer(presenter: MockHanjaCandidatePresenter())
+            )
+            _ = session.prepareForNonSecureClientWrites()
+            let snapshot = HanjaSelectionSnapshot(
+                generation: 7,
+                clientID: ObjectIdentifier(client),
+                sessionID: ObjectIdentifier(session),
+                fieldGeneration: try #require(session.clientWriteGeneration),
+                selectionLocation: 1
+            )
+
+            #expect(!PriTypeInputController.routeHanjaSelection(
+                in: session,
+                snapshot: snapshot,
+                isSecureInput: scenario.secure,
+                expectedText: "가",
+                replacement: "可"
+            ), Comment(rawValue: scenario.name))
+            #expect(client.document == scenario.document)
+            #expect(client.insertCalls.isEmpty)
+        }
+
+        let movedClient = FakeIMKTextInput()
+        movedClient.document = "가"
+        movedClient.selectedRangeValue = NSRange(location: 1, length: 0)
+        let movedSession = InputSession(
+            client: movedClient,
+            context: context(bundleId: movedClient.bundleID),
+            composer: makeComposer(presenter: MockHanjaCandidatePresenter())
+        )
+        _ = movedSession.prepareForNonSecureClientWrites()
+        let staleSnapshot = HanjaSelectionSnapshot(
+            generation: 7,
+            clientID: ObjectIdentifier(movedClient),
+            sessionID: ObjectIdentifier(movedSession),
+            fieldGeneration: try #require(movedSession.clientWriteGeneration),
+            selectionLocation: 1
+        )
+        movedSession.markContextStale()
+        #expect(movedSession.refreshContextIfNeeded { _ in
+            context(bundleId: movedClient.bundleID)
+        })
+
+        #expect(!PriTypeInputController.routeHanjaSelection(
+            in: movedSession,
+            snapshot: staleSnapshot,
+            isSecureInput: false,
+            expectedText: "가",
+            replacement: "可"
+        ))
+        #expect(movedClient.document == "가")
+        #expect(movedClient.insertCalls.isEmpty)
+    }
+
+    @Test("Hanja selection rechecks the caret after source readback")
+    func hanjaSelectionRejectsReadbackCaretReentry() throws {
+        let client = FakeIMKTextInput()
+        client.document = "가X"
+        client.selectedRangeValue = NSRange(location: 1, length: 0)
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: makeComposer(presenter: MockHanjaCandidatePresenter())
+        )
+        _ = session.prepareForNonSecureClientWrites()
+        let snapshot = HanjaSelectionSnapshot(
+            generation: 7,
+            clientID: ObjectIdentifier(client),
+            sessionID: ObjectIdentifier(session),
+            fieldGeneration: try #require(session.clientWriteGeneration),
+            selectionLocation: 1
+        )
+        client.onAttributedSubstring = {
+            client.onAttributedSubstring = nil
+            client.selectedRangeValue = NSRange(location: 2, length: 0)
+        }
+
+        #expect(!PriTypeInputController.routeHanjaSelection(
+            in: session,
+            snapshot: snapshot,
+            isSecureInput: false,
+            expectedText: "가",
+            replacement: "可"
+        ))
+        #expect(client.document == "가X")
+        #expect(client.insertCalls.isEmpty)
     }
 
     @Test("An old callback cannot invalidate a newer candidate panel")
@@ -557,6 +694,37 @@ struct HanjaCandidateLifecycleTests {
 
         #expect(!presenter.isVisible)
         #expect(presenter.dismissCount == 1)
+    }
+
+    @Test("Commit-time invalidation cannot show a candidate panel")
+    func commitInvalidationDoesNotShowCandidate() {
+        let presenter = MockHanjaCandidatePresenter()
+        let client = FakeIMKTextInput()
+        let composer = makeComposer(presenter: presenter)
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: composer
+        )
+        _ = session.prepareForNonSecureClientWrites()
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: session.adapter
+        )
+        #expect(composer.hasActiveComposition)
+
+        client.onInsertText = {
+            client.onInsertText = nil
+            composer.dismissHanjaCandidates()
+        }
+        composer.triggerHanjaLookup()
+
+        #expect(!presenter.isVisible)
+        #expect(presenter.shownEntries.isEmpty)
     }
 
     @Test("A previous composer cannot dismiss a newer composer's panel")
