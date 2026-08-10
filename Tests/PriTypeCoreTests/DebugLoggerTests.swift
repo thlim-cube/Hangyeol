@@ -3,6 +3,7 @@ import Testing
 
 @Suite("DebugLogger")
 struct DebugLoggerTests {
+    #if DEBUG
     @Test("Structured input event renders content-free typed metadata")
     func structuredEventFormatting() {
         let rendered = DebugLogger.formatEvent("input.pipeline", metadata: [
@@ -21,4 +22,29 @@ struct DebugLoggerTests {
     func structuredEventWithoutMetadata() {
         #expect(DebugLogger.formatEvent("input.session_activated", metadata: []) == "event=input.session_activated")
     }
+    #else
+    @Test("Release logging APIs do not evaluate arguments")
+    func releaseLoggingAPIsDoNotEvaluateArguments() {
+        enum SyntheticError: Error {
+            case attemptedEvaluation
+        }
+
+        var evaluationCount = 0
+        func evaluated<Value>(_ value: Value) -> Value {
+            evaluationCount += 1
+            return value
+        }
+
+        DebugLogger.log(evaluated("release_noop"))
+        DebugLogger.event("input.release_noop", metadata: evaluated([
+            .count("evaluation_count", 1)
+        ]))
+        DebugLogger.logError(
+            evaluated(SyntheticError.attemptedEvaluation),
+            context: evaluated("release_noop")
+        )
+
+        #expect(evaluationCount == 0)
+    }
+    #endif
 }
