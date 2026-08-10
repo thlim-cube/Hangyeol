@@ -9,9 +9,9 @@ enum MouseCompositionPolicy {
     static func shouldFinalize(
         characterIndex: Int,
         markedRange: NSRange,
-        hasActiveComposition: Bool
+        needsFinalization: Bool
     ) -> Bool {
-        guard hasActiveComposition else { return false }
+        guard needsFinalization else { return false }
         guard markedRange.location != NSNotFound, markedRange.length > 0 else {
             return true
         }

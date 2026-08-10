@@ -45,8 +45,15 @@ struct InputSessionFinalizeTests {
         session.adapter.setMarkedText("ㄱ")
         #expect(!composer.hasActiveComposition)
         #expect(client.markedText == "ㄱ")
+        #expect(session.needsCompositionFinalization)
+        #expect(MouseCompositionPolicy.shouldFinalize(
+            characterIndex: 2,
+            markedRange: client.markedRange(),
+            needsFinalization: session.needsCompositionFinalization
+        ))
 
         #expect(session.finalize(reason: .mouseCommit))
+        #expect(!session.needsCompositionFinalization)
         #expect(client.markedText.isEmpty)
         #expect(client.insertCalls.count == 1)
         #expect(client.insertCalls.first?.0 == "")
@@ -60,18 +67,18 @@ struct MouseCompositionPolicyTests {
     func outsideFinalizes() {
         let marked = NSRange(location: 10, length: 2)
         #expect(MouseCompositionPolicy.shouldFinalize(
-            characterIndex: 9, markedRange: marked, hasActiveComposition: true))
+            characterIndex: 9, markedRange: marked, needsFinalization: true))
         #expect(MouseCompositionPolicy.shouldFinalize(
-            characterIndex: 12, markedRange: marked, hasActiveComposition: true))
+            characterIndex: 12, markedRange: marked, needsFinalization: true))
     }
 
     @Test("Click inside marked range keeps composition")
     func insideKeepsComposition() {
         let marked = NSRange(location: 10, length: 2)
         #expect(!MouseCompositionPolicy.shouldFinalize(
-            characterIndex: 10, markedRange: marked, hasActiveComposition: true))
+            characterIndex: 10, markedRange: marked, needsFinalization: true))
         #expect(!MouseCompositionPolicy.shouldFinalize(
-            characterIndex: 11, markedRange: marked, hasActiveComposition: true))
+            characterIndex: 11, markedRange: marked, needsFinalization: true))
     }
 
     @Test("Direct insertion without marked range finalizes on any click")
@@ -79,7 +86,7 @@ struct MouseCompositionPolicyTests {
         #expect(MouseCompositionPolicy.shouldFinalize(
             characterIndex: 42,
             markedRange: NSRange(location: NSNotFound, length: 0),
-            hasActiveComposition: true
+            needsFinalization: true
         ))
     }
 
@@ -88,7 +95,7 @@ struct MouseCompositionPolicyTests {
         #expect(!MouseCompositionPolicy.shouldFinalize(
             characterIndex: 0,
             markedRange: NSRange(location: NSNotFound, length: 0),
-            hasActiveComposition: false
+            needsFinalization: false
         ))
     }
 
@@ -97,7 +104,7 @@ struct MouseCompositionPolicyTests {
         #expect(MouseCompositionPolicy.shouldFinalize(
             characterIndex: 0,
             markedRange: NSRange(location: Int.max - 1, length: 4),
-            hasActiveComposition: true
+            needsFinalization: true
         ))
     }
 }
