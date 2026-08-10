@@ -657,13 +657,6 @@ public class HangulComposer: @unchecked Sendable {
         resetTextConvenienceState()
     }
 
-    /// Invalidate timing-based conveniences while preserving Hanja buffer context.
-    /// App deactivation intentionally keeps the last Hangul character available,
-    /// but a later field must never inherit the previous field's space timing.
-    func resetTextConvenienceState() {
-        textConvenience.resetSpaceState()
-    }
-
     /// Invalidate timing-based conveniences without changing composition or Hanja context.
     func resetTextConvenienceState() {
         textConvenience.resetSpaceState()
