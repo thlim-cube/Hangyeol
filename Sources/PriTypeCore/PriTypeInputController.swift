@@ -664,6 +664,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         }
         _ = session.reconcileDeferredMarkedTextAfterSecureInput()
         reconcileOwnership()
+        session.ensureAdapterMatchesPolicy()
         performLookup(session.composer)
         return true
     }

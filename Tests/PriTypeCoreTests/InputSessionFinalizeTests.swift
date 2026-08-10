@@ -127,6 +127,7 @@ struct InputSessionFinalizeTests {
         #expect(client.markedText == "ㄱ")
 
         session.refreshContext(context(bundleId: "com.nousresearch.hermes", documentAccessSafe: true))
+        session.ensureAdapterMatchesPolicy()
 
         #expect(session.adapter.deliveryMode == .directInsertion)
         #expect(!composer.hasActiveComposition)
@@ -145,11 +146,55 @@ struct InputSessionFinalizeTests {
         #expect(client.document == "ㄱ")
 
         session.refreshContext(context(bundleId: client.bundleID, documentAccessSafe: false))
+        session.ensureAdapterMatchesPolicy()
 
         #expect(session.adapter.deliveryMode == .markedText)
         #expect(!composer.hasActiveComposition)
         #expect(client.document == "ㄱ")
         #expect(client.markedText.isEmpty)
+    }
+
+    @Test("Secure context refresh rebuilds policy without committing old fallback")
+    func secureContextRefreshRebuildsWithoutClientWrite() {
+        let (session, composer, client) = makeDirectFallbackSession()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        #expect(composer.hasActiveComposition)
+        #expect(client.markedText == "ㄱ")
+        #expect(client.insertCalls.isEmpty)
+
+        session.markContextStale()
+        #expect(session.refreshContextIfNeeded { _ in
+            ClientContext(
+                bundleId: client.bundleID,
+                hasTextInputCapability: false,
+                isLikelyDesktopArea: false,
+                documentAccessSafe: false
+            )
+        })
+
+        // The refreshed signals take the raw-pass branch. Until that branch discards
+        // the engine, the old direct adapter must remain untouched and write nothing.
+        #expect(SecureInputPolicy.shouldPassThrough(SecureInputSignals(
+            bundleId: session.context.bundleId,
+            hasTextInputCapability: session.context.hasTextInputCapability,
+            hasInvalidSelection: true,
+            hasGlobalSecureInput: false,
+            hasMarkedTextSupport: false
+        )))
+        #expect(session.adapter.deliveryMode == .directInsertion)
+        #expect(composer.hasActiveComposition)
+        #expect(client.insertCalls.isEmpty)
+
+        session.discardForSecureInput()
+
+        #expect(!composer.hasActiveComposition)
+        #expect(session.adapter.deliveryMode == .markedText)
+        #expect(client.markedText == "ㄱ")
+        #expect(client.insertCalls.isEmpty)
     }
 
     @Test("Controller handoff retires the old session before late deactivation")

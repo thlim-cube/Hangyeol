@@ -86,14 +86,14 @@ final class InputSession: @unchecked Sendable {
 
     // MARK: Context lifecycle
 
-    /// Replace the analyzed context (same client). Rebuilds the adapter when the
-    /// resolved delivery mode changed, and re-arms the focus-loss finalizer when the
-    /// owning app changed.
+    /// Replace the analyzed context for the same client. Delivery-policy changes are
+    /// applied separately, after the controller classifies the refreshed field as
+    /// secure or nonsecure; rebuilding here could finalize into a password field.
+    /// Re-arms the focus-loss finalizer when the owning app changed.
     func refreshContext(_ newContext: ClientContext) {
         let oldBundleId = context.bundleId
         context = newContext
         contextNeedsRefresh = false
-        ensureAdapterMatchesPolicy()
         if focusLossObserver != nil, newContext.bundleId != oldBundleId {
             armFocusLossFinalizer()
         }
@@ -118,7 +118,8 @@ final class InputSession: @unchecked Sendable {
 
     /// Rebuild the adapter if the delivery policy no longer matches it (e.g. the
     /// experimental direct-insertion flag flipped mid-session). Cheap — two enum
-    /// compares on the hot path.
+    /// compares on the hot path. This may finalize into the client, so production
+    /// callers must first pass the current field's secure-input gate.
     func ensureAdapterMatchesPolicy() {
         let resolved = TextDeliveryPolicy.mode(for: context)
         guard adapter.deliveryMode != resolved else { return }
@@ -341,5 +342,13 @@ final class InputSession: @unchecked Sendable {
         }
         composer.discardCompositionForPassThrough()
         (adapter as? DirectInsertionAdapter)?.resetPreeditTracking()
+
+        // A stale same-client refresh can change the resolved policy before the
+        // secure gate runs. Rebuild only after the engine is discarded, without the
+        // normal finalize step that would write into the password client.
+        let resolved = TextDeliveryPolicy.mode(for: context)
+        if adapter.deliveryMode != resolved {
+            adapter = TextDeliveryPolicy.makeAdapter(for: client, context: context)
+        }
     }
 }
