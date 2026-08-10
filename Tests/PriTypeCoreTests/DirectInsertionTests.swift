@@ -159,9 +159,11 @@ struct KeyEventDedupTests {
         _ repeat_: Bool = false,
         modifiers: UInt = 0,
         windowNumber: Int = 0,
-        keyboardType: Int64 = 0
+        keyboardType: Int64 = 0,
+        eventIdentity: ObjectIdentifier? = nil
     ) -> KeyDownSnapshot {
         KeyDownSnapshot(
+            eventIdentity: eventIdentity,
             timestamp: t,
             keyCode: code,
             modifierFlags: modifiers,
@@ -235,6 +237,45 @@ struct KeyEventDedupTests {
             KeyDownSnapshot(event: event),
             previous: KeyDownSnapshot(event: event)
         ))
+    }
+
+    @Test("A reused event address still requires the full signature")
+    func reusedEventIdentityRequiresFullSignature() {
+        let retainedIdentityOwner = NSObject()
+        let identity = ObjectIdentifier(retainedIdentityOwner)
+        let repeatEvent = snap(
+            100.0,
+            51,
+            true,
+            modifiers: 2,
+            windowNumber: 3,
+            keyboardType: 40,
+            eventIdentity: identity
+        )
+        let changedEvents = [
+            snap(100.01, 51, true, modifiers: 2, windowNumber: 3, keyboardType: 40, eventIdentity: identity),
+            snap(100.0, 40, true, modifiers: 2, windowNumber: 3, keyboardType: 40, eventIdentity: identity),
+            snap(100.0, 51, true, modifiers: 4, windowNumber: 3, keyboardType: 40, eventIdentity: identity),
+            snap(100.0, 51, true, modifiers: 2, windowNumber: 4, keyboardType: 40, eventIdentity: identity),
+            snap(100.0, 51, true, modifiers: 2, windowNumber: 3, keyboardType: 41, eventIdentity: identity)
+        ]
+
+        for changedEvent in changedEvents {
+            var deduplicator = KeyEventDeduplicator()
+            #expect(deduplicator.route(repeatEvent) == .process)
+            #expect(deduplicator.route(changedEvent) == .process)
+        }
+
+        #expect(KeyEventDedup.isDuplicate(repeatEvent, previous: repeatEvent))
+        let nonRepeatEvent = snap(
+            200.0,
+            51,
+            modifiers: 2,
+            windowNumber: 3,
+            keyboardType: 40,
+            eventIdentity: identity
+        )
+        #expect(KeyEventDedup.isDuplicate(nonRepeatEvent, previous: nonRepeatEvent))
     }
 
     @Test("No previous event ⇒ not a duplicate")

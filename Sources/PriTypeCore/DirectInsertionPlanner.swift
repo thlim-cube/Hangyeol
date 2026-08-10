@@ -56,7 +56,12 @@ enum KeyEventDedup {
 
         if let eventIdentity = event.eventIdentity,
            let previousIdentity = previous.eventIdentity,
-           eventIdentity == previousIdentity {
+           eventIdentity == previousIdentity,
+           event.timestamp == previous.timestamp,
+           event.keyCode == previous.keyCode,
+           event.modifierFlags == previous.modifierFlags,
+           event.windowNumber == previous.windowNumber,
+           event.keyboardType == previous.keyboardType {
             return true
         }
 
