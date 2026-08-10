@@ -42,6 +42,14 @@ public class HangulComposer: @unchecked Sendable {
     public var hasActiveComposition: Bool {
         !context.isEmpty()
     }
+
+    /// UTF-16 length of the exact preedit rendered through `setMarkedText`.
+    /// Used only to verify that a repeated activation still exposes this composer's
+    /// marked range before preserving field ownership.
+    var activePreeditUTF16Length: Int {
+        let preedit = context.getPreeditString()
+        return CompositionHelpers.normalizeJamoForDisplay(preedit).utf16.count
+    }
     
     // MARK: - Dependencies
     

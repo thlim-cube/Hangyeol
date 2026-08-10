@@ -46,7 +46,7 @@ struct SecureToggleTests {
         #expect(client.markedText == "ㄱ")
         let insertCountBefore = client.insertCalls.count
         let markCountBefore = client.markCalls.count
-        session.markContextStale()
+        session.markContextStaleForSameClientReactivation()
         var analyzeCount = 0
         var keyboardOverrideModes: [InputMode] = []
 

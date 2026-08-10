@@ -436,7 +436,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
                 // Electron/Chromium may activate the same client repeatedly without
                 // deactivation. Keep that session's composer so an in-flight syllable
                 // is not reset; refresh expensive context once at the next keyDown.
-                session.markContextStale()
+                session.markContextStaleForSameClientReactivation()
                 session.armFocusLossFinalizer()
                 DebugLogger.event("input.session_reactivated")
             } else {

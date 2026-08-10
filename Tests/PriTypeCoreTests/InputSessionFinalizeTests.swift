@@ -399,6 +399,7 @@ struct InputSessionFinalizeTests {
         #expect(client.insertCalls.isEmpty)
 
         #expect(session.contextNeedsRefresh)
+        session.markContextStaleForSameClientReactivation()
         #expect(session.refreshContextIfNeeded { _ in
             self.context(bundleId: client.bundleID, documentAccessSafe: false)
         })
@@ -419,6 +420,7 @@ struct InputSessionFinalizeTests {
             delegate: session.adapter
         )
         session.markContextStale()
+        session.markContextStaleForSameClientReactivation()
         #expect(session.refreshContextIfNeeded { _ in
             self.context(bundleId: client.bundleID, documentAccessSafe: true)
         })
@@ -427,6 +429,151 @@ struct InputSessionFinalizeTests {
 
         #expect(!session.prepareForNonSecureClientWrites())
         #expect(!composer.hasActiveComposition)
+        #expect(client.insertCalls.isEmpty)
+        #expect(client.markedText == "다른")
+    }
+
+    @Test("Same-client repeated activation preserves a still-owned marked composition")
+    func sameClientRepeatedActivationPreservesOwnedComposition() {
+        let (session, composer, client) = makeMarkedSession()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        #expect(client.markedText == "ㄱ")
+
+        session.markContextStaleForSameClientReactivation()
+        #expect(session.refreshContextIfNeeded { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+        _ = session.prepareForNonSecureClientWrites()
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: session.adapter
+        )
+
+        #expect(composer.hasActiveComposition)
+        #expect(client.markedText == "가")
+        #expect(client.insertCalls.isEmpty)
+    }
+
+    @Test("Same-client activation without marked ownership discards the old composition")
+    func sameClientActivationWithoutMarkedOwnershipFailsClosed() {
+        let (session, composer, client) = makeMarkedSession()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        let markCount = client.markCalls.count
+        client.markedText = ""
+        client.markedRangeValue = NSRange(location: NSNotFound, length: 0)
+
+        session.markContextStaleForSameClientReactivation()
+        #expect(session.refreshContextIfNeeded { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+        _ = session.prepareForNonSecureClientWrites()
+
+        #expect(!composer.hasActiveComposition)
+        #expect(client.insertCalls.isEmpty)
+        #expect(client.markCalls.count == markCount)
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: session.adapter
+        )
+        #expect(client.markedText == "ㅏ")
+    }
+
+    @Test("Direct delivery fails closed across same-client activation")
+    func directDeliveryReactivationFailsClosed() {
+        let (session, composer, client) = makeDirectFallbackSession()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        let insertCount = client.insertCalls.count
+        let markCount = client.markCalls.count
+
+        session.markContextStaleForSameClientReactivation()
+        #expect(session.refreshContextIfNeeded { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+        _ = session.prepareForNonSecureClientWrites()
+
+        #expect(!composer.hasActiveComposition)
+        #expect(client.insertCalls.count == insertCount)
+        #expect(client.markCalls.count == markCount)
+    }
+
+    @Test("Secure reactivation cannot authorize cleanup in an unrelated normal field")
+    func secureThenUnrelatedNormalReactivationDoesNotWrite() {
+        let (session, composer, client) = makeMarkedSession()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        let insertCount = client.insertCalls.count
+        let markCount = client.markCalls.count
+
+        session.markContextStaleForSameClientReactivation()
+        #expect(session.refreshContextIfNeeded { _ in
+            self.context(
+                bundleId: client.bundleID,
+                hasTextInputCapability: false,
+                documentAccessSafe: false
+            )
+        })
+        #expect(!PriTypeInputController.routeSecureKeyDown(in: session, keyCode: 15))
+        #expect(!composer.hasActiveComposition)
+        #expect(client.insertCalls.count == insertCount)
+        #expect(client.markCalls.count == markCount)
+
+        client.markedText = "다른"
+        client.markedRangeValue = NSRange(location: 0, length: 2)
+        session.markContextStaleForSameClientReactivation()
+        #expect(session.refreshContextIfNeeded { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+
+        #expect(!session.prepareForNonSecureClientWrites())
+        #expect(client.insertCalls.count == insertCount)
+        #expect(client.markCalls.count == markCount)
+        #expect(client.markedText == "다른")
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: session.adapter
+        )
+        #expect(client.markedText == "ㅏ")
+    }
+
+    @Test("Same-client reactivation cannot weaken a host commit boundary")
+    func sameClientReactivationPreservesHostCommitBoundary() {
+        let (session, composer, client) = makeDirectFallbackSession()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        session.discardForSecureInput()
+        #expect(PriTypeInputController.routeHostCommitComposition(
+            in: session,
+            sender: client
+        ))
+
+        session.markContextStaleForSameClientReactivation()
+        #expect(session.refreshContextIfNeeded { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+        client.markedText = "다른"
+        client.markedRangeValue = NSRange(location: 2, length: 2)
+
+        #expect(!session.prepareForNonSecureClientWrites())
         #expect(client.insertCalls.isEmpty)
         #expect(client.markedText == "다른")
     }

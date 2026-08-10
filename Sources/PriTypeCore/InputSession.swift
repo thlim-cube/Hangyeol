@@ -45,15 +45,24 @@ enum CompositionFinalizeReason: String {
 /// against this session's client. It is idempotent (no-op without active composition)
 /// and host-agnostic — no bundle-ID special cases.
 final class InputSession: @unchecked Sendable {
+    private enum ContextRefreshRequirement: Equatable {
+        case none
+        case sameClientReactivation
+        case fieldIdentityMayHaveChanged
+    }
+
     let client: IMKTextInput
     private(set) var context: ClientContext
     private(set) var adapter: BaseClientAdapter
     let composer: HangulComposer
 
-    /// Set in `deactivateServer`. The next `handle()` must re-analyze the context
-    /// before trusting it: the same client object can come back focused on a
-    /// different field (e.g. a password field) of the same app.
-    private(set) var contextNeedsRefresh = false
+    /// The next input boundary may need fresh client analysis. Repeated activation is
+    /// provisional until the live marked range proves the canonical marked preedit is
+    /// still owned; explicit navigation/lifecycle boundaries remain stronger.
+    private var contextRefreshRequirement: ContextRefreshRequirement = .none
+    var contextNeedsRefresh: Bool {
+        contextRefreshRequirement != .none
+    }
 
     /// Commits the composition early on app-focus-loss (see `armFocusLossFinalizer`).
     private var focusLossObserver: Any?
@@ -136,7 +145,7 @@ final class InputSession: @unchecked Sendable {
         if fieldIdentityMayHaveChanged {
             contextGeneration &+= 1
         }
-        contextNeedsRefresh = false
+        contextRefreshRequirement = .none
         if focusLossObserver != nil, newContext.bundleId != oldBundleId {
             armFocusLossFinalizer()
         }
@@ -145,7 +154,17 @@ final class InputSession: @unchecked Sendable {
     func markContextStale() {
         invalidateHanjaShortcutSessionState()
         composer.resetTextConvenienceState()
-        contextNeedsRefresh = true
+        contextRefreshRequirement = .fieldIdentityMayHaveChanged
+    }
+
+    /// Repeated `activateServer` can be an Electron/Chromium quirk or a real
+    /// programmatic field move. Defer that distinction until fresh context and the
+    /// client's live marked range can be checked together. Never downgrade a proven
+    /// Tab, commit, deactivate, mouse, or controller-handoff boundary.
+    func markContextStaleForSameClientReactivation() {
+        invalidateHanjaShortcutSessionState()
+        guard contextRefreshRequirement == .none else { return }
+        contextRefreshRequirement = .sameClientReactivation
     }
 
     /// Refresh a reactivated session before any operation that depends on the current
@@ -156,9 +175,53 @@ final class InputSession: @unchecked Sendable {
     func refreshContextIfNeeded(
         using analyze: (IMKTextInput) -> ClientContext
     ) -> Bool {
-        guard contextNeedsRefresh else { return false }
-        refreshContext(analyze(client), fieldIdentityMayHaveChanged: true)
+        guard contextRefreshRequirement != .none else { return false }
+        let newContext = analyze(client)
+        let fieldIdentityMayHaveChanged: Bool
+        switch contextRefreshRequirement {
+        case .none:
+            return false
+        case .sameClientReactivation:
+            fieldIdentityMayHaveChanged = !canPreserveMarkedComposition(in: newContext)
+        case .fieldIdentityMayHaveChanged:
+            fieldIdentityMayHaveChanged = true
+        }
+        refreshContext(
+            newContext,
+            fieldIdentityMayHaveChanged: fieldIdentityMayHaveChanged
+        )
         return true
+    }
+
+    /// Same client identity is not enough: web views can move focus between normal
+    /// fields without Tab/deactivate callbacks. Preserve only a canonical marked
+    /// composition whose live range and input policy still match exactly. Direct and
+    /// immediate delivery deliberately fail closed because they have no marked-range
+    /// ownership proof at this boundary.
+    private func canPreserveMarkedComposition(in newContext: ClientContext) -> Bool {
+        guard context.bundleId == newContext.bundleId,
+              context.hasTextInputCapability == newContext.hasTextInputCapability,
+              context.isLikelyDesktopArea == newContext.isLikelyDesktopArea,
+              context.isLightweight == newContext.isLightweight,
+              context.documentAccessSafe == newContext.documentAccessSafe,
+              adapter.deliveryMode == .markedText,
+              TextDeliveryPolicy.mode(for: newContext) == .markedText,
+              lastNonSecureGeneration == contextGeneration,
+              deferredOwnedMarkedTextGeneration == nil,
+              composer.hasActiveComposition else {
+            return false
+        }
+
+        let expectedLength = composer.activePreeditUTF16Length
+        let markedRange = client.markedRange()
+        let (rangeEnd, overflow) = markedRange.location.addingReportingOverflow(markedRange.length)
+        return expectedLength > 0
+            && markedRange.location != NSNotFound
+            && markedRange.location >= 0
+            && markedRange.location < DirectInsertionPlanner.maxReasonableLocation
+            && markedRange.length == expectedLength
+            && !overflow
+            && rangeEnd < DirectInsertionPlanner.maxReasonableLocation
     }
 
     /// Refresh the current field at a key or external-action boundary. Finder's
