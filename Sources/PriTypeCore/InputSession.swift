@@ -228,16 +228,21 @@ final class InputSession: @unchecked Sendable {
             return false
         }
 
-        let expectedLength = composer.activePreeditUTF16Length
+        let expectedPreedit = composer.activePreeditForDisplay
+        let expectedLength = expectedPreedit.utf16.count
         let markedRange = client.markedRange()
         let (rangeEnd, overflow) = markedRange.location.addingReportingOverflow(markedRange.length)
-        return expectedLength > 0
-            && markedRange.location != NSNotFound
-            && markedRange.location >= 0
-            && markedRange.location < DirectInsertionPlanner.maxReasonableLocation
-            && markedRange.length == expectedLength
-            && !overflow
-            && rangeEnd < DirectInsertionPlanner.maxReasonableLocation
+        guard expectedLength > 0,
+              markedRange.location != NSNotFound,
+              markedRange.location >= 0,
+              markedRange.location < DirectInsertionPlanner.maxReasonableLocation,
+              markedRange.length == expectedLength,
+              !overflow,
+              rangeEnd < DirectInsertionPlanner.maxReasonableLocation else {
+            return false
+        }
+
+        return client.attributedSubstring(from: markedRange)?.string == expectedPreedit
     }
 
     /// Refresh the current field at a key or external-action boundary. Finder's

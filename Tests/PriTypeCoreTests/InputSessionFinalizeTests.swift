@@ -537,6 +537,42 @@ struct InputSessionFinalizeTests {
         #expect(client.insertCalls.isEmpty)
     }
 
+    @Test(
+        "Same-client reactivation requires exact readable marked content",
+        arguments: [false, true]
+    )
+    func sameClientReactivationRejectsSameLengthUnownedMarkedText(
+        attributedSubstringUnavailable: Bool
+    ) {
+        let (session, composer, client) = makeMarkedSession()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        #expect(client.markedText == "ㄱ")
+
+        // The same IMK client now exposes another normal field whose unrelated mark
+        // happens to have the same UTF-16 length as PriType's previous preedit.
+        client.markedText = "나"
+        client.markedRangeValue = NSRange(location: 0, length: 1)
+        client.attributedSubstringUnavailable = attributedSubstringUnavailable
+        session.markContextStaleForSameClientReactivation()
+        #expect(session.refreshContextIfNeeded { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+        _ = session.prepareForNonSecureClientWrites()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: session.adapter
+        )
+
+        #expect(client.markedText == "ㅏ")
+        #expect(client.markedText != "가")
+        #expect(client.insertCalls.isEmpty)
+    }
+
     @Test("Same-client reactivation without an owned marked composition resets convenience timing")
     func sameClientReactivationWithoutOwnedMarkedCompositionResetsConvenience() {
         let client = FakeIMKTextInput()
