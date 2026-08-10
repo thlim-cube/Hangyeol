@@ -660,20 +660,20 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // settings); make sure the adapter still matches before composing into it.
         session.ensureAdapterMatchesPolicy()
 
-        // 6. Compose, then invalidate field identity for host-owned focus navigation.
+        // 6. Compose, then invalidate field identity for host-owned field boundaries.
         let handled = composer.handle(event, delegate: session.adapter)
-        session.observeHostNavigationKeyDown(
+        session.observeHostFieldBoundaryKeyDown(
             keyCode: event.keyCode,
             passedToHost: !handled
         )
         return handled
     }
 
-    /// Secure fields receive the raw key. Tab still belongs to the host's field
-    /// navigation, so invalidate same-client context before the next key boundary.
+    /// Secure fields receive the raw key. A host-passed field boundary can reuse the
+    /// same client for another field, so invalidate context before the next key.
     static func routeSecureKeyDown(in session: InputSession, keyCode: UInt16) -> Bool {
         session.discardForSecureInput()
-        session.observeHostNavigationKeyDown(keyCode: keyCode, passedToHost: true)
+        session.observeHostFieldBoundaryKeyDown(keyCode: keyCode, passedToHost: true)
         return false
     }
 

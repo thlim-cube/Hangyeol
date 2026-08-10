@@ -115,77 +115,89 @@ struct InputSessionFinalizeTests {
         #expect(client.markCalls.isEmpty)
     }
 
-    @Test("Tab navigation makes the reused client context untrusted")
-    func tabNavigationInvalidatesContext() async {
-        let client = FakeIMKTextInput()
-        let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
-        let shortcutState = HanjaShortcutSessionStateStore(initialState: .nonsecure)
-        let session = InputSession(
-            client: client,
-            context: context(bundleId: "com.apple.TextEdit", documentAccessSafe: true),
-            composer: composer,
-            invalidateHanjaShortcutSessionState: {
-                shortcutState.update(.unknown)
-            }
-        )
-        _ = session.prepareForNonSecureClientWrites()
-        _ = composer.handle(
-            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
-            delegate: session.adapter
-        )
+    @Test("Host-passed field boundaries make the reused client context untrusted")
+    func hostPassedFieldBoundariesInvalidateContext() async {
+        let fieldBoundaryKeys: [(name: String, keyCode: UInt16, character: String)] = [
+            ("Tab", KeyCode.tab, "\t"),
+            ("Return", KeyCode.return, "\r"),
+            ("Numpad Enter", KeyCode.numpadEnter, "\r")
+        ]
 
-        let tab = KeyDownSnapshot(timestamp: 100, keyCode: KeyCode.tab)
-        #expect(session.registerKeyDown(tab) == .process)
-        let handled = composer.handle(
-            TestEventFactory.keyEvent(char: "\t", keyCode: KeyCode.tab)!,
-            delegate: session.adapter
-        )
-        session.observeHostNavigationKeyDown(
-            keyCode: KeyCode.tab,
-            passedToHost: !handled
-        )
-        let writeCountAtNavigation = client.insertCalls.count
-
-        #expect(!handled)
-        #expect(session.contextNeedsRefresh)
-        #expect(shortcutState.state == .unknown)
-        #expect(client.document == "ㄱ")
-
-        // The same-turn guard expires on the main queue, but an exact full-signature
-        // duplicate remains deduplicated after that turn. Let the clear run before
-        // deliberately restoring the old field context; the host focus move is still
-        // pending when the duplicate arrives.
-        await flushMainQueue()
-        #expect(session.refreshContextIfNeeded { _ in
-            self.context(bundleId: client.bundleID, documentAccessSafe: true)
-        })
-        #expect(!session.contextNeedsRefresh)
-        #expect(session.registerKeyDown(tab) == .consumeDuplicate)
-        #expect(session.contextNeedsRefresh)
-        #expect(shortcutState.state == .unknown)
-
-        // Once the host has moved focus, the next real key must classify the reused
-        // client again and route the password-like field without any extra write.
-        client.selectedRangeValue = NSRange(location: NSNotFound, length: 0)
-        #expect(session.refreshContextForInputBoundary { _ in
-            self.context(
-                bundleId: client.bundleID,
-                hasTextInputCapability: false,
-                documentAccessSafe: false
+        for boundary in fieldBoundaryKeys {
+            let client = FakeIMKTextInput()
+            let composer = HangulComposer(
+                statusBar: MockStatusBar(),
+                configuration: MockConfiguration()
             )
-        })
-        #expect(SecureInputPolicy.shouldPassThrough(SecureInputSignals(
-            bundleId: session.context.bundleId,
-            hasTextInputCapability: session.context.hasTextInputCapability,
-            hasInvalidSelection: true,
-            hasGlobalSecureInput: false
-        )))
-        #expect(!PriTypeInputController.routeSecureKeyDown(
-            in: session,
-            keyCode: 15
-        ))
-        #expect(!session.finalize(reason: .appDeactivate))
-        #expect(client.insertCalls.count == writeCountAtNavigation)
+            let shortcutState = HanjaShortcutSessionStateStore(initialState: .nonsecure)
+            let session = InputSession(
+                client: client,
+                context: context(bundleId: "com.apple.TextEdit", documentAccessSafe: true),
+                composer: composer,
+                invalidateHanjaShortcutSessionState: {
+                    shortcutState.update(.unknown)
+                }
+            )
+            _ = session.prepareForNonSecureClientWrites()
+
+            let snapshot = KeyDownSnapshot(timestamp: 100, keyCode: boundary.keyCode)
+            #expect(session.registerKeyDown(snapshot) == .process)
+            let handled = composer.handle(
+                TestEventFactory.keyEvent(
+                    char: boundary.character,
+                    keyCode: boundary.keyCode
+                )!,
+                delegate: session.adapter
+            )
+            session.observeHostFieldBoundaryKeyDown(
+                keyCode: boundary.keyCode,
+                passedToHost: !handled
+            )
+
+            #expect(!handled, "\(boundary.name) should pass to the host")
+            #expect(session.contextNeedsRefresh)
+            #expect(shortcutState.state == .unknown)
+            #expect(client.insertCalls.isEmpty)
+            #expect(client.markCalls.isEmpty)
+
+            // The same-turn guard expires on the main queue, but an exact
+            // full-signature duplicate remains deduplicated after that turn. Let
+            // the clear run before deliberately restoring the old field context;
+            // the host action is still pending when the duplicate arrives.
+            await flushMainQueue()
+            #expect(session.refreshContextIfNeeded { _ in
+                self.context(bundleId: client.bundleID, documentAccessSafe: true)
+            })
+            #expect(!session.contextNeedsRefresh)
+            #expect(session.registerKeyDown(snapshot) == .consumeDuplicate)
+            #expect(session.contextNeedsRefresh)
+            #expect(shortcutState.state == .unknown)
+
+            // Once the host has applied the boundary, the next real key must
+            // classify the reused client again and route the password-like field
+            // without any extra client write.
+            client.selectedRangeValue = NSRange(location: NSNotFound, length: 0)
+            #expect(session.refreshContextForInputBoundary { _ in
+                self.context(
+                    bundleId: client.bundleID,
+                    hasTextInputCapability: false,
+                    documentAccessSafe: false
+                )
+            })
+            #expect(SecureInputPolicy.shouldPassThrough(SecureInputSignals(
+                bundleId: session.context.bundleId,
+                hasTextInputCapability: session.context.hasTextInputCapability,
+                hasInvalidSelection: true,
+                hasGlobalSecureInput: false
+            )))
+            #expect(!PriTypeInputController.routeSecureKeyDown(
+                in: session,
+                keyCode: 15
+            ))
+            #expect(!session.finalize(reason: .appDeactivate))
+            #expect(client.insertCalls.isEmpty)
+            #expect(client.markCalls.isEmpty)
+        }
     }
 
     @Test("Text convenience timing does not cross field boundaries")
@@ -199,8 +211,20 @@ struct InputSessionFinalizeTests {
             }),
             ("host commit", { $0.finishHostCommitBoundary() }),
             ("Tab", {
-                $0.observeHostNavigationKeyDown(
+                $0.observeHostFieldBoundaryKeyDown(
                     keyCode: KeyCode.tab,
+                    passedToHost: true
+                )
+            }),
+            ("Return", {
+                $0.observeHostFieldBoundaryKeyDown(
+                    keyCode: KeyCode.return,
+                    passedToHost: true
+                )
+            }),
+            ("Numpad Enter", {
+                $0.observeHostFieldBoundaryKeyDown(
+                    keyCode: KeyCode.numpadEnter,
                     passedToHost: true
                 )
             }),
@@ -249,43 +273,98 @@ struct InputSessionFinalizeTests {
         }
     }
 
-    @Test("A new physical Tab and auto-repeat do not inherit duplicate disposition")
-    func newTabEventsDoNotInheritDuplicateDisposition() async {
-        let client = FakeIMKTextInput()
-        let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
-        let session = InputSession(
-            client: client,
-            context: context(bundleId: "com.apple.TextEdit", documentAccessSafe: true),
-            composer: composer
-        )
-        _ = session.prepareForNonSecureClientWrites()
+    @Test("New physical field-boundary keys do not inherit duplicate disposition")
+    func newFieldBoundaryEventsDoNotInheritDuplicateDisposition() async {
+        for keyCode in [KeyCode.tab, KeyCode.return, KeyCode.numpadEnter] {
+            let client = FakeIMKTextInput()
+            let composer = HangulComposer(
+                statusBar: MockStatusBar(),
+                configuration: MockConfiguration()
+            )
+            let session = InputSession(
+                client: client,
+                context: context(bundleId: "com.apple.TextEdit", documentAccessSafe: true),
+                composer: composer
+            )
+            _ = session.prepareForNonSecureClientWrites()
 
-        let originalTab = KeyDownSnapshot(timestamp: 100, keyCode: KeyCode.tab)
-        #expect(session.registerKeyDown(originalTab) == .process)
-        session.observeHostNavigationKeyDown(keyCode: KeyCode.tab, passedToHost: true)
-        await flushMainQueue()
-        #expect(session.refreshContextIfNeeded { _ in
-            self.context(bundleId: client.bundleID, documentAccessSafe: true)
-        })
+            let original = KeyDownSnapshot(timestamp: 100, keyCode: keyCode)
+            #expect(session.registerKeyDown(original) == .process)
+            session.observeHostFieldBoundaryKeyDown(keyCode: keyCode, passedToHost: true)
+            await flushMainQueue()
+            #expect(session.refreshContextIfNeeded { _ in
+                self.context(bundleId: client.bundleID, documentAccessSafe: true)
+            })
 
-        let fastPhysicalTab = KeyDownSnapshot(timestamp: 100.02, keyCode: KeyCode.tab)
-        #expect(session.registerKeyDown(fastPhysicalTab) == .process)
-        #expect(!session.contextNeedsRefresh)
-        session.observeHostNavigationKeyDown(keyCode: KeyCode.tab, passedToHost: true)
-        #expect(session.contextNeedsRefresh)
-        #expect(session.refreshContextIfNeeded { _ in
-            self.context(bundleId: client.bundleID, documentAccessSafe: true)
-        })
+            let fastPhysical = KeyDownSnapshot(timestamp: 100.02, keyCode: keyCode)
+            #expect(session.registerKeyDown(fastPhysical) == .process)
+            #expect(!session.contextNeedsRefresh)
+            session.observeHostFieldBoundaryKeyDown(keyCode: keyCode, passedToHost: true)
+            #expect(session.contextNeedsRefresh)
+            #expect(session.refreshContextIfNeeded { _ in
+                self.context(bundleId: client.bundleID, documentAccessSafe: true)
+            })
 
-        let repeatedTab = KeyDownSnapshot(
-            timestamp: 100.03,
-            keyCode: KeyCode.tab,
-            isARepeat: true
-        )
-        #expect(session.registerKeyDown(repeatedTab) == .process)
-        #expect(!session.contextNeedsRefresh)
-        session.observeHostNavigationKeyDown(keyCode: KeyCode.tab, passedToHost: false)
-        #expect(!session.contextNeedsRefresh)
+            let repeated = KeyDownSnapshot(
+                timestamp: 100.03,
+                keyCode: keyCode,
+                isARepeat: true
+            )
+            #expect(session.registerKeyDown(repeated) == .process)
+            #expect(!session.contextNeedsRefresh)
+            session.observeHostFieldBoundaryKeyDown(keyCode: keyCode, passedToHost: false)
+            #expect(!session.contextNeedsRefresh)
+        }
+    }
+
+    @Test("Client-consumed Return and its duplicate keep the current field")
+    func clientConsumedReturnKeepsContext() async {
+        for bundleId in ["com.goodnotesapp.x", "com.nousresearch.hermes"] {
+            let client = FakeIMKTextInput()
+            client.bundleID = bundleId
+            let composer = HangulComposer(
+                statusBar: MockStatusBar(),
+                configuration: MockConfiguration()
+            )
+            let shortcutState = HanjaShortcutSessionStateStore(initialState: .nonsecure)
+            let session = InputSession(
+                client: client,
+                context: context(bundleId: bundleId, documentAccessSafe: true),
+                composer: composer,
+                invalidateHanjaShortcutSessionState: {
+                    shortcutState.update(.unknown)
+                }
+            )
+            _ = session.prepareForNonSecureClientWrites()
+            composer.markKeystroke(bundleId: bundleId)
+            _ = composer.handle(
+                TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+                delegate: session.adapter
+            )
+            _ = composer.handle(
+                TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+                delegate: session.adapter
+            )
+
+            let snapshot = KeyDownSnapshot(timestamp: 100, keyCode: KeyCode.return)
+            #expect(session.registerKeyDown(snapshot) == .process)
+            let handled = composer.handle(
+                TestEventFactory.keyEvent(char: "\r", keyCode: KeyCode.return)!,
+                delegate: session.adapter
+            )
+            session.observeHostFieldBoundaryKeyDown(
+                keyCode: KeyCode.return,
+                passedToHost: !handled
+            )
+
+            #expect(handled)
+            #expect(!session.contextNeedsRefresh)
+            #expect(shortcutState.state == .nonsecure)
+            await flushMainQueue()
+            #expect(session.registerKeyDown(snapshot) == .consumeDuplicate)
+            #expect(!session.contextNeedsRefresh)
+            #expect(shortcutState.state == .nonsecure)
+        }
     }
 
     private func flushMainQueue() async {

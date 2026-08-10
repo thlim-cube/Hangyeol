@@ -184,47 +184,51 @@ struct HanjaCursorCacheTests {
 
 @Suite("Hanja cursor field lifecycle", .serialized)
 struct HanjaCursorFieldLifecycleTests {
-    @Test("Host-passed Tab cannot reuse the previous field's cached caret")
-    func hostPassedTabInvalidatesCachedCaret() throws {
-        CursorRectResolver.invalidateCache()
+    @Test("Host-passed field boundaries cannot reuse the previous field's cached caret")
+    func hostPassedFieldBoundariesInvalidateCachedCaret() throws {
         defer { CursorRectResolver.invalidateCache() }
-        let (client, session, previousFieldCaret) = try makeCachedSession()
+        for keyCode in [KeyCode.tab, KeyCode.return, KeyCode.numpadEnter] {
+            CursorRectResolver.invalidateCache()
+            let (client, session, previousFieldCaret) = try makeCachedSession()
 
-        session.observeHostNavigationKeyDown(
-            keyCode: KeyCode.tab,
-            passedToHost: true
-        )
-        #expect(session.contextNeedsRefresh)
-        #expect(session.refreshContextIfNeeded { _ in
-            context(bundleId: client.bundleID)
-        })
+            session.observeHostFieldBoundaryKeyDown(
+                keyCode: keyCode,
+                passedToHost: true
+            )
+            #expect(session.contextNeedsRefresh)
+            #expect(session.refreshContextIfNeeded { _ in
+                context(bundleId: client.bundleID)
+            })
 
-        client.firstRectValue = .zero
-        #expect(CursorRectResolver.resolve(
-            client: client,
-            sessionID: ObjectIdentifier(session),
-            accessibilityResolver: { nil }
-        ) != previousFieldCaret)
+            client.firstRectValue = .zero
+            #expect(CursorRectResolver.resolve(
+                client: client,
+                sessionID: ObjectIdentifier(session),
+                accessibilityResolver: { nil }
+            ) != previousFieldCaret)
+        }
     }
 
-    @Test("Candidate-consumed Tab preserves the current field's cached caret")
-    func candidateConsumedTabPreservesCachedCaret() throws {
-        CursorRectResolver.invalidateCache()
+    @Test("Candidate-consumed field boundaries preserve the current field's cached caret")
+    func candidateConsumedFieldBoundariesPreserveCachedCaret() throws {
         defer { CursorRectResolver.invalidateCache() }
-        let (client, session, currentFieldCaret) = try makeCachedSession()
+        for keyCode in [KeyCode.tab, KeyCode.return, KeyCode.numpadEnter] {
+            CursorRectResolver.invalidateCache()
+            let (client, session, currentFieldCaret) = try makeCachedSession()
 
-        session.observeHostNavigationKeyDown(
-            keyCode: KeyCode.tab,
-            passedToHost: false
-        )
-        #expect(!session.contextNeedsRefresh)
+            session.observeHostFieldBoundaryKeyDown(
+                keyCode: keyCode,
+                passedToHost: false
+            )
+            #expect(!session.contextNeedsRefresh)
 
-        client.firstRectValue = .zero
-        #expect(CursorRectResolver.resolve(
-            client: client,
-            sessionID: ObjectIdentifier(session),
-            accessibilityResolver: { nil }
-        ) == currentFieldCaret)
+            client.firstRectValue = .zero
+            #expect(CursorRectResolver.resolve(
+                client: client,
+                sessionID: ObjectIdentifier(session),
+                accessibilityResolver: { nil }
+            ) == currentFieldCaret)
+        }
     }
 
     private func makeCachedSession() throws -> (FakeIMKTextInput, InputSession, NSRect) {
@@ -664,50 +668,61 @@ struct HanjaCandidateLifecycleTests {
         #expect(client.insertCalls.count == 1)
     }
 
-    @Test("A candidate-consumed Tab and its duplicate keep the active session")
-    func candidateConsumedTabKeepsSession() async {
-        let presenter = MockHanjaCandidatePresenter()
-        presenter.consumedKeyCodes = [KeyCode.tab]
-        let client = FakeIMKTextInput()
-        client.document = "가"
-        client.selectedRangeValue = NSRange(location: 1, length: 0)
-        let composer = makeComposer(presenter: presenter)
-        let session = InputSession(
-            client: client,
-            context: context(bundleId: client.bundleID),
-            composer: composer
-        )
-        _ = session.prepareForNonSecureClientWrites()
-        let shortcut = TestEventFactory.keyEvent(
-            char: "x",
-            keyCode: 7,
-            modifiers: .command
-        )!
-        _ = composer.handle(shortcut, delegate: session.adapter)
-        composer.triggerHanjaLookup()
-        #expect(presenter.isVisible)
+    @Test("Candidate-consumed field boundaries and their duplicates keep the active session")
+    func candidateConsumedFieldBoundariesKeepSession() async {
+        let fieldBoundaryKeys: [(keyCode: UInt16, character: String)] = [
+            (KeyCode.tab, "\t"),
+            (KeyCode.return, "\r"),
+            (KeyCode.numpadEnter, "\r")
+        ]
 
-        let tabSnapshot = KeyDownSnapshot(timestamp: 100, keyCode: KeyCode.tab)
-        #expect(session.registerKeyDown(tabSnapshot) == .process)
-        let handled = composer.handle(
-            TestEventFactory.keyEvent(char: "\t", keyCode: KeyCode.tab)!,
-            delegate: session.adapter
-        )
-        session.observeHostNavigationKeyDown(
-            keyCode: KeyCode.tab,
-            passedToHost: !handled
-        )
+        for boundary in fieldBoundaryKeys {
+            let presenter = MockHanjaCandidatePresenter()
+            presenter.consumedKeyCodes = [boundary.keyCode]
+            let client = FakeIMKTextInput()
+            client.document = "가"
+            client.selectedRangeValue = NSRange(location: 1, length: 0)
+            let composer = makeComposer(presenter: presenter)
+            let session = InputSession(
+                client: client,
+                context: context(bundleId: client.bundleID),
+                composer: composer
+            )
+            _ = session.prepareForNonSecureClientWrites()
+            let shortcut = TestEventFactory.keyEvent(
+                char: "x",
+                keyCode: 7,
+                modifiers: .command
+            )!
+            _ = composer.handle(shortcut, delegate: session.adapter)
+            composer.triggerHanjaLookup()
+            #expect(presenter.isVisible)
 
-        #expect(handled)
-        #expect(!session.contextNeedsRefresh)
-        await withCheckedContinuation { continuation in
-            DispatchQueue.main.async {
-                continuation.resume()
+            let snapshot = KeyDownSnapshot(timestamp: 100, keyCode: boundary.keyCode)
+            #expect(session.registerKeyDown(snapshot) == .process)
+            let handled = composer.handle(
+                TestEventFactory.keyEvent(
+                    char: boundary.character,
+                    keyCode: boundary.keyCode
+                )!,
+                delegate: session.adapter
+            )
+            session.observeHostFieldBoundaryKeyDown(
+                keyCode: boundary.keyCode,
+                passedToHost: !handled
+            )
+
+            #expect(handled)
+            #expect(!session.contextNeedsRefresh)
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async {
+                    continuation.resume()
+                }
             }
+            #expect(session.registerKeyDown(snapshot) == .consumeDuplicate)
+            #expect(!session.contextNeedsRefresh)
+            #expect(presenter.isVisible)
         }
-        #expect(session.registerKeyDown(tabSnapshot) == .consumeDuplicate)
-        #expect(!session.contextNeedsRefresh)
-        #expect(presenter.isVisible)
     }
 
     @Test("A reactivated session refreshes context before Hanja identity is used")

@@ -81,9 +81,9 @@ final class InputSession: @unchecked Sendable {
     /// Disposition of the previous deduplication chain. Exact full-signature
     /// duplicates remain recognizable after the same-turn guard expires, so retain
     /// this until a real `.process` event replaces `KeyEventDeduplicator.previous`.
-    /// A Hanja candidate panel can consume Tab for paging; its duplicate must not be
-    /// mistaken for field navigation.
-    private var previousTabPassedToHost = false
+    /// A Hanja candidate panel or a client compatibility path can consume a field
+    /// boundary key; its duplicate must not be mistaken for host navigation.
+    private var previousHostFieldBoundaryPassedToHost = false
 
     /// Increments whenever a re-analysis may refer to a different field. InputMethodKit
     /// can reuse one client object across fields, so object identity alone cannot prove
@@ -325,11 +325,17 @@ final class InputSession: @unchecked Sendable {
         markContextStale()
     }
 
-    /// Tab and Shift-Tab are host-owned focus navigation. IMK does not guarantee a
-    /// deactivate or mouse callback before the next field reuses the same client.
-    func observeHostNavigationKeyDown(keyCode: UInt16, passedToHost: Bool) {
-        guard keyCode == KeyCode.tab, passedToHost else { return }
-        previousTabPassedToHost = true
+    /// Tab and host-passed Enter keys can move focus or submit into another field.
+    /// IMK does not guarantee a deactivate or mouse callback before that field reuses
+    /// the same client.
+    func observeHostFieldBoundaryKeyDown(keyCode: UInt16, passedToHost: Bool) {
+        guard passedToHost,
+              keyCode == KeyCode.tab
+                || keyCode == KeyCode.return
+                || keyCode == KeyCode.numpadEnter else {
+            return
+        }
+        previousHostFieldBoundaryPassedToHost = true
         CursorRectResolver.invalidateCache()
         markContextStale()
     }
@@ -342,13 +348,13 @@ final class InputSession: @unchecked Sendable {
     func registerKeyDown(_ snapshot: KeyDownSnapshot) -> KeyDownRoute {
         let route = keyEventDeduplicator.route(snapshot)
         if route == .process {
-            previousTabPassedToHost = false
-        } else if previousTabPassedToHost {
-            // `handle` refreshes stale context before duplicate detection. A Tab
-            // re-delivery can therefore restore the old field's classification
-            // before the host applies its focus move. Reassert the navigation
+            previousHostFieldBoundaryPassedToHost = false
+        } else if previousHostFieldBoundaryPassedToHost {
+            // `handle` refreshes stale context before duplicate detection. A field
+            // boundary re-delivery can therefore restore the old field's
+            // classification before the host applies its action. Reassert the
             // boundary so the next real key classifies the field that received it.
-            observeHostNavigationKeyDown(keyCode: snapshot.keyCode, passedToHost: true)
+            observeHostFieldBoundaryKeyDown(keyCode: snapshot.keyCode, passedToHost: true)
         }
         if route == .process, !snapshot.isARepeat {
             let generation = keyEventDeduplicator.deliveryTurnGeneration
