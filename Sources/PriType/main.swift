@@ -73,8 +73,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         }
         
         // Set callback for CGEventTap toggle handler (handles all toggle keys)
-        RightCommandSuppressor.shared.onToggle = {
-            InputModeCoordinator.shared.requestToggle(source: .customKey)
+        RightCommandSuppressor.shared.onToggle = { trace in
+            InputModeCoordinator.shared.requestToggle(source: .customKey, trace: trace)
         }
         
         // Set callback for Right Option key → Hanja lookup
@@ -82,8 +82,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             PriTypeInputController.sharedController?.triggerHanjaLookup()
         }
 
-        IOKitManager.shared.onRightCommandToggle = {
-            InputModeCoordinator.shared.requestToggle(source: .iokitFallback)
+        IOKitManager.shared.onRightCommandToggle = { trace in
+            InputModeCoordinator.shared.requestToggle(source: .iokitFallback, trace: trace)
         }
         IOKitManager.shared.onRightOptionHanja = {
             PriTypeInputController.sharedController?.triggerHanjaLookup()

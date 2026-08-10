@@ -41,7 +41,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     public var isRunning: Bool { eventTap != nil }
     
     /// Callback for toggle
-    public var onToggle: (@Sendable () -> Void)?
+    public var onToggle: (@Sendable (ToggleLatencyTrace) -> Void)?
     
     /// Callback for Hanja lookup
     public var onHanjaLookup: (@Sendable () -> Void)?
@@ -453,6 +453,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
 
     private func triggerToggle() {
         let callback = onToggle
+        let trace = ToggleLatencyTrace.begin(source: .customKey)
         // Hop to the main run loop and let the toggle settle there. This matches
         // the proven v2.6.5 baseline: first-key stability comes from the single
         // internal state machine (`HangulComposer.inputMode` with no async TIS
@@ -460,7 +461,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         // CGEventTap callback. Keeping IMK commit / keyboard-override work off the
         // tap callback also protects against `kCGEventTapDisabledByTimeout`.
         DispatchQueue.main.async {
-            callback?()
+            callback?(trace)
         }
     }
     

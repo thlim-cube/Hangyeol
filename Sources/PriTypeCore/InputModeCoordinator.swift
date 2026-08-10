@@ -23,19 +23,22 @@ public final class InputModeCoordinator: @unchecked Sendable {
 
     private init() {}
 
-    public func requestToggle(source: ToggleSource) {
+    public func requestToggle(source: ToggleSource, trace: ToggleLatencyTrace) {
         guard Thread.isMainThread else {
             DispatchQueue.main.async {
-                self.requestToggle(source: source)
+                self.requestToggle(source: source, trace: trace)
             }
             return
         }
+
+        trace.mark(.mainExecution)
 
         guard !ConfigurationManager.shared.capsLockInputSourceSwitchEnabled else {
             DebugLogger.event("toggle.ignored", metadata: [
                 .state("source", source.diagnosticLabel),
                 .state("reason", "caps_lock_owns_switching")
             ])
+            trace.mark(.ignored)
             return
         }
 
@@ -44,9 +47,10 @@ public final class InputModeCoordinator: @unchecked Sendable {
                 .state("source", source.diagnosticLabel),
                 .state("reason", "no_active_controller")
             ])
+            trace.mark(.ignored)
             return
         }
 
-        controller.performPriTypeModeTransition(source: source)
+        controller.performPriTypeModeTransition(source: source, trace: trace)
     }
 }

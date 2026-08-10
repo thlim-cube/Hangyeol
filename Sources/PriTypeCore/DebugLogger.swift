@@ -35,6 +35,7 @@ public final class DebugLogger: @unchecked Sendable {
         case flag(StaticString, Bool)
         case count(StaticString, Int)
         case durationMicroseconds(StaticString, UInt64)
+        case traceID(UInt64)
         case state(StaticString, StaticString)
         case statusCode(StaticString, Int)
     }
@@ -116,6 +117,8 @@ public final class DebugLogger: @unchecked Sendable {
                 return "\(key)=\(value)"
             case .durationMicroseconds(let key, let value):
                 return "\(key)=\(value)us"
+            case .traceID(let value):
+                return "trace=\(value)"
             case .state(let key, let value):
                 return "\(key)=\(value)"
             case .statusCode(let key, let value):

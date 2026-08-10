@@ -72,6 +72,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
     #if DEBUG
     private var debugHandleLogCount = 0
+    nonisolated(unsafe) private static var pendingToggleTrace: ToggleLatencyTrace?
     #endif
     private var lastKeyboardOverrideClientID: ObjectIdentifier?
     private var lastKeyboardOverrideTime: CFAbsoluteTime = 0
@@ -260,12 +261,16 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
     // MARK: - Mode Transitions (한/영)
 
-    public func performPriTypeModeTransition(source: InputModeCoordinator.ToggleSource) {
+    public func performPriTypeModeTransition(
+        source: InputModeCoordinator.ToggleSource,
+        trace: ToggleLatencyTrace
+    ) {
         guard let session else {
             DebugLogger.event("toggle.ignored", metadata: [
                 .state("source", source.diagnosticLabel),
                 .state("reason", "no_active_session")
             ])
+            trace.mark(.ignored)
             return
         }
 
@@ -278,11 +283,18 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         ])
 
         composer.dismissHanjaCandidates()
+        #if DEBUG
+        Self.pendingToggleTrace?.mark(.superseded)
+        Self.pendingToggleTrace = trace
+        #endif
         session.finalize(reason: .modeTransition)
+        trace.mark(.finalize)
         composer.clearLocalBuffer()
         CursorRectResolver.invalidateCache()
         syncRomanKeyboardLayout(for: session.client, mode: nextMode, force: true)
+        trace.mark(.keyboardOverride)
         composer.setInputMode(nextMode)
+        trace.mark(.modeWrite)
     }
 
     // MARK: - IMK Lifecycle
@@ -452,6 +464,12 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         guard event.type == .keyDown else {
             return false
         }
+
+        #if DEBUG
+        let firstHandleTrace = Self.pendingToggleTrace
+        Self.pendingToggleTrace = nil
+        firstHandleTrace?.mark(.firstHandle)
+        #endif
 
         // 1. Resolve the session FIRST — all subsequent logic uses its fresh context.
         let session = ensureSession(for: client)

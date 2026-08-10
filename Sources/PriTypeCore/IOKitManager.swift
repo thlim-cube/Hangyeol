@@ -41,7 +41,7 @@ public final class IOKitManager: @unchecked Sendable {
     public var isRunning: Bool { manager != nil }
     
     /// Callback when toggle key is pressed
-    public var onRightCommandToggle: (@Sendable () -> Void)?
+    public var onRightCommandToggle: (@Sendable (ToggleLatencyTrace) -> Void)?
     
     /// Track one modifier-only down/chord/release cycle.
     private var togglePressState = ReleaseTogglePressState()
@@ -271,8 +271,9 @@ public final class IOKitManager: @unchecked Sendable {
                     .state("backend", "iokit")
                 ])
                 let callback = onRightCommandToggle
+                let trace = ToggleLatencyTrace.begin(source: .iokitFallback)
                 DispatchQueue.main.async {
-                    callback?()
+                    callback?(trace)
                 }
             case .released(shouldToggle: false):
                 DebugLogger.event("toggle.ignored", metadata: [
