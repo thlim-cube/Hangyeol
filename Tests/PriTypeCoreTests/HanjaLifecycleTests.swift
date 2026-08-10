@@ -374,7 +374,7 @@ struct HanjaCandidateLifecycleTests {
     }
 
     @Test("A candidate-consumed Tab and its duplicate keep the active session")
-    func candidateConsumedTabKeepsSession() {
+    func candidateConsumedTabKeepsSession() async {
         let presenter = MockHanjaCandidatePresenter()
         presenter.consumedKeyCodes = [KeyCode.tab]
         let client = FakeIMKTextInput()
@@ -409,6 +409,11 @@ struct HanjaCandidateLifecycleTests {
 
         #expect(handled)
         #expect(!session.contextNeedsRefresh)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
         #expect(session.registerKeyDown(tabSnapshot) == .consumeDuplicate)
         #expect(!session.contextNeedsRefresh)
         #expect(presenter.isVisible)

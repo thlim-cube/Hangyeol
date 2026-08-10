@@ -64,10 +64,12 @@ final class InputSession: @unchecked Sendable {
     // property of the host's event delivery, not of how we render composition.
     private var keyEventDeduplicator = KeyEventDeduplicator()
 
-    /// Set only when the original Tab in the current delivery turn was passed to
-    /// the host. A Hanja candidate panel can consume Tab for paging; its duplicate
-    /// must not be mistaken for field navigation.
-    private var originalTabPassedToHost = false
+    /// Disposition of the previous deduplication chain. Exact full-signature
+    /// duplicates remain recognizable after the same-turn guard expires, so retain
+    /// this until a real `.process` event replaces `KeyEventDeduplicator.previous`.
+    /// A Hanja candidate panel can consume Tab for paging; its duplicate must not be
+    /// mistaken for field navigation.
+    private var previousTabPassedToHost = false
 
     /// Increments whenever a re-analysis may refer to a different field. InputMethodKit
     /// can reuse one client object across fields, so object identity alone cannot prove
@@ -251,7 +253,7 @@ final class InputSession: @unchecked Sendable {
     /// deactivate or mouse callback before the next field reuses the same client.
     func observeHostNavigationKeyDown(keyCode: UInt16, passedToHost: Bool) {
         guard keyCode == KeyCode.tab, passedToHost else { return }
-        originalTabPassedToHost = true
+        previousTabPassedToHost = true
         markContextStale()
     }
 
@@ -263,8 +265,8 @@ final class InputSession: @unchecked Sendable {
     func registerKeyDown(_ snapshot: KeyDownSnapshot) -> KeyDownRoute {
         let route = keyEventDeduplicator.route(snapshot)
         if route == .process {
-            originalTabPassedToHost = false
-        } else if originalTabPassedToHost {
+            previousTabPassedToHost = false
+        } else if previousTabPassedToHost {
             // `handle` refreshes stale context before duplicate detection. A Tab
             // re-delivery can therefore restore the old field's classification
             // before the host applies its focus move. Reassert the navigation
@@ -279,7 +281,6 @@ final class InputSession: @unchecked Sendable {
                     return
                 }
                 self.keyEventDeduplicator.endDeliveryTurn(generation: generation)
-                self.originalTabPassedToHost = false
             }
         }
         return route

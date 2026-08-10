@@ -116,7 +116,7 @@ struct InputSessionFinalizeTests {
     }
 
     @Test("Tab navigation makes the reused client context untrusted")
-    func tabNavigationInvalidatesContext() {
+    func tabNavigationInvalidatesContext() async {
         let client = FakeIMKTextInput()
         let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
         let shortcutState = HanjaShortcutSessionStateStore(initialState: .nonsecure)
@@ -151,9 +151,11 @@ struct InputSessionFinalizeTests {
         #expect(shortcutState.state == .unknown)
         #expect(client.document == "ㄱ")
 
-        // IMK can re-enter `handle` before the host applies its focus move. The
-        // controller refreshes first, so this deliberately restores the old normal
-        // field context before duplicate detection consumes the second Tab.
+        // The same-turn guard expires on the main queue, but an exact full-signature
+        // duplicate remains deduplicated after that turn. Let the clear run before
+        // deliberately restoring the old field context; the host focus move is still
+        // pending when the duplicate arrives.
+        await flushMainQueue()
         #expect(session.refreshContextIfNeeded { _ in
             self.context(bundleId: client.bundleID, documentAccessSafe: true)
         })
@@ -184,6 +186,53 @@ struct InputSessionFinalizeTests {
         ))
         #expect(!session.finalize(reason: .appDeactivate))
         #expect(client.insertCalls.count == writeCountAtNavigation)
+    }
+
+    @Test("A new physical Tab and auto-repeat do not inherit duplicate disposition")
+    func newTabEventsDoNotInheritDuplicateDisposition() async {
+        let client = FakeIMKTextInput()
+        let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: "com.apple.TextEdit", documentAccessSafe: true),
+            composer: composer
+        )
+        _ = session.prepareForNonSecureClientWrites()
+
+        let originalTab = KeyDownSnapshot(timestamp: 100, keyCode: KeyCode.tab)
+        #expect(session.registerKeyDown(originalTab) == .process)
+        session.observeHostNavigationKeyDown(keyCode: KeyCode.tab, passedToHost: true)
+        await flushMainQueue()
+        #expect(session.refreshContextIfNeeded { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+
+        let fastPhysicalTab = KeyDownSnapshot(timestamp: 100.02, keyCode: KeyCode.tab)
+        #expect(session.registerKeyDown(fastPhysicalTab) == .process)
+        #expect(!session.contextNeedsRefresh)
+        session.observeHostNavigationKeyDown(keyCode: KeyCode.tab, passedToHost: true)
+        #expect(session.contextNeedsRefresh)
+        #expect(session.refreshContextIfNeeded { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+
+        let repeatedTab = KeyDownSnapshot(
+            timestamp: 100.03,
+            keyCode: KeyCode.tab,
+            isARepeat: true
+        )
+        #expect(session.registerKeyDown(repeatedTab) == .process)
+        #expect(!session.contextNeedsRefresh)
+        session.observeHostNavigationKeyDown(keyCode: KeyCode.tab, passedToHost: false)
+        #expect(!session.contextNeedsRefresh)
+    }
+
+    private func flushMainQueue() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
     }
 
     @Test("Direct insertion marked fallback commits through the marked path")
