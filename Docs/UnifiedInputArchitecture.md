@@ -45,8 +45,8 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
                                   │ performPriTypeModeTransition
         ┌─────────────────────────┼──────────────────────────┐
         ▼                         ▼                          ▼
-  commit 1회             overrideKeyboard(ABC/US)      composer.setInputMode
-  (조합 정리)             (영어 레이아웃 보정)          (★ 단일 진리)
+  commit 1회             overrideKeyboard(ABC/US)      InputModeStore 갱신
+  (세션 조합 정리)         (영어 레이아웃 보정)          (★ 프로세스 단일 진리)
                                             │
                           ┌─────────────────┴─────────────────┐
                      .korean                                .english
@@ -61,7 +61,7 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 
 과거 RollbackPlan은 Korean/English 두 가짜 모드 등록을 제안했지만 채택하지 않는다. 이유:
 
-- 메뉴바 모드 표시는 [StatusBarManager](../Sources/PriTypeCore/StatusBarManager.swift)의 `가`/`A`가 이미 담당한다.
+- 메뉴바 모드 표시는 [StatusBarManager](../Sources/PriTypeCore/StatusBarManager.swift)의 `한`/`A`가 담당한다.
   가짜 영어 모드의 유일한 명분(메뉴 표시)이 불필요하다.
 - 두 모드는 전환마다 `selectInputMode:`라는 **또 다른 비동기 IMK 호출을 hot path에 추가**한다.
   이는 `composer.inputMode`와 desync 가능 → 우리가 제거하려던 race를 재도입한다.
@@ -74,11 +74,12 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 
 | 상태 | 소유자 | 비고 |
 | --- | --- | --- |
-| 한/영 진리 | `HangulComposer.inputMode` | 단일 source of truth |
+| 한/영 진리 | process-global `InputModeStore` | 모든 세션 composer가 읽는 단일 source of truth |
+| 한글 조합 | session-owned `HangulComposer` | client 간 preedit/commit 상태를 공유하지 않음 |
 | 전환 정책(Caps Lock·fallback) | `InputModeCoordinator` | 한 곳에서만 판단 |
 | IMK 세션 edge(commit·override·layout) | `PriTypeInputController` | imperative 경계 |
 | 실제 TIS source 선택 | **macOS만** | Caps Lock 경로 한정 |
-| 사용자 표시(가/A) | `StatusBarManager` | |
+| 사용자 표시(한/A) | `StatusBarManager` | |
 | TIS 조회·stale 정리 | `InputSourceManager` | hot path 제외 |
 
 ---

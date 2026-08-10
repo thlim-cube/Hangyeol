@@ -13,6 +13,7 @@ enum CompositionFinalizeReason: String {
     case mouseCommit            // IMK commitComposition (click outside the composition)
     case modeTransition         // PriType custom toggle key (한/영)
     case keyboardLayoutChange   // 두벌식/세벌식 layout switch mid-composition
+    case sessionReplacement     // a different IMK client became active first
 }
 
 // MARK: - InputSession
@@ -32,7 +33,7 @@ final class InputSession: @unchecked Sendable {
     let client: IMKTextInput
     private(set) var context: ClientContext
     private(set) var adapter: BaseClientAdapter
-    private let composer: HangulComposer
+    let composer: HangulComposer
 
     /// Set in `deactivateServer`. The next `handle()` must re-analyze the context
     /// before trusting it: the same client object can come back focused on a
@@ -132,9 +133,9 @@ final class InputSession: @unchecked Sendable {
         }
     }
 
-    /// Stop watching for focus loss. MUST be called when this session stops being the
-    /// active one (deactivateServer): the composer is shared, so a stale observer
-    /// firing later would flush a NEWER session's composition into THIS client.
+    /// Stop watching for focus loss when this session stops being active. Each
+    /// session owns its composer, so a late callback cannot flush another session's
+    /// preedit, but disarming still prevents a redundant commit to an inactive host.
     func disarmFocusLossFinalizer() {
         if let observer = focusLossObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)

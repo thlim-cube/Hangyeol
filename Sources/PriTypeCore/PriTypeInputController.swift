@@ -38,16 +38,15 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     // Swift 6 compiler would reject @MainActor property access from these callbacks.
     //
     // IMK guarantees main thread execution by design:
-    // 1. `sharedComposer`: Created once at startup, accessed only via IMK callbacks
+    // 1. `sharedInputModeStore`: Process-wide Korean/English choice only
     // 2. `sharedController`: Read/written only in activateServer/deactivateServer
     //
     // This is a documented limitation of integrating Swift 6 strict concurrency with
     // legacy Objective-C frameworks like InputMethodKit.
 
-    /// Shared composer instance for toggle key handler access
-    /// - Warning: Access from main thread only (guaranteed by IMK, not compiler-enforced)
-    public static let sharedComposer = HangulComposer()
-    private var composer: HangulComposer { Self.sharedComposer }
+    /// The user's Korean/English choice survives input sessions. libhangul
+    /// composition state does not: every `InputSession` owns a separate composer.
+    private static let sharedInputModeStore = InputModeStore()
 
     /// Last active controller reference for external toggle access
     /// - Warning: Access from main thread only (guaranteed by IMK, not compiler-enforced)
@@ -80,6 +79,27 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
     // MARK: - Session Management
 
+    private func makeComposer() -> HangulComposer {
+        HangulComposer(
+            statusBar: StatusBarManager.shared,
+            configuration: ConfigurationManager.shared,
+            inputModeStore: Self.sharedInputModeStore
+        )
+    }
+
+    private func replaceSession(client: IMKTextInput, context: ClientContext) -> InputSession {
+        if let previous = session {
+            previous.finalize(reason: .sessionReplacement)
+            previous.disarmFocusLossFinalizer()
+        }
+
+        let newSession = InputSession(client: client, context: context, composer: makeComposer())
+        newSession.composer.updateKeyboardLayout(id: ConfigurationManager.shared.keyboardId)
+        session = newSession
+        newSession.armFocusLossFinalizer()
+        return newSession
+    }
+
     /// Return the session for `client`, creating or refreshing it as needed.
     /// - A different client object ⇒ new session (full context analysis).
     /// - Same client after deactivateServer ⇒ re-analyze (focus may have moved to a
@@ -98,37 +118,26 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         }
 
         DebugLogger.log("PriTypeInputController: client changed or no session, analyzing (Slow Path)")
-        let newSession = InputSession(
+        let newSession = replaceSession(
             client: client,
-            context: ClientContextDetector.analyze(client: client),
-            composer: composer
+            context: ClientContextDetector.analyze(client: client)
         )
-        session?.disarmFocusLossFinalizer()
-        session = newSession
-        newSession.armFocusLossFinalizer()
         syncRomanKeyboardLayout(for: client)
         return newSession
     }
 
-    /// Route a composition-ending event to the single finalize path. Prefers the
-    /// session (it knows the delivery mode — direct insertion must NOT re-insert);
-    /// falls back to a detached marked-text finalize when IMK hands us a sender the
-    /// session has never seen.
-    private func finalizeActiveComposition(sender: Any?, reason: CompositionFinalizeReason) {
+    /// Route a composition-ending event to the owning session only. A late callback
+    /// for an older client must never finalize the currently active client's composer.
+    @discardableResult
+    private func finalizeActiveComposition(sender: Any?, reason: CompositionFinalizeReason) -> Bool {
         let senderClient = sender as? IMKTextInput
-        if let session {
-            if session.adapter is DirectInsertionAdapter
-                || senderClient == nil
-                || session.matches(senderClient!) {
-                session.finalize(reason: reason)
-                return
-            }
+        guard let session else { return false }
+        if let senderClient, !session.matches(senderClient) {
+            DebugLogger.log("PriTypeInputController: ignored finalize for stale client reason=\(reason.rawValue)")
+            return false
         }
-        if let senderClient, composer.hasActiveComposition {
-            InputSession.finalizeMarkedComposition(composer: composer, client: senderClient, reason: reason)
-        } else {
-            session?.finalize(reason: reason)
-        }
+        session.finalize(reason: reason)
+        return true
     }
 
     // MARK: - Keyboard Layout (English pass-through support)
@@ -180,6 +189,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             return
         }
 
+        let composer = session.composer
         let nextMode = composer.inputMode.toggled
         DebugLogger.log("PriTypeInputController: mode transition \(composer.inputMode) -> \(nextMode) source=\(source)")
 
@@ -197,24 +207,27 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         assert(Thread.isMainThread, "IMK activateServer must run on main thread")
         #endif
         super.activateServer(sender)
-        // NOTE: Focus changes never reset `composer.inputMode`. Korean/English state
-        // is process-global and owned solely by the custom toggle path, so switching
-        // clients, tabs, or apps preserves the user's last mode.
+        // NOTE: Focus changes never reset the shared InputModeStore. Korean/English
+        // state is process-global, while libhangul composition remains session-owned.
         if let client = sender as? IMKTextInput {
             syncRomanKeyboardLayout(for: client, force: true)
 
-            // PERFORMANCE: Analyze context ONCE per activation (lightweight — no
-            // client IPC) and let `ensureSession` upgrade it lazily. This avoids
-            // heavy IPC calls (validAttributes, coordinates) on every focus change.
-            let newSession = InputSession(
-                client: client,
-                context: ClientContextDetector.analyzeForActivation(client: client),
-                composer: composer
-            )
-            session?.disarmFocusLossFinalizer()
-            session = newSession
-            newSession.armFocusLossFinalizer()
-            DebugLogger.log("Activated for client: \(newSession.context.bundleId) (Lightweight Context)")
+            if let session, session.matches(client) {
+                // Electron/Chromium may activate the same client repeatedly without
+                // deactivation. Keep that session's composer so an in-flight syllable
+                // is not reset; refresh expensive context once at the next keyDown.
+                session.markContextStale()
+                session.armFocusLossFinalizer()
+                DebugLogger.log("Reactivated existing input session")
+            } else {
+                // Analyze context lightly at activation and upgrade at first keyDown.
+                let newSession = replaceSession(
+                    client: client,
+                    context: ClientContextDetector.analyzeForActivation(client: client)
+                )
+                newSession.markContextStale()
+                DebugLogger.log("Activated new input session (lightweight context)")
+            }
         } else {
             // Fallback if sender is not IMKTextInput (rare). Keep the old session's
             // adapter alive for async Hanja callbacks, but stop trusting its context
@@ -226,9 +239,9 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // Set as active controller for toggle access
         Self.sharedController = self
 
-        // Ensure composer has correct layout (in case it changed while inactive)
+        // Ensure this session's composer has the current layout.
         let currentLayoutId = ConfigurationManager.shared.keyboardId
-        composer.updateKeyboardLayout(id: currentLayoutId)
+        session?.composer.updateKeyboardLayout(id: currentLayoutId)
 
         // Observe layout changes. IMK can call activateServer again without an
         // intervening deactivateServer (common in Electron/Chromium hosts), and
@@ -247,6 +260,8 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // fires earlier, while the host still accepts input); by the time
         // deactivateServer runs, native hosts like KakaoTalk have already resigned and
         // ignore insertText. If the observer already committed, this is a no-op.
+        let senderClient = sender as? IMKTextInput
+        let deactivatesCurrentSession = senderClient.map { session?.matches($0) == true } ?? true
         finalizeActiveComposition(sender: sender, reason: .deactivateServer)
         // NOTE: Do NOT clear localTextBuffer here.
         // Cross-app hanja leaking is prevented by bundleId matching in handleHanjaLookup(),
@@ -254,13 +269,17 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         super.deactivateServer(sender)
         // Keep the session alive — async Hanja callbacks need the adapter, and a
         // handle() arriving before the next activateServer needs the context. But:
-        // - disarm the focus-loss observer: the composer is shared, so a stale
-        //   observer firing later would flush a NEWER session's composition into
-        //   THIS client (the cross-app commit-leak class);
+        // - disarm the focus-loss observer so an inactive host never receives a
+        //   redundant late finalize (composition state itself is session-owned);
         // - mark the context stale so the next handle() re-analyzes it.
-        session?.disarmFocusLossFinalizer()
-        session?.markContextStale()
-        NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
+        if deactivatesCurrentSession {
+            session?.disarmFocusLossFinalizer()
+            session?.markContextStale()
+            NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
+            if Self.sharedController === self {
+                Self.sharedController = nil
+            }
+        }
     }
 
     @objc private func handleLayoutChange() {
@@ -268,8 +287,10 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         DebugLogger.log("PriTypeInputController: Layout changed to \(newId), updating composer")
         // Layout switches mid-composition end the composition like any other
         // session-ending event — through the single finalize path.
+        guard let session else { return }
+        let composer = session.composer
         if composer.keyboardLayoutId != newId {
-            session?.finalize(reason: .keyboardLayoutChange)
+            session.finalize(reason: .keyboardLayoutChange)
         }
         composer.updateKeyboardLayout(id: newId)
     }
@@ -295,6 +316,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
         // 1. Resolve the session FIRST — all subsequent logic uses its fresh context.
         let session = ensureSession(for: client)
+        let composer = session.composer
 
         // 2. Duplicate-keyDown suppression. Some hosts (observed: KakaoTalk) deliver
         // the same physical keyDown to the IME twice. That double-processes input —
@@ -366,9 +388,17 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         #if DEBUG
         assert(Thread.isMainThread, "IMK commitComposition must run on main thread")
         #endif
-        finalizeActiveComposition(sender: sender, reason: .mouseCommit)
-        composer.localTextBuffer = "" // Clear buffer when focus changes or user clicks elsewhere
+        if finalizeActiveComposition(sender: sender, reason: .mouseCommit) {
+            session?.composer.localTextBuffer = "" // Click invalidates this session's local context.
+        }
         super.commitComposition(sender)
+    }
+
+    /// Route an external Hanja shortcut to the active session's composer. The
+    /// composer is no longer process-global, so an inactive client cannot supply
+    /// stale preedit or local-buffer state.
+    public func triggerHanjaLookup() {
+        session?.composer.triggerHanjaLookup()
     }
 
     // MARK: - Input Method Menu

@@ -674,7 +674,7 @@ struct SettingsView: View {
                         InputModeCoordinator.shared.requestToggle(source: .customKey)
                     }
                     RightCommandSuppressor.shared.onHanjaLookup = {
-                        PriTypeInputController.sharedComposer.triggerHanjaLookup()
+                        PriTypeInputController.sharedController?.triggerHanjaLookup()
                     }
                     let started = RightCommandSuppressor.shared.start()
                     DebugLogger.log("Accessibility granted: CGEventTap start = \(started)")

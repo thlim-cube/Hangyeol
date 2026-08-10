@@ -11,8 +11,9 @@ import Foundation
 /// unit-test time (no device / re-login needed).
 ///
 /// Single-mode design: PriType registers only Korean (smKorean). Korean/English is
-/// process-global `HangulComposer.inputMode` state so a new IMK client or tab cannot
-/// restore a session-scoped English child mode back to Korean.
+/// process-global `InputModeStore` state so a new IMK client or tab cannot restore a
+/// session-scoped English child mode back to Korean. libhangul composition itself is
+/// session-owned.
 @Suite("Registration Contract (Info.plist)")
 struct RegistrationContractTests {
 

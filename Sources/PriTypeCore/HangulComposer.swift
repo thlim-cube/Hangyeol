@@ -31,10 +31,12 @@ public class HangulComposer: @unchecked Sendable {
     
     // MARK: - Public Properties
     
-    /// The current input mode (Korean or English)
+    /// The process-wide input mode (Korean or English).
     ///
-    /// When in `.english` mode, all keystrokes are passed through unchanged.
-    public private(set) var inputMode: InputMode = .korean
+    /// Composition state remains local to this composer, but every production
+    /// session reads the same `InputModeStore` so focus changes preserve the user's
+    /// last mode without sharing libhangul preedit state across clients.
+    public var inputMode: InputMode { inputModeStore.mode }
 
     /// Whether the underlying Hangul engine currently has active composition.
     public var hasActiveComposition: Bool {
@@ -48,6 +50,10 @@ public class HangulComposer: @unchecked Sendable {
     
     /// Configuration provider (injected for testability)
     private let configuration: ConfigurationProviding
+
+    /// Shared only in production controllers. Standalone/test composers receive a
+    /// fresh store so their mode state cannot leak into one another.
+    private let inputModeStore: InputModeStore
     
     // MARK: - Private Properties
     
@@ -106,12 +112,25 @@ public class HangulComposer: @unchecked Sendable {
     /// - Parameters:
     ///   - statusBar: Status bar updater (defaults to shared manager)
     ///   - configuration: Configuration provider (defaults to shared manager)
-    public init(
+    public convenience init(
         statusBar: StatusBarUpdating = StatusBarManager.shared,
         configuration: ConfigurationProviding = ConfigurationManager.shared
     ) {
+        self.init(
+            statusBar: statusBar,
+            configuration: configuration,
+            inputModeStore: InputModeStore()
+        )
+    }
+
+    init(
+        statusBar: StatusBarUpdating,
+        configuration: ConfigurationProviding,
+        inputModeStore: InputModeStore
+    ) {
         self.statusBar = statusBar
         self.configuration = configuration
+        self.inputModeStore = inputModeStore
         self.textConvenience = TextConvenienceHandler(
             isDoubleSpacePeriodEnabled: {
                 configuration.doubleSpacePeriodEnabled
@@ -179,7 +198,7 @@ public class HangulComposer: @unchecked Sendable {
             DebugLogger.log("Composition committed before explicit mode switch")
         }
 
-        inputMode = mode
+        inputModeStore.setMode(mode)
         localTextBuffer = ""
         textConvenience.resetSpaceState()
         statusBar.setMode(inputMode)
