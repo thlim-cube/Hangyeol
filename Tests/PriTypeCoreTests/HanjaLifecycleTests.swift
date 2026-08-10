@@ -755,6 +755,92 @@ struct HanjaCandidateLifecycleTests {
         #expect(!session.context.isLightweight)
     }
 
+    @Test("Proven deactivate discards Hanja state before same-client field reuse")
+    func deactivateDiscardsFieldLocalHanjaState() throws {
+        CursorRectResolver.invalidateCache()
+        defer { CursorRectResolver.invalidateCache() }
+
+        let presenter = MockHanjaCandidatePresenter()
+        let client = FakeIMKTextInput()
+        let composer = makeComposer(presenter: presenter)
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: composer
+        )
+        _ = session.prepareForNonSecureClientWrites()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: session.adapter
+        )
+        composer.triggerHanjaLookup()
+        let staleSelection = try #require(presenter.selectionCallbacks.first)
+        let fieldAEntries = try #require(presenter.shownEntries.last)
+        #expect(!fieldAEntries.isEmpty)
+        #expect(fieldAEntries.allSatisfy { $0.hangul == "가" })
+        #expect(presenter.isVisible)
+
+        // `deactivateServer` finalizes first, then closes the proven field boundary.
+        _ = session.finalize(reason: .deactivateServer)
+        session.finishHostCommitBoundary()
+        session.disarmFocusLossFinalizer()
+
+        #expect(composer.localTextBuffer.isEmpty)
+        #expect(!presenter.isVisible)
+
+        client.document = "나"
+        client.markedText = ""
+        client.markedRangeValue = NSRange(location: NSNotFound, length: 0)
+        client.selectedRangeValue = NSRange(location: 1, length: 0)
+        #expect(session.refreshContextIfNeeded { _ in
+            context(bundleId: client.bundleID)
+        })
+
+        let presentationCount = presenter.shownEntries.count
+        #expect(PriTypeInputController.routeExternalHanjaLookup(
+            in: session,
+            isSecureInput: false,
+            reconcileOwnership: {},
+            performLookup: { $0.triggerHanjaLookup() }
+        ))
+        #expect(presenter.shownEntries.count == presentationCount + 1)
+        let fieldBEntries = try #require(presenter.shownEntries.last)
+        #expect(!fieldBEntries.isEmpty)
+        #expect(fieldBEntries.allSatisfy { $0.hangul == "나" })
+
+        let insertCount = client.insertCalls.count
+        staleSelection(HanjaEntry(hangul: "가", hanja: "可", meaning: "synthetic test"))
+        #expect(client.insertCalls.count == insertCount)
+        #expect(client.document == "나")
+    }
+
+    @Test("Same-client repeated activation without deactivate preserves Hanja buffer")
+    func repeatedActivationPreservesFieldLocalHanjaState() {
+        let presenter = MockHanjaCandidatePresenter()
+        let client = FakeIMKTextInput()
+        let composer = makeComposer(presenter: presenter)
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: composer
+        )
+        composer.localTextBuffer = "가"
+
+        composer.dismissHanjaCandidates()
+        CursorRectResolver.invalidateCache()
+        session.markContextStale()
+        #expect(session.refreshContextIfNeeded { _ in
+            context(bundleId: client.bundleID)
+        })
+
+        #expect(composer.localTextBuffer == "가")
+    }
+
     private func makeComposer(presenter: MockHanjaCandidatePresenter) -> HangulComposer {
         HangulComposer(
             statusBar: MockStatusBar(),
@@ -801,6 +887,7 @@ private final class MockHanjaCandidatePresenter: HanjaCandidatePresenting, @unch
     }
     var consumedKeyCodes: Set<UInt16> = []
     private(set) var dismissCount = 0
+    private(set) var shownEntries: [[HanjaEntry]] = []
     private(set) var selectionCallbacks: [@Sendable (HanjaEntry) -> Void] = []
     private(set) var dismissCallbacks: [@Sendable () -> Void] = []
     private var presentationID: HanjaCandidatePresentationID?
@@ -813,6 +900,7 @@ private final class MockHanjaCandidatePresenter: HanjaCandidatePresenting, @unch
         onDismiss: @escaping @Sendable () -> Void
     ) {
         self.presentationID = presentationID
+        shownEntries.append(entries)
         isVisible = !entries.isEmpty
         selectionCallbacks.append(onSelect)
         dismissCallbacks.append(onDismiss)

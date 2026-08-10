@@ -315,9 +315,10 @@ final class InputSession: @unchecked Sendable {
         return didFinalize
     }
 
-    /// Finish IMK's host-driven commit boundary after `finalize` has had its early
-    /// chance to commit into the old field. The next field can reuse this client, so
-    /// both context and external-shortcut classification become untrusted.
+    /// Finish a proven IMK field boundary after `finalize` has had its early chance
+    /// to commit into the old field. Host-driven commit and `deactivateServer` can
+    /// both reuse this client for a different field, so field-local Hanja/cursor
+    /// context and external-shortcut classification become untrusted together.
     func finishHostCommitBoundary() {
         composer.dismissHanjaCandidates()
         CursorRectResolver.invalidateCache()

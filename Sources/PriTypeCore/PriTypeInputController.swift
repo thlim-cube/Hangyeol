@@ -510,20 +510,15 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             publishHanjaShortcutSessionState(.unknown)
         }
         finalizeActiveComposition(sender: sender, reason: .deactivateServer)
-        // NOTE: Do NOT clear localTextBuffer here.
-        // Cross-app hanja leaking is prevented by bundleId matching in handleHanjaLookup(),
-        // not by clearing the buffer. Clearing would make same-app hanja lookup impossible.
         super.deactivateServer(sender)
         // Keep the session until replacement so handle() can refresh it even if it
-        // arrives before the next activateServer. Candidate callbacks were invalidated above.
+        // arrives before the next activateServer.
         // - disarm the focus-loss observer so an inactive host never receives a
         //   redundant late finalize (composition state itself is session-owned);
-        // - mark the context stale so the next handle() re-analyzes it.
+        // - drop field-local Hanja/cursor state and re-analyze on the next input.
         if deactivatesCurrentSession {
-            session?.composer.dismissHanjaCandidates()
-            CursorRectResolver.invalidateCache()
+            session?.finishHostCommitBoundary()
             session?.disarmFocusLossFinalizer()
-            session?.markContextStale()
             NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
             NotificationCenter.default.removeObserver(self, name: .romanKeyboardLayoutPreferenceChanged, object: nil)
             Self.activeControllerRegistry.release(self)
