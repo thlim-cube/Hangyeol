@@ -156,9 +156,13 @@ activation은 마지막 mode를 유지한다. 단, macOS가 Caps Lock 전환을 
 Tap/IOKit  ──requestToggle(source)──►  InputModeCoordinator
    InputModeCoordinator: Caps Lock 소유면 거부, active controller 없으면 거부
    InputModeCoordinator ──performModeTransition──►  PriTypeInputController
-      Controller: commit active composition (1회)
-      Controller: overrideKeyboardWithKeyboardNamed(ABC/US 또는 opt-in 현재 Roman layout)
-      Controller: composer.setInputMode(next)   ← 단일 진리 갱신
+      Controller: stale session context를 현재 field 기준으로 갱신
+      비보안: commit active composition (1회)
+             → overrideKeyboardWithKeyboardNamed(ABC/US 또는 opt-in 현재 Roman layout)
+             → composer.setInputMode(next)
+      Secure Input: client write 없이 composition discard
+                    → composer.setInputMode(next)와 상태 표시 갱신
+                    → Roman layout sync는 다음 비보안 입력 직전까지 보류
 
 TIS/소유권 알림 ──► InputModeOwnershipTracker
    경계가 아니거나 TIS 조회 실패: no-op, 상태 추정 금지
@@ -168,12 +172,13 @@ TIS/소유권 알림 ──► InputModeOwnershipTracker
 다음 PriType keyDown
    1. session/context 확인 및 중복 keyDown 판정
    2. Secure Input 검사
-   3. pending이 있으면 controller가:
+   3. pending 소유권 정합화가 있으면 controller가:
       - session.finalize(.inputSourceOwnership)
       - Hanja/local context 정리
       - Roman keyboard override를 Korean 기준으로 동기화
       - InputModeStore를 .korean으로 갱신
-   4. 현재 keyDown 정상 조합
+   4. 비보안이면 secure custom toggle에서 보류한 Roman layout을 현재 mode 기준으로 동기화
+   5. 현재 keyDown 정상 조합
 ```
 
 실패 처리:

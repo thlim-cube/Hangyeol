@@ -92,7 +92,7 @@ keyDown ──► PriTypeInputController.handle()
 
 `RightCommandSuppressor`가 `CGEventTap`으로 시스템 레벨 키 이벤트를 가로채서 사용자가 설정한 전환키(기본: 우측 Command)와 한자키(기본: 우측 Option)를 처리한다. Key Recorder 방식으로 아무 키나 등록할 수 있다. `CGEventTap`은 일시 비활성화 시 물리 modifier 상태를 다시 동기화해 재활성화한다. 60초 안에 세 번째 비활성화가 발생하면 tap 자원을 먼저 완전히 해제한 뒤 IOKit으로 영구 인계한다. `ToggleMonitorStatusStore`가 시작 권한과 상태를 직렬화하므로 두 backend가 동시에 입력을 소유하지 않는다. IOKit fallback은 HID 매핑 가능한 modifier-only 바인딩만 지원하며, regular/combo 바인딩은 임의로 흉내 내지 않고 상태바의 제한 사항으로 노출한다.
 
-현재 한/영 전환 구조의 정식 명세는 [UnifiedInputArchitecture.md](Docs/UnifiedInputArchitecture.md)다(선택지 비교 원본은 [InputArchitectureHybridRollbackPlan.md](Docs/InputArchitectureHybridRollbackPlan.md), superseded). 핵심은 custom 전환키 경로에서 실제 ABC 입력 소스를 선택하지 않고, PriType 내부 mode 전환을 단일 트랜잭션으로 처리하는 것이다. 이 경로에서는 PriType 단일 입력 소스가 IMK 세션을 계속 소유하고, 영어는 조합 없이 raw key를 그대로 pass-through한다. Caps Lock 기반 실제 입력 소스 전환은 macOS가 소유한다.
+현재 한/영 전환 구조의 정식 명세는 [UnifiedInputArchitecture.md](Docs/UnifiedInputArchitecture.md)다(선택지 비교 원본은 [InputArchitectureHybridRollbackPlan.md](Docs/InputArchitectureHybridRollbackPlan.md), superseded). 핵심은 custom 전환키 경로에서 실제 ABC 입력 소스를 선택하지 않고, PriType 내부 mode 전환을 단일 트랜잭션으로 처리하는 것이다. 이 경로에서는 PriType 단일 입력 소스가 IMK 세션을 계속 소유하고, 영어는 조합 없이 raw key를 그대로 pass-through한다. 전환 요청은 stale session context를 먼저 갱신하며, Secure Input이면 client를 건드리지 않고 내부 mode만 바꾼 뒤 Roman layout 동기화를 다음 비보안 입력 직전까지 미룬다. Caps Lock 기반 실제 입력 소스 전환은 macOS가 소유한다.
 
 ```mermaid
 flowchart TD
@@ -100,9 +100,15 @@ flowchart TD
     B --> C{"Caps Lock 입력 소스 전환 켜짐?"}
     C -->|"yes"| D["custom 전환 무시"]
     C -->|"no"| E["PriTypeInputController"]
-    E --> F["active composition commit"]
+    E --> L["session context 갱신"]
+    L --> M{"Secure Input?"}
+    M -->|"no"| F["active composition commit"]
     F --> G["ABC/US keyboard override"]
     G --> H["HangulComposer.setInputMode"]
+    M -->|"yes"| N["write-free composition discard"]
+    N --> O["HangulComposer.setInputMode"]
+    O --> P["Roman layout sync 보류"]
+    O --> I
     H --> I{"mode"}
     I -->|"korean"| J["libhangul 조합"]
     I -->|"english"| K["순수 pass-through (return false), macOS가 영문 처리"]

@@ -69,6 +69,14 @@ final class InputSession: @unchecked Sendable {
     /// ordinary lifecycle finalizers, which do not prove that client writes are safe.
     private var hasDeferredOwnedMarkedTextCleanup = false
 
+    /// A custom toggle changed PriType's internal mode while Secure Input prevented
+    /// `overrideKeyboardWithKeyboardNamed:`. The next nonsecure input boundary must
+    /// synchronize the Roman layout before the newly selected mode handles a key.
+    private var needsDeferredRomanKeyboardLayoutSync = false
+    #if DEBUG
+    private var deferredRomanKeyboardLayoutTrace: ToggleLatencyTrace?
+    #endif
+
     init(client: IMKTextInput, context: ClientContext, composer: HangulComposer) {
         self.client = client
         self.context = context
@@ -77,6 +85,7 @@ final class InputSession: @unchecked Sendable {
     }
 
     deinit {
+        cancelDeferredRomanKeyboardLayoutSync()
         disarmFocusLossFinalizer()
     }
 
@@ -112,6 +121,22 @@ final class InputSession: @unchecked Sendable {
         using analyze: (IMKTextInput) -> ClientContext
     ) -> Bool {
         guard contextNeedsRefresh else { return false }
+        refreshContext(analyze(client))
+        return true
+    }
+
+    /// Refresh the current field at a key or external-action boundary. Finder's
+    /// activation snapshot is intentionally lightweight, so refresh it even when the
+    /// session was not explicitly marked stale.
+    @discardableResult
+    func refreshContextForInputBoundary(
+        using analyze: (IMKTextInput) -> ClientContext
+    ) -> Bool {
+        if refreshContextIfNeeded(using: analyze) {
+            armFocusLossFinalizer()
+            return true
+        }
+        guard context.isLightweight, context.isFinder else { return false }
         refreshContext(analyze(client))
         return true
     }
@@ -301,6 +326,49 @@ final class InputSession: @unchecked Sendable {
         client.insertText("", replacementRange: markedRange)
         DebugLogger.event("composition.deferred_marked_fallback_cleared")
         return true
+    }
+
+    /// Remember that the secure toggle's mode write still needs a client keyboard
+    /// layout sync. Repeated secure toggles collapse to the latest mode and trace.
+    func deferRomanKeyboardLayoutSync(trace: ToggleLatencyTrace) {
+        #if DEBUG
+        deferredRomanKeyboardLayoutTrace?.mark(.superseded)
+        deferredRomanKeyboardLayoutTrace = trace
+        #endif
+        needsDeferredRomanKeyboardLayoutSync = true
+    }
+
+    /// Apply a secure-toggle layout sync only after the current field has passed the
+    /// nonsecure gate. Clear state before the callback so a reentrant toggle cannot be
+    /// overwritten by the older request completing.
+    @discardableResult
+    func reconcileDeferredRomanKeyboardLayoutSync(
+        using synchronize: (IMKTextInput, InputMode) -> Void
+    ) -> Bool {
+        guard needsDeferredRomanKeyboardLayoutSync else { return false }
+        needsDeferredRomanKeyboardLayoutSync = false
+        #if DEBUG
+        let trace = deferredRomanKeyboardLayoutTrace
+        deferredRomanKeyboardLayoutTrace = nil
+        #endif
+
+        synchronize(client, composer.inputMode)
+        #if DEBUG
+        trace?.mark(.keyboardOverride)
+        #endif
+        return true
+    }
+
+    /// A later nonsecure toggle performs its own forced layout sync, superseding any
+    /// layout work deferred by an earlier secure toggle.
+    func cancelDeferredRomanKeyboardLayoutSync() {
+        guard needsDeferredRomanKeyboardLayoutSync else { return }
+        needsDeferredRomanKeyboardLayoutSync = false
+        #if DEBUG
+        let trace = deferredRomanKeyboardLayoutTrace
+        deferredRomanKeyboardLayoutTrace = nil
+        trace?.mark(.superseded)
+        #endif
     }
 
     /// The marked-text finalize, callable against any client. `PriTypeInputController`

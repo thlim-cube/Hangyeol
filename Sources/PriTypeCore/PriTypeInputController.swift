@@ -140,13 +140,9 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     ///   field can only be told apart by coordinates at keystroke time).
     private func ensureSession(for client: IMKTextInput) -> InputSession {
         if let session, session.matches(client) {
-            if session.refreshContextIfNeeded(using: { client in
+            _ = session.refreshContextForInputBoundary(using: { client in
                 ClientContextDetector.analyze(client: client)
-            }) {
-                session.armFocusLossFinalizer()
-            } else if session.context.isLightweight && session.context.isFinder {
-                session.refreshContext(ClientContextDetector.analyze(client: client))
-            }
+            })
             return session
         }
 
@@ -286,7 +282,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         source: InputModeCoordinator.ToggleSource,
         trace: ToggleLatencyTrace
     ) {
-        guard let session else {
+        guard let activeSession = session else {
             DebugLogger.event("toggle.ignored", metadata: [
                 .state("source", source.diagnosticLabel),
                 .state("reason", "no_active_session")
@@ -294,6 +290,38 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             trace.mark(.ignored)
             return
         }
+
+        _ = Self.routeExternalModeTransition(
+            in: activeSession,
+            source: source,
+            trace: trace,
+            analyzeContext: { client in
+                ClientContextDetector.analyze(client: client)
+            },
+            shouldPassThroughSecureInput: { client, context in
+                self.shouldPassThroughSecureInput(client: client, context: context)
+            },
+            syncRomanKeyboardLayout: { client, mode in
+                self.syncRomanKeyboardLayout(for: client, mode: mode, force: true)
+            }
+        )
+    }
+
+    /// Route a physical custom toggle through the same refresh-before-secure-gate
+    /// ordering as external Hanja. Secure fields receive no client writes or keyboard
+    /// override: the composition is discarded, the user's mode intent is retained,
+    /// and layout synchronization is deferred to the next nonsecure boundary.
+    /// Returns true only when the normal client-side transition ran.
+    @discardableResult
+    static func routeExternalModeTransition(
+        in session: InputSession,
+        source: InputModeCoordinator.ToggleSource,
+        trace: ToggleLatencyTrace,
+        analyzeContext: (IMKTextInput) -> ClientContext,
+        shouldPassThroughSecureInput: (IMKTextInput, ClientContext) -> Bool,
+        syncRomanKeyboardLayout: (IMKTextInput, InputMode) -> Void
+    ) -> Bool {
+        _ = session.refreshContextForInputBoundary(using: analyzeContext)
 
         let composer = session.composer
         let nextMode = composer.inputMode.toggled
@@ -308,14 +336,27 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         Self.pendingToggleTrace?.mark(.superseded)
         Self.pendingToggleTrace = trace
         #endif
+
+        if shouldPassThroughSecureInput(session.client, session.context) {
+            session.discardForSecureInput()
+            session.deferRomanKeyboardLayoutSync(trace: trace)
+            composer.setInputMode(nextMode)
+            trace.mark(.modeWrite)
+            return false
+        }
+
+        _ = session.reconcileDeferredMarkedTextAfterSecureInput()
+        session.ensureAdapterMatchesPolicy()
+        session.cancelDeferredRomanKeyboardLayoutSync()
         session.finalize(reason: .modeTransition)
         trace.mark(.finalize)
         composer.clearLocalBuffer()
         CursorRectResolver.invalidateCache()
-        syncRomanKeyboardLayout(for: session.client, mode: nextMode, force: true)
+        syncRomanKeyboardLayout(session.client, nextMode)
         trace.mark(.keyboardOverride)
         composer.setInputMode(nextMode)
         trace.mark(.modeWrite)
+        return true
     }
 
     /// Resolve a previously observed macOS-owned source boundary. This is called
@@ -564,6 +605,13 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // client check. This makes the first normal key use Korean without allowing
         // an observer or activation callback to insert text into a password field.
         _ = InputModeCoordinator.shared.reconcileSystemOwnershipIfNeeded(for: self)
+
+        // A custom toggle inside Secure Input changes only PriType's internal mode.
+        // Synchronize the client keyboard layout now that this field passed the gate,
+        // before the first key is interpreted in that mode.
+        _ = session.reconcileDeferredRomanKeyboardLayoutSync { client, mode in
+            self.syncRomanKeyboardLayout(for: client, mode: mode, force: true)
+        }
 
         // 5. The delivery policy can flip mid-session (experimental flag toggled in
         // settings); make sure the adapter still matches before composing into it.
