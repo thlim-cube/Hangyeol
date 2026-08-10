@@ -209,12 +209,32 @@ struct KeyEventDedupTests {
         #expect(!KeyEventDedup.isDuplicate(snap(100.01, 40), previous: snap(100.0, 51)))
     }
 
-    @Test("Auto-repeat events are never treated as duplicates")
-    func autoRepeatExempt() {
-        // new is a repeat
+    @Test("Auto-repeat boundaries and distinct ticks remain real events")
+    func autoRepeatBoundaries() {
+        // non-repeat -> repeat
         #expect(!KeyEventDedup.isDuplicate(snap(100.01, 51, true), previous: snap(100.0, 51, false)))
-        // previous was a repeat (held key)
+        // repeat -> non-repeat
         #expect(!KeyEventDedup.isDuplicate(snap(100.01, 51, false), previous: snap(100.0, 51, true)))
+        // successive hardware repeat ticks
+        #expect(!KeyEventDedup.isDuplicate(snap(100.02, 51, true), previous: snap(100.01, 51, true)))
+    }
+
+    @Test("An exact auto-repeat re-delivery is a duplicate")
+    func autoRepeatDuplicate() {
+        #expect(KeyEventDedup.isDuplicate(
+            snap(100.01, 51, true, modifiers: 2, windowNumber: 3, keyboardType: 40),
+            previous: snap(100.01, 51, true, modifiers: 2, windowNumber: 3, keyboardType: 40)
+        ))
+
+        let event = TestEventFactory.keyEvent(
+            char: "\u{7F}",
+            keyCode: KeyCode.backspace,
+            isARepeat: true
+        )!
+        #expect(KeyEventDedup.isDuplicate(
+            KeyDownSnapshot(event: event),
+            previous: KeyDownSnapshot(event: event)
+        ))
     }
 
     @Test("No previous event ⇒ not a duplicate")
@@ -272,6 +292,17 @@ struct KeyEventDedupTests {
         #expect(deduplicator.route(snap(100.02, 40)) == .consumeDuplicate)
         deduplicator.endDeliveryTurn(generation: currentGeneration)
         #expect(deduplicator.route(snap(100.03, 40)) == .process)
+    }
+
+    @Test("Repeat ticks break the timestamp-independent non-repeat guard")
+    func autoRepeatBreaksSameTurnGuard() {
+        var deduplicator = KeyEventDeduplicator()
+
+        #expect(deduplicator.route(snap(100.0, 51)) == .process)
+        #expect(deduplicator.route(snap(100.01, 51, true)) == .process)
+        #expect(deduplicator.route(snap(100.01, 51, true)) == .consumeDuplicate)
+        #expect(deduplicator.route(snap(100.02, 51, true)) == .process)
+        #expect(deduplicator.route(snap(100.03, 51)) == .process)
     }
 }
 

@@ -179,17 +179,31 @@ struct ReturnDeliveryTests {
     func autoRepeat() {
         let pipeline = ReturnDeliveryHarness()
         let first = TestEventFactory.keyEvent(char: "\r", keyCode: KeyCode.return, timestamp: 10)!
-        let repeated = TestEventFactory.keyEvent(
+        let firstRepeatTick = TestEventFactory.keyEvent(
             char: "\r",
             keyCode: KeyCode.return,
-            timestamp: 10,
+            timestamp: 10.01,
+            isARepeat: true
+        )!
+        let rewrappedFirstTick = TestEventFactory.keyEvent(
+            char: "\r",
+            keyCode: KeyCode.return,
+            timestamp: 10.01,
+            isARepeat: true
+        )!
+        let secondRepeatTick = TestEventFactory.keyEvent(
+            char: "\r",
+            keyCode: KeyCode.return,
+            timestamp: 10.02,
             isARepeat: true
         )!
 
         #expect(!pipeline.dispatch(first))
-        #expect(!pipeline.dispatch(repeated))
-        #expect(pipeline.host.document == "\n\n")
-        #expect(pipeline.host.defaultReturnActionCount == 2)
+        #expect(!pipeline.dispatch(firstRepeatTick))
+        #expect(pipeline.dispatch(rewrappedFirstTick))
+        #expect(!pipeline.dispatch(secondRepeatTick))
+        #expect(pipeline.host.document == "\n\n\n")
+        #expect(pipeline.host.defaultReturnActionCount == 3)
     }
 
     @Test("Modifier change distinguishes a new physical Return")

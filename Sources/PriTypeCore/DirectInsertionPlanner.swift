@@ -52,16 +52,11 @@ struct KeyDownSnapshot: Equatable {
 enum KeyEventDedup {
     static func isDuplicate(_ event: KeyDownSnapshot, previous: KeyDownSnapshot?) -> Bool {
         guard let previous,
-              !event.isARepeat, !previous.isARepeat else { return false }
+              event.isARepeat == previous.isARepeat else { return false }
 
         if let eventIdentity = event.eventIdentity,
            let previousIdentity = previous.eventIdentity,
-           eventIdentity == previousIdentity,
-           event.timestamp == previous.timestamp,
-           event.keyCode == previous.keyCode,
-           event.modifierFlags == previous.modifierFlags,
-           event.windowNumber == previous.windowNumber,
-           event.keyboardType == previous.keyboardType {
+           eventIdentity == previousIdentity {
             return true
         }
 
@@ -132,6 +127,10 @@ struct KeyEventDeduplicator {
         if !event.isARepeat {
             deliveryTurnGeneration &+= 1
             eventInCurrentDeliveryTurn = event
+        } else {
+            // A real repeat tick advances the event chain. It must not leave an
+            // earlier non-repeat eligible for timestamp-independent re-entry matching.
+            eventInCurrentDeliveryTurn = nil
         }
         return .process
     }
