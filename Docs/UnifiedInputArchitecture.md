@@ -52,7 +52,7 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
                                             │
                           ┌─────────────────┴─────────────────┐
                      .korean                                .english
-              libhangul 조합 + marked text          순수 pass-through (return false)
+              libhangul 조합 + marked text          기본 pure pass-through (return false)
                                                     StatusBar "A", macOS가 영문 처리
 ```
 

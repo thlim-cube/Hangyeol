@@ -53,16 +53,25 @@ struct ConfigurationManagerTests {
         let dvorak = "com.apple.keylayout.Dvorak"
 
         #expect(PriTypeInputController.preferredRomanKeyboardLayoutID(
+            inputMode: .english,
             respectCurrentLayout: false,
             currentASCIILayoutID: dvorak,
             forcedLayoutID: abc
         ) == abc)
         #expect(PriTypeInputController.preferredRomanKeyboardLayoutID(
+            inputMode: .english,
             respectCurrentLayout: true,
             currentASCIILayoutID: dvorak,
             forcedLayoutID: abc
         ) == dvorak)
         #expect(PriTypeInputController.preferredRomanKeyboardLayoutID(
+            inputMode: .korean,
+            respectCurrentLayout: true,
+            currentASCIILayoutID: dvorak,
+            forcedLayoutID: abc
+        ) == abc)
+        #expect(PriTypeInputController.preferredRomanKeyboardLayoutID(
+            inputMode: .english,
             respectCurrentLayout: true,
             currentASCIILayoutID: nil,
             forcedLayoutID: abc

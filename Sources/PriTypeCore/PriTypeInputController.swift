@@ -143,7 +143,11 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
     // MARK: - Keyboard Layout (English pass-through support)
 
-    private func syncRomanKeyboardLayout(for client: IMKTextInput, force: Bool = false) {
+    private func syncRomanKeyboardLayout(
+        for client: IMKTextInput,
+        mode: InputMode? = nil,
+        force: Bool = false
+    ) {
         let clientID = ObjectIdentifier(client as AnyObject)
         let now = CFAbsoluteTimeGetCurrent()
         guard force || lastKeyboardOverrideClientID != clientID || now - lastKeyboardOverrideTime > 0.5 else {
@@ -157,9 +161,13 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             return
         }
 
+        let targetMode = mode ?? composer.inputMode
         let respectCurrentLayout = ConfigurationManager.shared.respectCurrentRomanKeyboardLayout
-        let currentASCIILayoutID = respectCurrentLayout ? Self.currentASCIICapableKeyboardLayoutID() : nil
+        let currentASCIILayoutID = respectCurrentLayout && targetMode == .english
+            ? Self.currentASCIICapableKeyboardLayoutID()
+            : nil
         let layoutID = Self.preferredRomanKeyboardLayoutID(
+            inputMode: targetMode,
             respectCurrentLayout: respectCurrentLayout,
             currentASCIILayoutID: currentASCIILayoutID,
             forcedLayoutID: Self.forcedRomanKeyboardLayoutID
@@ -171,11 +179,13 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     }
 
     internal static func preferredRomanKeyboardLayoutID(
+        inputMode: InputMode,
         respectCurrentLayout: Bool,
         currentASCIILayoutID: String?,
         forcedLayoutID: String
     ) -> String {
-        guard respectCurrentLayout,
+        guard inputMode == .english,
+              respectCurrentLayout,
               let currentASCIILayoutID,
               !currentASCIILayoutID.isEmpty else {
             return forcedLayoutID
@@ -243,7 +253,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
         session.finalize(reason: .modeTransition)
         composer.clearLocalBuffer()
-        syncRomanKeyboardLayout(for: session.client, force: true)
+        syncRomanKeyboardLayout(for: session.client, mode: nextMode, force: true)
         composer.setInputMode(nextMode)
     }
 

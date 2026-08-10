@@ -9,7 +9,7 @@
 
 ## 0. 결정된 방향 (재론의 금지)
 
-PriType는 **하나의 macOS 입력 소스**(`com.pritype.inputmethod.v2`, `smKorean`)로 등록되고, 한/영은 **내부 상태**(`HangulComposer.inputMode`)로만 전환한다. 영어는 **순수 패스‑스루**(PriType가 아무것도 삽입하지 않고 `handle()`이 `false` 반환) + **ABC/US 키보드 레이아웃 오버라이드**로 처리한다.
+PriType는 **하나의 macOS 입력 소스**(`com.pritype.inputmethod.v2`, `smKorean`)로 등록되고, 한/영은 **내부 상태**(`HangulComposer.inputMode`)로만 전환한다. 영어는 기본적으로 **순수 패스‑스루**(PriType이 아무것도 삽입하지 않고 `handle()`이 `false` 반환)이며, ABC/US 또는 사용자가 명시적으로 선택한 현재 Roman keyboard layout을 적용한다.
 
 토글 핫패스에서 **`TISSelectInputSource()`를 절대 호출하지 않는다** — 이것이 2.7대 첫‑키 손실/모드 불일치의 근본 원인이었다. 등록(Info.plist)은 v2.6.5의 **최소 형태**를 절대 벗어나지 않는다. 이 두 가지는 협상 대상이 아니다.
 
@@ -184,7 +184,7 @@ DispatchQueue.main.async { onTapFailed?() }   // 그 다음에만 IOKit 시작
 
 ### 5.1 계약 (검증됨)
 
-`HangulComposer.handle()`에서 `inputMode == .english`이면 진행 중 조합 커밋 후 `localTextBuffer = ""`, **`return false`**. 로컬 버퍼/마크드 텍스트 없음 → 커서‑버퍼 desync 원천 차단. Roman 글자는 컨트롤러의 `overrideKeyboardWithKeyboardNamed(ABC/US)`에서 나온다.
+`HangulComposer.handle()`에서 `inputMode == .english`이면 진행 중 조합 커밋 후 `localTextBuffer = ""`, 기본적으로 **`return false`**. 로컬 버퍼/마크드 텍스트 없음 → 커서‑버퍼 desync 원천 차단. Roman 글자는 컨트롤러가 기본 ABC/US 또는 opt-in 현재 ASCII-capable layout으로 보정한다.
 
 ### 5.2 텍스트 편의 = 호스트 책임 (B2/W2)
 
@@ -194,7 +194,7 @@ DispatchQueue.main.async { onTapFailed?() }   // 그 다음에만 IOKit 시작
 
 `overrideKeyboardWithKeyboardNamed:`는 private selector(검증). 보강:
 1. `responds(to:)` 가드 + 호출 전후 로그(런타임 실패 감지).
-2. 실패 시 조용한 폴백 대신 **명시 로그** + (옵션) 설정 "내 물리 키보드 레이아웃 존중"(기본 OFF=ABC 강제, ON=오버라이드 생략).
+2. 실패 시 조용한 폴백 대신 **명시 로그** + 설정 "내 물리 키보드 레이아웃 존중"(기본 OFF=ABC 강제, ON=영어 모드에서 최근 ASCII-capable layout 적용). 한글 모드는 항상 ABC/US를 유지한다.
 3. **다중 macOS 버전 온‑디바이스 검증 필수**(14/15/16) — selector 가용성·동작 확인.
 
 ### 5.4 시스템 컨텍스트 경계 (B3)
