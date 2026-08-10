@@ -61,6 +61,14 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     /// Session-derived views for collaborators (Hanja lookup in `HangulComposer`).
     public var currentAdapter: (any HangulComposerDelegate)? { session?.adapter }
     public var cachedContext: ClientContext? { session?.context }
+    var activeSessionIdentifier: ObjectIdentifier? {
+        guard let session, !session.contextNeedsRefresh else { return nil }
+        return ObjectIdentifier(session)
+    }
+    var activeSessionClient: IMKTextInput? {
+        guard let session, !session.contextNeedsRefresh else { return nil }
+        return session.client
+    }
 
     #if DEBUG
     private var debugHandleLogCount = 0
@@ -90,9 +98,11 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
     private func replaceSession(client: IMKTextInput, context: ClientContext) -> InputSession {
         if let previous = session {
+            previous.composer.dismissHanjaCandidates()
             previous.finalize(reason: .sessionReplacement)
             previous.disarmFocusLossFinalizer()
         }
+        CursorRectResolver.invalidateCache()
 
         let newSession = InputSession(client: client, context: context, composer: makeComposer())
         newSession.composer.updateKeyboardLayout(id: ConfigurationManager.shared.keyboardId)
@@ -251,8 +261,10 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         let nextMode = composer.inputMode.toggled
         DebugLogger.log("PriTypeInputController: mode transition \(composer.inputMode) -> \(nextMode) source=\(source)")
 
+        composer.dismissHanjaCandidates()
         session.finalize(reason: .modeTransition)
         composer.clearLocalBuffer()
+        CursorRectResolver.invalidateCache()
         syncRomanKeyboardLayout(for: session.client, mode: nextMode, force: true)
         composer.setInputMode(nextMode)
     }
@@ -265,6 +277,8 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         assert(Thread.isMainThread, "IMK activateServer must run on main thread")
         #endif
         super.activateServer(sender)
+        session?.composer.dismissHanjaCandidates()
+        CursorRectResolver.invalidateCache()
         // NOTE: Focus changes never reset the shared InputModeStore. Korean/English
         // state is process-global, while libhangul composition remains session-owned.
         if let client = sender as? IMKTextInput {
@@ -338,6 +352,8 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         //   redundant late finalize (composition state itself is session-owned);
         // - mark the context stale so the next handle() re-analyzes it.
         if deactivatesCurrentSession {
+            session?.composer.dismissHanjaCandidates()
+            CursorRectResolver.invalidateCache()
             session?.disarmFocusLossFinalizer()
             session?.markContextStale()
             NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
@@ -357,6 +373,8 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         let composer = session.composer
         if composer.keyboardLayoutId != newId {
             session.finalize(reason: .keyboardLayoutChange)
+            composer.dismissHanjaCandidates()
+            CursorRectResolver.invalidateCache()
         }
         composer.updateKeyboardLayout(id: newId)
     }
@@ -399,6 +417,8 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         }
 
         session.finalize(reason: .mouseCommit)
+        session.composer.dismissHanjaCandidates()
+        CursorRectResolver.invalidateCache()
         session.composer.clearLocalBuffer()
         return false // The host still owns caret movement and selection.
     }
@@ -490,6 +510,8 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         assert(Thread.isMainThread, "IMK commitComposition must run on main thread")
         #endif
         if finalizeActiveComposition(sender: sender, reason: .mouseCommit) {
+            session?.composer.dismissHanjaCandidates()
+            CursorRectResolver.invalidateCache()
             session?.composer.localTextBuffer = "" // Click invalidates this session's local context.
         }
         super.commitComposition(sender)

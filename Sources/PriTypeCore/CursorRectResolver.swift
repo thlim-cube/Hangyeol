@@ -16,19 +16,25 @@ import InputMethodKit
 /// 4. Accessibility API (`AXSelectedTextRange` → `AXBoundsForRange`)
 /// 5. mouse location (last resort)
 public enum CursorRectResolver {
-    /// Cached last-known-good cursor position. When Chromium blocks coordinate
-    /// queries, reuse the last successful position instead of jumping to the mouse.
-    nonisolated(unsafe) static var lastKnownCursorRect: NSRect?
+    /// Chromium may temporarily reject coordinate queries while a key event is in
+    /// flight. A cached caret is only reusable for the exact client/session that
+    /// produced it, while its screen is still connected, and for a short interval.
+    private static let cacheLifetime: TimeInterval = 2
+    nonisolated(unsafe) private static var cursorCache = CursorRectCache()
 
     /// Resolve a usable caret rect for `client`, falling back through the strategy
     /// chain. Always returns SOMETHING displayable (mouse location at worst).
     /// Call BEFORE committing the preedit: Chromium updates cursor position
     /// asynchronously after commit, so post-commit queries return garbage.
-    static func resolve(client: IMKTextInput?) -> NSRect {
+    static func resolve(client: IMKTextInput?, sessionID: ObjectIdentifier? = nil) -> NSRect {
         var cursorRect = NSRect(x: NSEvent.mouseLocation.x, y: NSEvent.mouseLocation.y - 20, width: 0, height: 20)
         var resolved = false
+        var resolvedFromFreshSource = false
+        let screenFrames = NSScreen.screens.map(\.frame)
+        let now = ProcessInfo.processInfo.systemUptime
 
         if let client {
+            let clientID = ObjectIdentifier(client as AnyObject)
             var actualRange = NSRange()
 
             // Prefer markedRange during preedit. Chromium fails with garbage values
@@ -44,6 +50,7 @@ public enum CursorRectResolver {
                 if isValidCursorRect(rect) {
                     cursorRect = rect
                     resolved = true
+                    resolvedFromFreshSource = true
                     DebugLogger.log("Hanja: cursor from firstRect (pre-commit): \(rect)")
                 } else {
                     DebugLogger.log("Hanja: firstRect returned invalid rect for range \(targetRange): \(rect)")
@@ -58,6 +65,7 @@ public enum CursorRectResolver {
                     if isValidCursorRect(lineRect) {
                         cursorRect = lineRect
                         resolved = true
+                        resolvedFromFreshSource = true
                         DebugLogger.log("Hanja: cursor from attributes(idx \(queryIndex)): \(lineRect)")
                     } else {
                         DebugLogger.log("Hanja: attributes(idx \(queryIndex)) also invalid: \(lineRect)")
@@ -69,7 +77,15 @@ public enum CursorRectResolver {
             // If coordinate query failed but we have a recent successful position,
             // reuse it. The window stays near where it last appeared — much better
             // than jumping to the mouse cursor across the screen.
-            if !resolved, let cached = lastKnownCursorRect {
+            if !resolved,
+               let sessionID,
+               let cached = cursorCache.value(
+                   clientID: clientID,
+                   sessionID: sessionID,
+                   screenFrames: screenFrames,
+                   now: now,
+                   maxAge: cacheLifetime
+               ) {
                 cursorRect = cached
                 resolved = true
                 DebugLogger.log("Hanja: using cached last-known-good position: \(cached)")
@@ -80,6 +96,7 @@ public enum CursorRectResolver {
                 if let axRect = getCursorRectViaAccessibility() {
                     cursorRect = axRect
                     resolved = true
+                    resolvedFromFreshSource = true
                     DebugLogger.log("Hanja: cursor from Accessibility API: \(axRect)")
                 } else {
                     DebugLogger.log("Hanja: all strategies failed, using mouse location")
@@ -88,11 +105,24 @@ public enum CursorRectResolver {
         }
 
         // Cache the resolved position for future fallback
-        if resolved {
-            lastKnownCursorRect = cursorRect
+        if resolvedFromFreshSource, let client, let sessionID,
+           let screenFrame = screenFrame(containing: cursorRect.origin, in: screenFrames) {
+            cursorCache.store(
+                rect: cursorRect,
+                clientID: ObjectIdentifier(client as AnyObject),
+                sessionID: sessionID,
+                screenFrame: screenFrame,
+                timestamp: now
+            )
         }
 
         return cursorRect
+    }
+
+    /// Session-ending events invalidate any fallback coordinate immediately. This
+    /// prevents a caret from one field being reused after focus moves within an app.
+    static func invalidateCache() {
+        cursorCache.removeAll()
     }
 
     // MARK: - Cursor Position Validation
@@ -100,16 +130,72 @@ public enum CursorRectResolver {
     /// Validate that a rect from firstRect is a usable cursor position
     /// Electron/Chromium apps can return garbage values (e.g. x=1.6e-314, y=19896)
     public static func isValidCursorRect(_ rect: NSRect) -> Bool {
-        // Reject zero origin (uninitialized)
-        guard rect.origin.x != 0 || rect.origin.y != 0 else { return false }
-        // Reject negative or zero height (malformed)
-        guard rect.size.height > 0 else { return false }
-        // Reject absurdly small coordinates (floating point garbage like 1.6e-314)
-        guard rect.origin.x > 1 && rect.origin.y > 1 else { return false }
-        // Check that the point is on any connected screen
-        return NSScreen.screens.contains { screen in
-            screen.frame.contains(NSPoint(x: rect.origin.x, y: rect.origin.y))
+        isValidCursorRect(rect, screenFrames: NSScreen.screens.map(\.frame))
+    }
+
+    /// Pure validation variant used by multi-display regression tests. Negative and
+    /// zero coordinates are valid when a connected screen actually occupies them.
+    static func isValidCursorRect(_ rect: NSRect, screenFrames: [NSRect]) -> Bool {
+        let scalars = [rect.origin.x, rect.origin.y, rect.size.width, rect.size.height]
+        guard scalars.allSatisfy(\.isFinite), rect.size.width >= 0, rect.size.height > 0 else {
+            return false
         }
+
+        // Chromium has returned subnormal floating-point values for an unavailable
+        // coordinate. Preserve real zero (a legitimate screen edge), but reject a
+        // non-zero subnormal before screen containment can accidentally accept it.
+        guard [rect.origin.x, rect.origin.y].allSatisfy({ $0 == 0 || $0.isNormal }) else {
+            return false
+        }
+        guard (rect.size.width == 0 || rect.size.width.isNormal), rect.size.height.isNormal else {
+            return false
+        }
+
+        return screenFrame(containing: rect.origin, in: screenFrames) != nil
+    }
+
+    /// Convert an Accessibility rect (top-left global coordinates) into AppKit's
+    /// bottom-left global coordinates using the screen that contains the AX point.
+    /// Keeping screen selection explicit handles displays arranged left of or below
+    /// the main display without assuming `NSScreen.main.frame.height` is the desktop.
+    static func appKitRect(
+        fromAccessibilityRect rect: NSRect,
+        screenFrames: [NSRect],
+        mainScreenFrame: NSRect
+    ) -> NSRect? {
+        let scalars = [rect.origin.x, rect.origin.y, rect.size.width, rect.size.height]
+        guard scalars.allSatisfy(\.isFinite), rect.size.width >= 0, rect.size.height >= 0 else {
+            return nil
+        }
+
+        let axPoint = rect.origin
+        guard let screenFrame = screenFrames.first(where: {
+            accessibilityFrame(for: $0, mainScreenFrame: mainScreenFrame).contains(axPoint)
+        }) else {
+            return nil
+        }
+
+        let axScreenFrame = accessibilityFrame(for: screenFrame, mainScreenFrame: mainScreenFrame)
+        let yOffsetWithinScreen = rect.origin.y - axScreenFrame.minY
+        return NSRect(
+            x: rect.origin.x,
+            y: screenFrame.maxY - yOffsetWithinScreen - rect.size.height,
+            width: rect.size.width,
+            height: rect.size.height
+        )
+    }
+
+    private static func accessibilityFrame(for screenFrame: NSRect, mainScreenFrame: NSRect) -> NSRect {
+        NSRect(
+            x: screenFrame.minX,
+            y: mainScreenFrame.maxY - screenFrame.maxY,
+            width: screenFrame.width,
+            height: screenFrame.height
+        )
+    }
+
+    private static func screenFrame(containing point: NSPoint, in screenFrames: [NSRect]) -> NSRect? {
+        screenFrames.first { $0.contains(point) }
     }
 
     // MARK: - Accessibility API Cursor Position
@@ -220,9 +306,12 @@ public enum CursorRectResolver {
 
         DebugLogger.log("Hanja AX: raw bounds = \(bounds)")
 
+        let screenFrames = NSScreen.screens.map(\.frame)
+        guard let mainScreenFrame = NSScreen.main?.frame else { return nil }
+
         // Chrome returns (0, y, 0, 0) — only y is valid
         // If we have a valid y but x/width/height are zero, supplement from element position
-        if bounds.size.width == 0 && bounds.size.height == 0 && bounds.origin.y > 0 {
+        if bounds.size.width == 0 && bounds.size.height == 0 {
             // Get the element's position to supplement x coordinate
             var posValue: AnyObject?
             if AXUIElementCopyAttributeValue(axElement, kAXPositionAttribute as CFString, &posValue) == .success,
@@ -233,11 +322,15 @@ public enum CursorRectResolver {
                     return nil
                 }
 
-                // Use element x + small offset, AX y, default height
+                // Use element x, AX y, and a default caret height. Screen-aware
+                // conversion supports negative X and displays below the main one.
                 let defaultHeight: CGFloat = 18
-                guard let screenHeight = NSScreen.main?.frame.height else { return nil }
-                let flippedY = screenHeight - bounds.origin.y - defaultHeight
-                let result = NSRect(x: pos.x, y: flippedY, width: 0, height: defaultHeight)
+                let supplemented = NSRect(x: pos.x, y: bounds.origin.y, width: 0, height: defaultHeight)
+                guard let result = appKitRect(
+                    fromAccessibilityRect: supplemented,
+                    screenFrames: screenFrames,
+                    mainScreenFrame: mainScreenFrame
+                ) else { return nil }
                 DebugLogger.log("Hanja AX: Chrome partial → supplemented with element pos: \(result)")
 
                 if isValidCursorRect(result) { return result }
@@ -245,9 +338,11 @@ public enum CursorRectResolver {
         }
 
         // Normal case: full bounds available
-        guard let screenHeight = NSScreen.main?.frame.height else { return nil }
-        let flippedY = screenHeight - bounds.origin.y - bounds.size.height
-        let result = NSRect(x: bounds.origin.x, y: flippedY, width: bounds.size.width, height: bounds.size.height)
+        guard let result = appKitRect(
+            fromAccessibilityRect: bounds,
+            screenFrames: screenFrames,
+            mainScreenFrame: mainScreenFrame
+        ) else { return nil }
 
         guard isValidCursorRect(result) else {
             DebugLogger.log("Hanja AX: converted rect invalid: \(result)")
@@ -277,13 +372,16 @@ public enum CursorRectResolver {
             return nil
         }
 
-        // Use the bottom-left of the element as a rough caret position
-        guard let screenHeight = NSScreen.main?.frame.height else { return nil }
+        // Use the bottom-left of the element as a rough caret position.
         let defaultHeight: CGFloat = 18
-        // Place at element's x, and bottom of element (y + height in AX coords)
-        let axBottom = pos.y + size.height
-        let flippedY = screenHeight - axBottom
-        let result = NSRect(x: pos.x, y: flippedY, width: 0, height: defaultHeight)
+        let screenFrames = NSScreen.screens.map(\.frame)
+        guard let mainScreenFrame = NSScreen.main?.frame,
+              let elementRect = appKitRect(
+                  fromAccessibilityRect: NSRect(origin: pos, size: size),
+                  screenFrames: screenFrames,
+                  mainScreenFrame: mainScreenFrame
+              ) else { return nil }
+        let result = NSRect(x: elementRect.minX, y: elementRect.minY, width: 0, height: defaultHeight)
 
         DebugLogger.log("Hanja AX: element position fallback: \(result)")
         guard isValidCursorRect(result) else { return nil }
@@ -300,5 +398,59 @@ public enum CursorRectResolver {
         guard let value else { return nil }
         guard CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
         return (value as! AXValue)
+    }
+}
+
+/// Value-type cache so client/session/screen/TTL behavior can be tested without an
+/// InputMethodKit host. The process-global resolver owns one instance on the IMK
+/// callback thread.
+struct CursorRectCache {
+    private struct Entry {
+        let rect: NSRect
+        let clientID: ObjectIdentifier
+        let sessionID: ObjectIdentifier
+        let screenFrame: NSRect
+        let timestamp: TimeInterval
+    }
+
+    private var entry: Entry?
+
+    mutating func store(
+        rect: NSRect,
+        clientID: ObjectIdentifier,
+        sessionID: ObjectIdentifier,
+        screenFrame: NSRect,
+        timestamp: TimeInterval
+    ) {
+        entry = Entry(
+            rect: rect,
+            clientID: clientID,
+            sessionID: sessionID,
+            screenFrame: screenFrame,
+            timestamp: timestamp
+        )
+    }
+
+    mutating func value(
+        clientID: ObjectIdentifier,
+        sessionID: ObjectIdentifier,
+        screenFrames: [NSRect],
+        now: TimeInterval,
+        maxAge: TimeInterval
+    ) -> NSRect? {
+        guard let entry,
+              entry.clientID == clientID,
+              entry.sessionID == sessionID,
+              screenFrames.contains(entry.screenFrame),
+              now >= entry.timestamp,
+              now - entry.timestamp <= maxAge else {
+            self.entry = nil
+            return nil
+        }
+        return entry.rect
+    }
+
+    mutating func removeAll() {
+        entry = nil
     }
 }

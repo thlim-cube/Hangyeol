@@ -54,6 +54,9 @@ public class HangulComposer: @unchecked Sendable {
     /// Shared only in production controllers. Standalone/test composers receive a
     /// fresh store so their mode state cannot leak into one another.
     private let inputModeStore: InputModeStore
+
+    /// Candidate presenter (injected in lifecycle tests so no real panel is opened).
+    private let candidateWindow: any HanjaCandidatePresenting
     
     // MARK: - Private Properties
     
@@ -75,6 +78,10 @@ public class HangulComposer: @unchecked Sendable {
     
     /// The Hangul key currently being looked up for Hanja conversion
     private var hanjaKey: String = ""
+
+    /// Invalidates callbacks retained by a previous candidate window. A client can
+    /// change between panel presentation and a mouse/keyboard selection.
+    private var hanjaGeneration: UInt64 = 0
     
     /// Local cache of recently typed text to support double-space detection and Hanja lookup
     public var localTextBuffer: String = ""
@@ -119,18 +126,47 @@ public class HangulComposer: @unchecked Sendable {
         self.init(
             statusBar: statusBar,
             configuration: configuration,
-            inputModeStore: InputModeStore()
+            inputModeStore: InputModeStore(),
+            candidateWindow: HanjaCandidateWindow.shared
+        )
+    }
+
+    convenience init(
+        statusBar: StatusBarUpdating,
+        configuration: ConfigurationProviding,
+        inputModeStore: InputModeStore
+    ) {
+        self.init(
+            statusBar: statusBar,
+            configuration: configuration,
+            inputModeStore: inputModeStore,
+            candidateWindow: HanjaCandidateWindow.shared
+        )
+    }
+
+    convenience init(
+        statusBar: StatusBarUpdating,
+        configuration: ConfigurationProviding,
+        candidateWindow: any HanjaCandidatePresenting
+    ) {
+        self.init(
+            statusBar: statusBar,
+            configuration: configuration,
+            inputModeStore: InputModeStore(),
+            candidateWindow: candidateWindow
         )
     }
 
     init(
         statusBar: StatusBarUpdating,
         configuration: ConfigurationProviding,
-        inputModeStore: InputModeStore
+        inputModeStore: InputModeStore,
+        candidateWindow: any HanjaCandidatePresenting
     ) {
         self.statusBar = statusBar
         self.configuration = configuration
         self.inputModeStore = inputModeStore
+        self.candidateWindow = candidateWindow
         self.textConvenience = TextConvenienceHandler(
             isDoubleSpacePeriodEnabled: {
                 configuration.doubleSpacePeriodEnabled
@@ -190,6 +226,11 @@ public class HangulComposer: @unchecked Sendable {
     ///   No lifecycle or IMK input-mode callback — including `activateServer`
     ///   focus changes — may mutate the mode.
     public func setInputMode(_ mode: InputMode) {
+        // A candidate belongs to the Korean-mode session that opened it. Invalidate
+        // retained selection callbacks before changing mode (or honoring a repeated
+        // setter call) so they cannot edit a later field.
+        dismissHanjaCandidates()
+
         guard inputMode != mode else {
             return
         }
@@ -412,10 +453,9 @@ public class HangulComposer: @unchecked Sendable {
         
         // If Hanja candidate window is visible, forward keys to it
         if hanjaMode {
-            let consumed = HanjaCandidateWindow.shared.handleKey(event)
-            if !HanjaCandidateWindow.shared.isVisible {
-                hanjaMode = false
-                hanjaKey = ""
+            let consumed = candidateWindow.handleKey(event)
+            if !candidateWindow.isVisible {
+                invalidateHanjaState()
             }
             if consumed {
                 return true
@@ -634,6 +674,22 @@ public class HangulComposer: @unchecked Sendable {
     }
     
     // MARK: - Hanja Lookup
+
+    /// End the current candidate interaction and invalidate callbacks captured by
+    /// its panel. Controllers call this whenever the owning input session ends.
+    func dismissHanjaCandidates() {
+        let shouldDismissWindow = hanjaMode
+        invalidateHanjaState()
+        if shouldDismissWindow {
+            candidateWindow.dismiss()
+        }
+    }
+
+    private func invalidateHanjaState() {
+        hanjaGeneration &+= 1
+        hanjaMode = false
+        hanjaKey = ""
+    }
     
     /// Trigger Hanja lookup externally (called by RightCommandSuppressor via CGEventTap)
     ///
@@ -641,10 +697,8 @@ public class HangulComposer: @unchecked Sendable {
     /// Acts as a toggle: dismisses if already visible, opens if not.
     public func triggerHanjaLookup() {
         // Toggle behavior: if already showing, dismiss
-        if HanjaCandidateWindow.shared.isVisible {
-            HanjaCandidateWindow.shared.dismiss()
-            hanjaMode = false
-            hanjaKey = ""
+        if hanjaMode || candidateWindow.isVisible {
+            dismissHanjaCandidates()
             DebugLogger.log("Hanja: Toggled off")
             return
         }
@@ -724,13 +778,20 @@ public class HangulComposer: @unchecked Sendable {
         
         hanjaMode = true
         hanjaKey = searchKey
+        hanjaGeneration &+= 1
+        let snapshotGeneration = hanjaGeneration
         
         // IMPORTANT: Capture cursor position BEFORE commit.
         // Chromium/Electron apps update cursor position asynchronously after commit,
         // so firstRect() returns garbage values if called after commitComposition().
         // While preedit is active, the cursor is at the marked text position → valid
         // coordinates. The strategy chain lives in CursorRectResolver.
-        let cursorRect = CursorRectResolver.resolve(client: PriTypeInputController.sharedController?.client())
+        let controller = PriTypeInputController.sharedController
+        let inputClient = controller?.activeSessionClient
+        let cursorRect = CursorRectResolver.resolve(
+            client: inputClient,
+            sessionID: controller?.activeSessionIdentifier
+        )
 
         // Commit preedit AFTER capturing cursor position
         if hadPreedit {
@@ -739,54 +800,63 @@ public class HangulComposer: @unchecked Sendable {
         
         // Capture the hanjaKey length for use in the callback
         let replacementLength = searchKey.utf16.count
+        let replacementCharacterCount = searchKey.count
         
         // Snapshot: Capture client identity at show time for validation at select time.
         // Use ObjectIdentifier instead of weak reference: if the weak ref is deallocated,
         // validation would be skipped and hanja could be inserted into a wrong client.
-        let snapshotClientID: ObjectIdentifier? = {
-            if let client = PriTypeInputController.sharedController?.client() as? IMKTextInput {
-                return ObjectIdentifier(client as AnyObject)
+        let selectionSnapshot: HanjaSelectionSnapshot? = {
+            guard let client = inputClient, let sessionID = controller?.activeSessionIdentifier else {
+                return nil
             }
-            return nil
+            return HanjaSelectionSnapshot(
+                generation: snapshotGeneration,
+                clientID: ObjectIdentifier(client as AnyObject),
+                sessionID: sessionID
+            )
         }()
         
-        HanjaCandidateWindow.shared.show(
+        candidateWindow.show(
             entries: entries,
             cursorRect: cursorRect,
             onSelect: { [weak self] entry in
                 guard let self = self else { return }
-                
-                // Validate: Ensure the client hasn't changed since the candidate window was shown
-                if let controller = PriTypeInputController.sharedController,
-                   let client = controller.client() {
-                    
-                    // Safety check: if the client object changed (focus switched), dismiss silently
-                    guard let originalID = snapshotClientID,
-                          ObjectIdentifier(client as AnyObject) == originalID else {
-                        DebugLogger.log("Hanja: Client changed since show — aborting selection")
-                        self.hanjaMode = false
-                        self.hanjaKey = ""
-                        return
-                    }
-                    
-                    let selRange = client.selectedRange()
-                    if selRange.location != NSNotFound && selRange.location < 10000000 && selRange.location >= replacementLength {
-                        let replaceRange = NSRange(location: selRange.location - replacementLength, length: replacementLength)
-                        client.insertText(entry.hanja, replacementRange: replaceRange)
-                    } else {
-                        // Fallback: just insert
-                        client.insertText(entry.hanja, replacementRange: NSRange(location: NSNotFound, length: NSNotFound))
-                    }
+
+                guard self.hanjaGeneration == snapshotGeneration, self.hanjaMode else {
+                    DebugLogger.log("Hanja: Ignoring callback from stale candidate generation")
+                    return
                 }
-                
-                self.localTextBuffer = String(self.localTextBuffer.dropLast(self.hanjaKey.count)) + entry.hanja
-                self.hanjaMode = false
-                self.hanjaKey = ""
+
+                guard let snapshot = selectionSnapshot,
+                      let activeController = PriTypeInputController.sharedController,
+                      let activeSessionID = activeController.activeSessionIdentifier,
+                      let client = activeController.activeSessionClient,
+                      snapshot.matches(
+                          generation: self.hanjaGeneration,
+                          clientID: ObjectIdentifier(client as AnyObject),
+                          sessionID: activeSessionID
+                      ) else {
+                    DebugLogger.log("Hanja: Candidate session changed since show — aborting selection")
+                    self.invalidateHanjaState()
+                    return
+                }
+
+                let selRange = client.selectedRange()
+                if selRange.location != NSNotFound && selRange.location < 10000000 && selRange.location >= replacementLength {
+                    let replaceRange = NSRange(location: selRange.location - replacementLength, length: replacementLength)
+                    client.insertText(entry.hanja, replacementRange: replaceRange)
+                } else {
+                    // Fallback: just insert
+                    client.insertText(entry.hanja, replacementRange: NSRange(location: NSNotFound, length: NSNotFound))
+                }
+
+                self.localTextBuffer = String(self.localTextBuffer.dropLast(replacementCharacterCount)) + entry.hanja
+                self.invalidateHanjaState()
                 DebugLogger.log("Hanja: Selected '\(entry.hanja)' (\(entry.meaning))")
             },
             onDismiss: { [weak self] in
-                self?.hanjaMode = false
-                self?.hanjaKey = ""
+                guard let self, self.hanjaGeneration == snapshotGeneration else { return }
+                self.invalidateHanjaState()
                 DebugLogger.log("Hanja: Dismissed")
             }
         )
@@ -800,6 +870,25 @@ public class HangulComposer: @unchecked Sendable {
     /// the full coordinate strategy chain live in `CursorRectResolver`.
     public static func isValidCursorRect(_ rect: NSRect) -> Bool {
         CursorRectResolver.isValidCursorRect(rect)
+    }
+}
+
+/// Identity captured when a candidate panel opens. InputMethodKit may reuse the
+/// same client object across fields, so both client and `InputSession` identity are
+/// required in addition to the composer generation.
+struct HanjaSelectionSnapshot {
+    let generation: UInt64
+    let clientID: ObjectIdentifier
+    let sessionID: ObjectIdentifier
+
+    func matches(
+        generation: UInt64,
+        clientID: ObjectIdentifier,
+        sessionID: ObjectIdentifier
+    ) -> Bool {
+        self.generation == generation
+            && self.clientID == clientID
+            && self.sessionID == sessionID
     }
 }
 

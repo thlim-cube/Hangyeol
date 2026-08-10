@@ -1,11 +1,23 @@
 import Cocoa
 import SwiftUI
 
+protocol HanjaCandidatePresenting: AnyObject, Sendable {
+    var isVisible: Bool { get }
+    func show(
+        entries: [HanjaEntry],
+        cursorRect: NSRect,
+        onSelect: @escaping @Sendable (HanjaEntry) -> Void,
+        onDismiss: @escaping @Sendable () -> Void
+    )
+    func dismiss()
+    func handleKey(_ event: NSEvent) -> Bool
+}
+
 /// Custom floating candidate window for Hanja selection
 ///
 /// Displays a list of Hanja candidates near the text cursor position.
 /// Supports keyboard navigation (1-9, arrow keys, page up/down).
-public final class HanjaCandidateWindow: @unchecked Sendable {
+public final class HanjaCandidateWindow: HanjaCandidatePresenting, @unchecked Sendable {
     
     public static let shared = HanjaCandidateWindow()
     

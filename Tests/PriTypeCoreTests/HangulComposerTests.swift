@@ -539,10 +539,9 @@ struct HangulComposerTests {
 @Suite("Cursor Rect Validation")
 struct CursorRectValidationTests {
 
-    @Test("Rejects zero origin (uninitialized coordinate query)")
-    func rejectsZeroOrigin() {
+    @Test("Rejects a zero-sized uninitialized coordinate query")
+    func rejectsZeroSizedRect() {
         #expect(!HangulComposer.isValidCursorRect(NSRect(x: 0, y: 0, width: 0, height: 0)))
-        #expect(!HangulComposer.isValidCursorRect(NSRect(x: 0, y: 0, width: 100, height: 20)))
     }
 
     @Test("Rejects non-positive height")
@@ -555,9 +554,7 @@ struct CursorRectValidationTests {
     func rejectsFloatGarbage() {
         // Representative Chromium garbage: subnormal x/width with negative height.
         #expect(!HangulComposer.isValidCursorRect(NSRect(x: 1.6e-314, y: 95886, width: 1.6e-314, height: -1)))
-        // Origin at or below 1pt is treated as uninitialized garbage.
-        #expect(!HangulComposer.isValidCursorRect(NSRect(x: 0.5, y: 0.5, width: 10, height: 10)))
-        #expect(!HangulComposer.isValidCursorRect(NSRect(x: 1, y: 1, width: 10, height: 10)))
+        #expect(!HangulComposer.isValidCursorRect(NSRect(x: CGFloat.nan, y: 500, width: 10, height: 10)))
     }
 
     @Test("Accepts a well-formed on-screen rect")
