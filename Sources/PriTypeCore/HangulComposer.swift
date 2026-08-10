@@ -222,9 +222,9 @@ public class HangulComposer: @unchecked Sendable {
     /// `PriTypeInputController` before reaching this method.
     /// - Important: `inputMode` is the single source of truth for the Korean/
     ///   English state. The only sanctioned writers are
-    ///   `PriTypeInputController.performPriTypeModeTransition` (custom toggle).
-    ///   No lifecycle or IMK input-mode callback — including `activateServer`
-    ///   focus changes — may mutate the mode.
+    ///   `PriTypeInputController.performPriTypeModeTransition` (custom toggle) and
+    ///   its macOS-owned input-source boundary reconciliation. No ordinary lifecycle
+    ///   or IMK focus callback — including `activateServer` — may mutate the mode.
     public func setInputMode(_ mode: InputMode) {
         // A candidate belongs to the Korean-mode session that opened it. Invalidate
         // retained selection callbacks before changing mode (or honoring a repeated

@@ -170,6 +170,7 @@ libhangul preedit: ᄆ (U+1106)
 |---|---|
 | **HangulComposer** | 세션별 한글 조합 엔진. libhangul 컨텍스트를 감싸고, 키 이벤트 → 초·중·종성 조합 → preedit/commit 변환을 담당한다. 한/영 상태는 공유 `InputModeStore`에서 읽지만 preedit/commit 상태는 다른 client와 공유하지 않는다. |
 | **InputModeStore** | 프로세스 전역 한/영 단일 source of truth. 탭·앱·controller 전환에도 마지막 mode를 유지하되 libhangul 조합 상태는 보관하지 않는다. |
+| **InputModeOwnership** | `TISRomanSwitchState` 소유권 및 실제 선택 입력 소스의 경계만 추적한다. 일반 focus/activation은 경계로 보지 않으며, TIS 조회 실패 시 상태를 추정하지 않는다. |
 | **HangulComposerTypes** | `HangulComposerDelegate` 프로토콜(insertText, setMarkedText, textBeforeCursor, replaceTextBeforeCursor)과 `InputMode` enum 정의. |
 | **PriTypeInputController** | `IMKInputController` 서브클래스. IMK 수명 주기(`activateServer` → `handle()` → `deactivateServer`)만 담당하는 얇은 edge. 세션 스코프 상태는 전부 `InputSession`에 위임하고, 모든 조합 종료 이벤트를 `session.finalize(reason:)`로 라우팅한다. |
 | **InputSession** | 활성 입력 세션 1개의 단일 소유자: 클라이언트, `HangulComposer`, 분석된 `ClientContext`, delivery 어댑터, 중복 keyDown 상태, 포커스 상실 안전망(NSWorkspace 옵저버). `finalize(reason:)`이 조합 종료의 유일한 경로(1-op commit, 멱등, 호스트 무관)다. |
@@ -186,7 +187,7 @@ libhangul preedit: ᄆ (U+1106)
 | **TextConvenienceHandler** | macOS 더블스페이스 마침표 설정을 한글 조합 경로에서 반영한다. 영어 모드는 순수 pass-through라 이 핸들러를 거치지 않는다(영문 편의는 macOS 소유). |
 | **UpdateChecker** | GitHub Releases API를 통해 최신 버전을 확인한다. 24시간 스로틀, 실패 시 다음 실행 시 재시도, 시맨틱 버전 비교(`.numeric`)를 사용한다. |
 | **UpdateNotifier** | `UNUserNotificationCenter`를 사용해 업데이트 알림을 표시한다. 알림 클릭 시 릴리즈 페이지를 연다. |
-| **InputModeCoordinator** | 한/영 전환 조율 계층. custom 전환키 요청을 받아 Caps Lock 정책과 active controller 존재 여부를 판단하고, controller의 단일 전환 트랜잭션으로 넘긴다. |
+| **InputModeCoordinator** | 한/영 전환 조율 계층. custom 전환키 요청과 macOS 소유권 경계를 추적하되 mode를 직접 쓰지 않는다. 소유권 정합화는 pending으로 보관했다가 Secure Input 검사를 통과한 controller의 단일 전환 트랜잭션으로 넘긴다. |
 | **InputSourceManager** | TIS(Text Input Source) API를 사용해 시스템 입력 소스 목록 조회와 stale entry 정리를 담당한다. custom 한/영 전환 hot path에는 참여하지 않는다. |
 | **CompositionHelpers** | libhangul의 `[UInt32]`(UCSChar) 배열을 Swift `String`으로 변환하고 NFC 정규화(`precomposedStringWithCanonicalMapping`)를 수행하는 유틸리티. |
 | **DebugLogger** | 조건 컴파일(`#if DEBUG`) 기반 로거. 디버그 빌드에서는 `~/Library/Logs/PriType/pritype_debug.log`에 기록하고, 릴리즈 빌드에서는 `@autoclosure`로 문자열 생성 자체를 생략하는 no-op이 된다. |

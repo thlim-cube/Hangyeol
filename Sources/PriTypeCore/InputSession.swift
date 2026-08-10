@@ -12,6 +12,7 @@ enum CompositionFinalizeReason: String {
     case deactivateServer       // IMK deactivateServer (fallback; native hosts may already ignore)
     case mouseCommit            // IMK commitComposition (click outside the composition)
     case modeTransition         // PriType custom toggle key (한/영)
+    case inputSourceOwnership   // macOS took ownership or reselected PriType
     case keyboardLayoutChange   // 두벌식/세벌식 layout switch mid-composition
     case sessionReplacement     // a different IMK client became active first
     case deliveryModeChange     // marked/direct policy changed while the session stayed active
@@ -22,6 +23,7 @@ enum CompositionFinalizeReason: String {
         case .deactivateServer: "deactivate_server"
         case .mouseCommit: "mouse_commit"
         case .modeTransition: "mode_transition"
+        case .inputSourceOwnership: "input_source_ownership"
         case .keyboardLayoutChange: "keyboard_layout_change"
         case .sessionReplacement: "session_replacement"
         case .deliveryModeChange: "delivery_mode_change"

@@ -35,6 +35,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         // Initialize IMK Server
         _ = IMKServer(name: kConnectionName, bundleIdentifier: Bundle.main.bundleIdentifier)
         DebugLogger.log("IMKServer initialized")
+
+        // Observe only real TIS ownership/input-source transitions. Ordinary app,
+        // tab, and field activation must keep PriType's process-wide mode intact.
+        InputModeCoordinator.shared.startSystemOwnershipMonitoring()
         
         Task.detached(priority: .utility) {
             InputSourceManager.shared.cleanupStaleInputSources()

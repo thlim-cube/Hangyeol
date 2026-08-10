@@ -52,6 +52,137 @@ struct InputModeOwnershipTests {
         #expect(first.inputMode == .english)
         #expect(second.inputMode == .korean)
     }
+
+    @Test("Initial, repeated, and PriType-owned activations preserve mode")
+    func nonSystemBoundariesPreserveMode() {
+        for macOSOwnsSwitching in [false, true] {
+            var tracker = InputModeOwnershipTracker()
+            let snapshot = InputModeOwnershipSnapshot(
+                macOSOwnsSwitching: macOSOwnsSwitching,
+                selectedInputSource: .priType
+            )
+
+            #expect(tracker.observe(snapshot) == nil)
+            #expect(tracker.observe(snapshot) == nil)
+            #expect(!tracker.hasPendingKoreanReconciliation)
+        }
+
+        var sourceTracker = InputModeOwnershipTracker()
+        _ = sourceTracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: false,
+            selectedInputSource: .other
+        ))
+        #expect(sourceTracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: false,
+            selectedInputSource: .priType
+        )) == nil)
+        #expect(!sourceTracker.hasPendingKoreanReconciliation)
+    }
+
+    @Test("macOS ownership requests Korean until ownership returns")
+    func macOSOwnershipLifecycle() {
+        var tracker = InputModeOwnershipTracker()
+        _ = tracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: false,
+            selectedInputSource: .priType
+        ))
+
+        #expect(tracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: true,
+            selectedInputSource: .priType
+        )) == .macOSOwnershipEnabled)
+        #expect(tracker.hasPendingKoreanReconciliation)
+
+        #expect(tracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: true,
+            selectedInputSource: .priType
+        )) == nil)
+        #expect(tracker.hasPendingKoreanReconciliation)
+        #expect(tracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: false,
+            selectedInputSource: .priType
+        )) == nil)
+        #expect(!tracker.hasPendingKoreanReconciliation)
+    }
+
+    @Test("Source reselection and unavailable TIS state reconcile only after confirmation")
+    func sourceReselectionAndUnavailableState() {
+        var directTracker = InputModeOwnershipTracker()
+        _ = directTracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: true,
+            selectedInputSource: .other
+        ))
+        #expect(directTracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: true,
+            selectedInputSource: .priType
+        )) == .priTypeReselected)
+
+        var ownershipTracker = InputModeOwnershipTracker()
+        _ = ownershipTracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: false,
+            selectedInputSource: .priType
+        ))
+        #expect(ownershipTracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: true,
+            selectedInputSource: .unavailable
+        )) == nil)
+        #expect(!ownershipTracker.hasPendingKoreanReconciliation)
+        #expect(ownershipTracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: true,
+            selectedInputSource: .priType
+        )) == .macOSOwnershipEnabled)
+
+        var selectionTracker = InputModeOwnershipTracker()
+        _ = selectionTracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: true,
+            selectedInputSource: .other
+        ))
+        #expect(selectionTracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: true,
+            selectedInputSource: .unavailable
+        )) == nil)
+        #expect(selectionTracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: true,
+            selectedInputSource: .priType
+        )) == .priTypeReselected)
+    }
+
+    @Test("System boundary transaction finalizes once and normalizes to Korean")
+    func systemBoundaryTransactionFinalizesAndNormalizes() {
+        let client = FakeIMKTextInput()
+        let store = InputModeStore()
+        let composer = makeComposer(store: store)
+        let session = InputSession(
+            client: client,
+            context: ClientContext(
+                bundleId: client.bundleID,
+                hasTextInputCapability: true,
+                isLikelyDesktopArea: false,
+                documentAccessSafe: true
+            ),
+            composer: composer
+        )
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        #expect(composer.hasActiveComposition)
+        makeComposer(store: store).setInputMode(.english)
+        #expect(composer.inputMode == .english)
+        #expect(composer.hasActiveComposition)
+
+        var didSyncLayout = false
+        PriTypeInputController.applyMacOSOwnedInputSourceBoundary(to: session) {
+            didSyncLayout = true
+        }
+
+        #expect(didSyncLayout)
+        #expect(composer.inputMode == .korean)
+        #expect(!composer.hasActiveComposition)
+        #expect(client.document == "ㄱ")
+        #expect(client.insertCalls.count == 1)
+    }
 }
 
 @Suite("Process-wide input ownership")

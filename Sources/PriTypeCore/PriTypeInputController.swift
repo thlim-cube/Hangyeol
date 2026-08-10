@@ -8,8 +8,8 @@ import Carbon.HIToolbox
 /// The controller owns nothing but the IMK lifecycle. Everything session-scoped —
 /// client, analyzed context, delivery adapter, duplicate-keyDown state, focus-loss
 /// safety net — lives in a single `InputSession`, and EVERY composition-ending event
-/// (app deactivate, deactivateServer, mouse commit, custom toggle, keyboard-layout
-/// change) funnels into `InputSession.finalize(reason:)`, the
+/// (app deactivate, deactivateServer, mouse commit, custom toggle, macOS ownership,
+/// keyboard-layout change) funnels into `InputSession.finalize(reason:)`, the
 /// one host-agnostic commit path.
 ///
 /// ```
@@ -17,7 +17,7 @@ import Carbon.HIToolbox
 ///                                                                          │
 ///                  TextDeliveryAdapter (marked / direct / immediate) ◄─────┘
 ///
-/// toggle key ──► InputModeCoordinator ──► performPriTypeModeTransition ─┐
+/// toggle key / macOS ownership ──► InputModeCoordinator ──► controller ─┐
 /// app deactivate / deactivateServer / mouse commit / layout change ────┴─► session.finalize
 /// ```
 @objc(PriTypeInputController)
@@ -318,6 +318,37 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         trace.mark(.modeWrite)
     }
 
+    /// Resolve a previously observed macOS-owned source boundary. This is called
+    /// only after the current client passes the secure-input gate; notification and
+    /// activation callbacks are allowed to mark the boundary but never commit text.
+    @discardableResult
+    func reconcileMacOSOwnedInputSourceBoundary() -> Bool {
+        guard let session else { return false }
+
+        DebugLogger.event("input_mode.ownership_reconciliation_started", metadata: [
+            .state("from", session.composer.inputMode == .korean ? "korean" : "english")
+        ])
+        Self.applyMacOSOwnedInputSourceBoundary(to: session) {
+            self.syncRomanKeyboardLayout(for: session.client, mode: .korean, force: true)
+        }
+        return true
+    }
+
+    /// Testable transaction body. The controller remains the only production mode
+    /// writer; the ownership monitor can only ask it to execute this path.
+    static func applyMacOSOwnedInputSourceBoundary(
+        to session: InputSession,
+        syncRomanKeyboardLayout: () -> Void
+    ) {
+        let composer = session.composer
+        composer.dismissHanjaCandidates()
+        session.finalize(reason: .inputSourceOwnership)
+        composer.clearLocalBuffer()
+        CursorRectResolver.invalidateCache()
+        syncRomanKeyboardLayout()
+        composer.setInputMode(.korean)
+    }
+
     // MARK: - IMK Lifecycle
 
     // 입력기가 활성화될 때 호출 - 새 세션 시작
@@ -360,6 +391,9 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             session?.markContextStale()
         }
 
+        // Activation is evidence that PriType is the selected source, but it only
+        // records a real ownership boundary. It never resets mode or commits text.
+        InputModeCoordinator.shared.observePriTypeActivation()
         // Ensure this session's composer has the current layout.
         let currentLayoutId = ConfigurationManager.shared.keyboardId
         session?.composer.updateKeyboardLayout(id: currentLayoutId)
@@ -520,6 +554,11 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             session.discardForSecureInput()
             return false
         }
+
+        // Apply a pending macOS ownership/source boundary only after the secure
+        // client check. This makes the first normal key use Korean without allowing
+        // an observer or activation callback to insert text into a password field.
+        _ = InputModeCoordinator.shared.reconcileSystemOwnershipIfNeeded(for: self)
 
         // 5. The delivery policy can flip mid-session (experimental flag toggled in
         // settings); make sure the adapter still matches before composing into it.

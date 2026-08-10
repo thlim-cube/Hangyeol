@@ -79,7 +79,7 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 | --- | --- | --- |
 | 한/영 진리 | process-global `InputModeStore` | 모든 세션 composer가 읽는 단일 source of truth |
 | 한글 조합 | session-owned `HangulComposer` | client 간 preedit/commit 상태를 공유하지 않음 |
-| 전환 정책(Caps Lock·fallback) | `InputModeCoordinator` | 한 곳에서만 판단 |
+| 전환 정책(Caps Lock·fallback) | `InputModeCoordinator` | 실제 TIS 소유권/선택 소스 경계만 pending으로 기록하고 mode는 직접 쓰지 않음 |
 | IMK 세션 edge(commit·override·layout) | `PriTypeInputController` | imperative 경계 |
 | 실제 TIS source 선택 | **macOS만** | Caps Lock 경로 한정 |
 | 사용자 표시(한/A)·입력 상태 metadata | `StatusBarManager` | 입력 문자열 미수집 |
@@ -90,14 +90,16 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 ## 3. 불변식 (회귀 가드)
 
 1. custom toggle hot path에서 `TISSelectInputSource`를 호출하지 않는다.
-2. 프로덕션에서 `composer.inputMode`를 바꾸는 writer는
-   `PriTypeInputController.performPriTypeModeTransition`(사용자 토글) **하나뿐**이다.
-   `activateServer`(포커스 변경)나 IMK input-mode callback 등 다른 경로는 모드를 건드리지 않는다.
+2. 프로덕션에서 `composer.inputMode`를 바꾸는 writer는 `PriTypeInputController`뿐이다.
+   사용자 토글은 `performPriTypeModeTransition`, macOS 소유권 변경/ABC→PriType 재선택은
+   Secure Input 검사를 통과한 `reconcileMacOSOwnedInputSourceBoundary`를 거친다.
+   `activateServer` 같은 일반 포커스 변경은 모드를 건드리지 않는다.
 3. 모드 전환 전 active composition은 정확히 1회 commit한다.
 4. 전환 직후 keyDown을 막거나 replay하지 않는다. 전환이 즉시 완료되므로 불필요하다.
 5. 영어 편의 fallback이 꺼진 기본 상태에서 PriType는 printable key를 consume하지 않는다(`return false`).
 6. 일반 typing hot path에 TIS/AX 조회·UserDefaults JSON decode·로그 문자열 생성이 없다.
 7. Caps Lock on이면 custom toggle을 비활성화한다. 둘이 같은 키 이벤트에서 동시 동작하지 않는다.
+8. TIS 소유권/선택 소스 알림은 mode를 직접 쓰거나 조합을 commit하지 않고 pending만 기록한다.
 
 ---
 
