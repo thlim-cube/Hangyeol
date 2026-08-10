@@ -59,6 +59,10 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     /// activateServer can refresh its context, and replaced when a different client appears.
     private var session: InputSession?
 
+    /// Non-nil only while an outer `deactivateServer` can synchronously re-enter
+    /// `activateServer` through the deactivating client's final `insertText`.
+    private var deactivationInProgress: DeactivationSnapshot?
+
     /// Session-derived views for collaborators (Hanja lookup in `HangulComposer`).
     public var currentAdapter: (any HangulComposerDelegate)? { session?.adapter }
     public var cachedContext: ClientContext? { session?.context }
@@ -89,6 +93,26 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     }
 
     // MARK: - Session Management
+
+    final class DeactivationSnapshot {
+        let session: InputSession
+        fileprivate let focusLossActivation: InputSession.FocusLossActivation
+        private let preparationLock = NSLock()
+        private var didPrepareForReentrantActivation = false
+
+        fileprivate init(session: InputSession) {
+            self.session = session
+            self.focusLossActivation = session.captureFocusLossActivation()
+        }
+
+        fileprivate func consumeReentrantActivationPreparation() -> Bool {
+            preparationLock.withLock {
+                guard !didPrepareForReentrantActivation else { return false }
+                didPrepareForReentrantActivation = true
+                return true
+            }
+        }
+    }
 
     private func makeComposer() -> HangulComposer {
         HangulComposer(
@@ -124,6 +148,49 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         return newSession
     }
 
+    static func captureDeactivationSnapshot(
+        session: InputSession?,
+        sender: Any?
+    ) -> DeactivationSnapshot? {
+        guard let session else { return nil }
+        if let senderClient = sender as? IMKTextInput,
+           !session.matches(senderClient) {
+            DebugLogger.event("composition.finalize_ignored", metadata: [
+                .state("reason", CompositionFinalizeReason.deactivateServer.diagnosticLabel),
+                .state("cause", "stale_client")
+            ])
+            return nil
+        }
+        return DeactivationSnapshot(session: session)
+    }
+
+    /// A reentrant activation is the earliest safe point to discard the old field's
+    /// Hanja/cursor context. The outer deactivate must later leave the new activation
+    /// itself untouched.
+    static func prepareForActivationDuringDeactivation(_ snapshot: DeactivationSnapshot?) {
+        guard let snapshot,
+              snapshot.consumeReentrantActivationPreparation() else { return }
+        snapshot.session.finishHostCommitBoundary()
+    }
+
+    @discardableResult
+    static func finishDeactivation(
+        _ snapshot: DeactivationSnapshot?,
+        currentSession: InputSession?,
+        retireController: () -> Void
+    ) -> Bool {
+        guard let snapshot,
+              currentSession === snapshot.session,
+              snapshot.session.isSameFocusLossActivation(snapshot.focusLossActivation) else {
+            return false
+        }
+
+        snapshot.session.finishHostCommitBoundary()
+        snapshot.session.disarmFocusLossFinalizer()
+        retireController()
+        return true
+    }
+
     /// Complete process-wide retirement only if a reentrant activation did not
     /// replace the session while the old host accepted its focus-loss commit.
     private func retireAfterAppFocusLoss(_ retiredSession: InputSession) {
@@ -150,6 +217,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     }
 
     private func retireForControllerHandoff(incomingClient: IMKTextInput?) {
+        Self.prepareForActivationDuringDeactivation(deactivationInProgress)
         let mayReuseField = incomingClient.map { session?.matches($0) == true } ?? true
         session?.retireForControllerHandoff(fieldIdentityMayHaveChanged: mayReuseField)
         NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
@@ -192,23 +260,6 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         )
         syncRomanKeyboardLayout(for: client)
         return newSession
-    }
-
-    /// Route a composition-ending event to the owning session only. A late callback
-    /// for an older client must never finalize the currently active client's composer.
-    @discardableResult
-    private func finalizeActiveComposition(sender: Any?, reason: CompositionFinalizeReason) -> Bool {
-        let senderClient = sender as? IMKTextInput
-        guard let session else { return false }
-        if let senderClient, !session.matches(senderClient) {
-            DebugLogger.event("composition.finalize_ignored", metadata: [
-                .state("reason", reason.diagnosticLabel),
-                .state("cause", "stale_client")
-            ])
-            return false
-        }
-        session.finalize(reason: reason)
-        return true
     }
 
     // MARK: - Keyboard Layout (English pass-through support)
@@ -436,6 +487,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         #if DEBUG
         assert(Thread.isMainThread, "IMK activateServer must run on main thread")
         #endif
+        Self.prepareForActivationDuringDeactivation(deactivationInProgress)
         // The currently active owner invalidates its snapshot before IMK probing or
         // handoff. Once the claim completes, this controller republishes unknown.
         Self.sharedController?.publishHanjaShortcutSessionState(.unknown)
@@ -504,21 +556,27 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // fires earlier, while the host still accepts input); by the time
         // deactivateServer runs, native hosts like KakaoTalk have already resigned and
         // ignore insertText. If the observer already committed, this is a no-op.
-        let senderClient = sender as? IMKTextInput
-        let deactivatesCurrentSession = senderClient.map { session?.matches($0) == true } ?? true
-        if deactivatesCurrentSession {
+        let deactivation = Self.captureDeactivationSnapshot(session: session, sender: sender)
+        if let deactivation {
             publishHanjaShortcutSessionState(.unknown)
+            deactivationInProgress = deactivation
         }
-        finalizeActiveComposition(sender: sender, reason: .deactivateServer)
+        defer {
+            if deactivationInProgress === deactivation {
+                deactivationInProgress = nil
+            }
+        }
+        _ = deactivation?.session.finalize(reason: .deactivateServer)
         super.deactivateServer(sender)
         // Keep the session until replacement so handle() can refresh it even if it
         // arrives before the next activateServer.
         // - disarm the focus-loss observer so an inactive host never receives a
         //   redundant late finalize (composition state itself is session-owned);
         // - drop field-local Hanja/cursor state and re-analyze on the next input.
-        if deactivatesCurrentSession {
-            session?.finishHostCommitBoundary()
-            session?.disarmFocusLossFinalizer()
+        _ = Self.finishDeactivation(
+            deactivation,
+            currentSession: session
+        ) {
             NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
             NotificationCenter.default.removeObserver(self, name: .romanKeyboardLayoutPreferenceChanged, object: nil)
             Self.activeControllerRegistry.release(self)

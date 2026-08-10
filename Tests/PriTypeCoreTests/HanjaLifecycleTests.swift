@@ -841,6 +841,155 @@ struct HanjaCandidateLifecycleTests {
         #expect(composer.localTextBuffer == "가")
     }
 
+    @Test("Normal deactivate commits once and retires the field session")
+    func normalDeactivateRetiresCapturedSession() {
+        let client = FakeIMKTextInput()
+        let composer = makeComposer(presenter: MockHanjaCandidatePresenter())
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: composer
+        )
+        _ = session.prepareForNonSecureClientWrites()
+        composeGa(in: session)
+        session.armFocusLossFinalizer()
+        let armedFocus = session.captureFocusLossActivation()
+        let snapshot = PriTypeInputController.captureDeactivationSnapshot(
+            session: session,
+            sender: client
+        )
+        var cleanupCount = 0
+
+        #expect(snapshot?.session.finalize(reason: .deactivateServer) == true)
+        let didFinish = PriTypeInputController.finishDeactivation(
+            snapshot,
+            currentSession: session
+        ) {
+            cleanupCount += 1
+        }
+
+        #expect(didFinish)
+        #expect(client.document == "가")
+        #expect(client.insertCalls.count == 1)
+        #expect(composer.localTextBuffer.isEmpty)
+        #expect(session.contextNeedsRefresh)
+        #expect(!session.isSameFocusLossActivation(armedFocus))
+        #expect(cleanupCount == 1)
+    }
+
+    @Test("Same-session activation during deactivate preserves the newer activation")
+    func reentrantSameSessionActivationSurvivesDeactivate() {
+        let client = FakeIMKTextInput()
+        let composer = makeComposer(presenter: MockHanjaCandidatePresenter())
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: composer
+        )
+        _ = session.prepareForNonSecureClientWrites()
+        composeGa(in: session)
+        session.armFocusLossFinalizer()
+        let snapshot = PriTypeInputController.captureDeactivationSnapshot(
+            session: session,
+            sender: client
+        )
+        var cleanupCount = 0
+        var oldBufferWasClearedDuringActivation = false
+        var newBufferSurvivedRepeatedPreparation = false
+        var reactivatedFocus: InputSession.FocusLossActivation?
+        client.onInsertText = {
+            client.onInsertText = nil
+            PriTypeInputController.prepareForActivationDuringDeactivation(snapshot)
+            oldBufferWasClearedDuringActivation = composer.localTextBuffer.isEmpty
+            session.markContextStaleForSameClientReactivation()
+            session.armFocusLossFinalizer()
+            composer.localTextBuffer = "나"
+            PriTypeInputController.prepareForActivationDuringDeactivation(snapshot)
+            newBufferSurvivedRepeatedPreparation = composer.localTextBuffer == "나"
+            session.markContextStaleForSameClientReactivation()
+            session.armFocusLossFinalizer()
+            reactivatedFocus = session.captureFocusLossActivation()
+        }
+
+        #expect(snapshot?.session.finalize(reason: .deactivateServer) == true)
+        let didFinish = PriTypeInputController.finishDeactivation(
+            snapshot,
+            currentSession: session
+        ) {
+            cleanupCount += 1
+        }
+
+        #expect(!didFinish)
+        #expect(oldBufferWasClearedDuringActivation)
+        #expect(newBufferSurvivedRepeatedPreparation)
+        #expect(client.document == "가")
+        #expect(client.insertCalls.count == 1)
+        #expect(composer.localTextBuffer == "나")
+        #expect(session.contextNeedsRefresh)
+        #expect(reactivatedFocus.map { session.isSameFocusLossActivation($0) } == true)
+        #expect(cleanupCount == 0)
+    }
+
+    @Test("Different-session activation during deactivate preserves the new owner")
+    func reentrantDifferentSessionActivationSurvivesDeactivate() {
+        let retiredClient = FakeIMKTextInput()
+        let retiredComposer = makeComposer(presenter: MockHanjaCandidatePresenter())
+        let retiredSession = InputSession(
+            client: retiredClient,
+            context: context(bundleId: retiredClient.bundleID),
+            composer: retiredComposer
+        )
+        _ = retiredSession.prepareForNonSecureClientWrites()
+        composeGa(in: retiredSession)
+        retiredSession.armFocusLossFinalizer()
+
+        let newClient = FakeIMKTextInput()
+        newClient.bundleID = "com.example.synthetic.new-field"
+        let newComposer = makeComposer(presenter: MockHanjaCandidatePresenter())
+        let newSession = InputSession(
+            client: newClient,
+            context: context(bundleId: newClient.bundleID),
+            composer: newComposer
+        )
+
+        var currentSession: InputSession? = retiredSession
+        let snapshot = PriTypeInputController.captureDeactivationSnapshot(
+            session: retiredSession,
+            sender: retiredClient
+        )
+        var cleanupCount = 0
+        var oldBufferWasClearedDuringActivation = false
+        var newFocus: InputSession.FocusLossActivation?
+        retiredClient.onInsertText = {
+            retiredClient.onInsertText = nil
+            PriTypeInputController.prepareForActivationDuringDeactivation(snapshot)
+            oldBufferWasClearedDuringActivation = retiredComposer.localTextBuffer.isEmpty
+            retiredSession.disarmFocusLossFinalizer()
+            currentSession = newSession
+            newComposer.localTextBuffer = "나"
+            newSession.armFocusLossFinalizer()
+            newFocus = newSession.captureFocusLossActivation()
+        }
+
+        #expect(snapshot?.session.finalize(reason: .deactivateServer) == true)
+        let didFinish = PriTypeInputController.finishDeactivation(
+            snapshot,
+            currentSession: currentSession
+        ) {
+            cleanupCount += 1
+        }
+
+        #expect(!didFinish)
+        #expect(oldBufferWasClearedDuringActivation)
+        #expect(currentSession === newSession)
+        #expect(retiredClient.document == "가")
+        #expect(retiredClient.insertCalls.count == 1)
+        #expect(newSession.context.bundleId == newClient.bundleID)
+        #expect(newComposer.localTextBuffer == "나")
+        #expect(newFocus.map { newSession.isSameFocusLossActivation($0) } == true)
+        #expect(cleanupCount == 0)
+    }
+
     private func makeComposer(presenter: MockHanjaCandidatePresenter) -> HangulComposer {
         HangulComposer(
             statusBar: MockStatusBar(),
@@ -859,6 +1008,17 @@ struct HanjaCandidateLifecycleTests {
             isLikelyDesktopArea: false,
             isLightweight: isLightweight,
             documentAccessSafe: true
+        )
+    }
+
+    private func composeGa(in session: InputSession) {
+        _ = session.composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        _ = session.composer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: session.adapter
         )
     }
 

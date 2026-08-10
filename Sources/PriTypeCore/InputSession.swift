@@ -45,6 +45,10 @@ enum CompositionFinalizeReason: String {
 /// against this session's client. It is idempotent (no-op without active composition)
 /// and host-agnostic — no bundle-ID special cases.
 final class InputSession: @unchecked Sendable {
+    struct FocusLossActivation: Equatable {
+        fileprivate let generation: UInt64
+    }
+
     private enum ContextRefreshRequirement: Equatable {
         case none
         case sameClientReactivation
@@ -371,6 +375,14 @@ final class InputSession: @unchecked Sendable {
     }
 
     // MARK: Focus-loss safety net
+
+    func captureFocusLossActivation() -> FocusLossActivation {
+        FocusLossActivation(generation: focusLossFinalizerGeneration)
+    }
+
+    func isSameFocusLossActivation(_ activation: FocusLossActivation) -> Bool {
+        focusLossFinalizerGeneration == activation.generation
+    }
 
     /// Testable body of the app-deactivation observer.
     @discardableResult
