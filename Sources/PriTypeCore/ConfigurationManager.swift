@@ -13,7 +13,7 @@ public enum ToggleKey: String, CaseIterable, Sendable {
     case controlSpace = "controlSpace"
     /// Right Command key (single key toggle)
     case rightCommand = "rightCommand"
-    
+
     /// Human-readable display name for the toggle key
     public var displayName: String {
         switch self {
