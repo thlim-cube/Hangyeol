@@ -229,6 +229,11 @@ final class DirectInsertionAdapter: BaseClientAdapter {
     /// Once the client proves it lacks reliable document access mid-composition,
     /// degrade to marked text for the rest of the session rather than strand text.
     private var fellBackToMarked = false
+    /// An invalid selection after a real preedit was already inserted leaves no safe
+    /// range for replacing that text. Preserve the last verified document state and
+    /// suppress further composition writes until the engine ends; guessing a delete
+    /// range or showing the full preedit as marked text would duplicate/corrupt text.
+    private var preservingUnverifiedLivePreedit = false
 
     /// Clear live-preedit tracking. Called by the session whenever composition
     /// ends out-of-band (focus loss, mouse-click commit, secure passthrough). Also
@@ -239,6 +244,7 @@ final class DirectInsertionAdapter: BaseClientAdapter {
         livePreeditText = ""
         expectedCaret = NSNotFound
         fellBackToMarked = false
+        preservingUnverifiedLivePreedit = false
     }
 
     private func renderMarkedFallback(_ text: String) {
@@ -259,10 +265,38 @@ final class DirectInsertionAdapter: BaseClientAdapter {
             return
         }
 
+        if preservingUnverifiedLivePreedit {
+            // An empty marked update means the composer ended/cancelled this
+            // composition. Re-arm direct insertion only after that boundary.
+            if keepingLive && text.isEmpty {
+                resetPreeditTracking()
+            }
+            return
+        }
+
         let tStart = CFAbsoluteTimeGetCurrent()
         let caret = client.selectedRange().location
         let tAfterSel = CFAbsoluteTimeGetCurrent()
         var readbackMs = 0.0
+        let hasUsableCaret = caret != NSNotFound
+            && caret >= 0
+            && caret < DirectInsertionPlanner.maxReasonableLocation
+
+        // Once real preedit text exists, an unusable selection cannot safely be
+        // converted to a full marked preedit: the host would later commit both the
+        // old real text and the new marked text (for example, `ㄱ가`). Never guess
+        // where to delete. Keep the last verified real text unchanged and let the
+        // session's direct-finalize path discard the newer engine-only composition.
+        if livePreeditLength > 0, !hasUsableCaret {
+            livePreeditLength = 0
+            livePreeditText = ""
+            expectedCaret = NSNotFound
+            preservingUnverifiedLivePreedit = true
+            DebugLogger.event("delivery.fail_closed", metadata: [
+                .state("reason", "invalid_selection_with_live_preedit")
+            ])
+            return
+        }
 
         // CARET-STABILITY GUARD — prevents the direct-insertion corruption class.
         // The live preedit is REAL text the user can click or arrow away from, and
@@ -277,8 +311,7 @@ final class DirectInsertionAdapter: BaseClientAdapter {
         if livePreeditLength > 0 && caret != expectedCaret {
             let tReadStart = CFAbsoluteTimeGetCurrent()
             let actual: String?
-            if caret != NSNotFound, caret >= livePreeditLength,
-               caret < DirectInsertionPlanner.maxReasonableLocation {
+            if hasUsableCaret, caret >= livePreeditLength {
                 let region = NSRange(location: caret - livePreeditLength, length: livePreeditLength)
                 actual = client.attributedSubstring(from: region)?.string
             } else {
@@ -360,6 +393,7 @@ final class DirectInsertionAdapter: BaseClientAdapter {
     }
 
     override func replaceTextBeforeCursor(length: Int, with text: String) {
+        guard !preservingUnverifiedLivePreedit else { return }
         // Committed-text edit (e.g. double-space period); no live preedit involved.
         livePreeditLength = 0
         super.replaceTextBeforeCursor(length: length, with: text)

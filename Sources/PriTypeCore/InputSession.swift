@@ -220,8 +220,10 @@ final class InputSession: @unchecked Sendable {
         }
 
         // EXPERIMENTAL direct insertion: the in-progress syllable is ALREADY real text
-        // in the document. Re-inserting it here would duplicate the character. Just end
-        // the engine's composition and clear the adapter's live-preedit tracking.
+        // in the document. If document access failed after that write, the adapter also
+        // deliberately preserved the last verified real preedit instead of guessing a
+        // delete range. Re-inserting the engine's newer preedit in either case would
+        // duplicate/corrupt text. End the engine and clear adapter tracking only.
         if let direct = adapter as? DirectInsertionAdapter,
            !direct.usesMarkedTextFallback {
             _ = composer.flushCommitString()   // flush engine + update buffer; do NOT insert

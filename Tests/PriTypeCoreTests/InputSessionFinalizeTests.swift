@@ -133,6 +133,43 @@ struct InputSessionFinalizeTests {
         #expect(!session.finalize(reason: .deactivateServer))
         #expect(client.document == "가")
     }
+
+    @Test(
+        "Invalid selection after a real preedit fails closed without duplicate text",
+        arguments: [NSNotFound, 20_000_000]
+    )
+    func invalidSelectionWithLivePreeditPreservesDocument(invalidLocation: Int) {
+        let (session, composer, client) = makeDirectFallbackSession()
+        client.selectedRangeValue = NSRange(location: 0, length: 0)
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        #expect(client.document == "ㄱ")
+        #expect(client.markedText.isEmpty)
+        #expect(client.insertCalls.count == 1)
+
+        client.selectedRangeValue = NSRange(location: invalidLocation, length: 0)
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: session.adapter
+        )
+
+        // The adapter cannot prove where its real `ㄱ` lives anymore. It must not
+        // delete a guessed range or show the full `가` as marked text, because that
+        // would finalize as `ㄱ가`. The current key is dropped fail-closed instead.
+        #expect(client.document == "ㄱ")
+        #expect(client.markedText.isEmpty)
+        #expect(client.insertCalls.count == 1)
+        #expect(client.markCalls.isEmpty)
+
+        #expect(session.finalize(reason: .modeTransition))
+        #expect(!composer.hasActiveComposition)
+        #expect(client.document == "ㄱ")
+        #expect(client.markedText.isEmpty)
+        #expect(client.insertCalls.count == 1)
+    }
 }
 
 @Suite("Mouse composition policy")
