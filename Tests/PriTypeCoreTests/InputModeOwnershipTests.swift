@@ -212,4 +212,38 @@ struct ProcessWideInputOwnershipTests {
         registry.release(second)
         #expect(registry.owner == nil)
     }
+
+    @Test("A reentrant newer claim is not overwritten by the outer handoff")
+    func reentrantClaimWinsOverOuterHandoff() {
+        let registry = ActiveOwnerHandoffRegistry<Owner>()
+        let first = Owner()
+        let second = Owner()
+        let third = Owner()
+        var ownerAfterReentrantClaim: Owner?
+
+        registry.claim(first) { _ in }
+        registry.claim(second) { _ in
+            registry.claim(third) { _ in }
+            ownerAfterReentrantClaim = registry.owner
+        }
+
+        #expect(ownerAfterReentrantClaim === third)
+        #expect(registry.owner === third)
+    }
+
+    @Test("Reclaiming the visible owner cancels an older in-flight handoff")
+    func reentrantVisibleOwnerClaimWinsOverOuterHandoff() {
+        let registry = ActiveOwnerHandoffRegistry<Owner>()
+        let first = Owner()
+        let second = Owner()
+
+        registry.claim(first) { _ in }
+        registry.claim(second) { _ in
+            registry.claim(first) { _ in
+                Issue.record("The visible owner must not be retired when it reclaims ownership")
+            }
+        }
+
+        #expect(registry.owner === first)
+    }
 }
