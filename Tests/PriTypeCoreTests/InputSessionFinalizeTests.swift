@@ -108,6 +108,31 @@ struct InputSessionFinalizeTests {
         #expect(client.document == "ㄱ")
         #expect(client.markedText.isEmpty)
     }
+
+    @Test("Controller handoff retires the old session before late deactivation")
+    func controllerHandoffRetiresSession() {
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.apple.TextEdit"
+        let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID, documentAccessSafe: true),
+            composer: composer
+        )
+
+        _ = composer.handle(TestEventFactory.keyEvent(char: "r", keyCode: 15)!, delegate: session.adapter)
+        _ = composer.handle(TestEventFactory.keyEvent(char: "k", keyCode: 40)!, delegate: session.adapter)
+        #expect(client.markedText == "가")
+
+        session.retireForControllerHandoff()
+
+        #expect(session.contextNeedsRefresh)
+        #expect(!composer.hasActiveComposition)
+        #expect(client.document == "가")
+        #expect(client.markedText.isEmpty)
+        #expect(!session.finalize(reason: .deactivateServer))
+        #expect(client.document == "가")
+    }
 }
 
 @Suite("Mouse composition policy")

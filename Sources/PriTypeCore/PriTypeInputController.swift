@@ -48,9 +48,11 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     /// composition state does not: every `InputSession` owns a separate composer.
     private static let sharedInputModeStore = InputModeStore()
 
-    /// Last active controller reference for external toggle access
-    /// - Warning: Access from main thread only (guaranteed by IMK, not compiler-enforced)
-    nonisolated(unsafe) public static weak var sharedController: PriTypeInputController?
+    /// Process-wide active controller for external toggle and Hanja access.
+    private static let activeControllerRegistry = ActiveOwnerHandoffRegistry<PriTypeInputController>()
+    public static var sharedController: PriTypeInputController? {
+        activeControllerRegistry.owner
+    }
 
     /// The live input session (client + context + adapter + dedup + focus-loss net).
     /// Kept across deactivateServer — async Hanja callbacks and a `handle()` arriving
@@ -110,6 +112,24 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         session = newSession
         newSession.armFocusLossFinalizer()
         return newSession
+    }
+
+    /// IMK creates one controller per client input session. A newly activated
+    /// controller can arrive before the old controller's `deactivateServer`, so claim
+    /// process-wide ownership only after retiring the previous controller while its
+    /// host still accepts the composition commit.
+    private func claimProcessActiveController() {
+        Self.activeControllerRegistry.claim(self) { previous in
+            previous.retireForControllerHandoff()
+        }
+    }
+
+    private func retireForControllerHandoff() {
+        session?.retireForControllerHandoff()
+        NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .romanKeyboardLayoutPreferenceChanged, object: nil)
+        CursorRectResolver.invalidateCache()
+        DebugLogger.event("input.controller_handoff")
     }
 
     /// Return the session for `client`, creating or refreshing it as needed.
@@ -305,6 +325,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         assert(Thread.isMainThread, "IMK activateServer must run on main thread")
         #endif
         super.activateServer(sender)
+        claimProcessActiveController()
         session?.composer.dismissHanjaCandidates()
         CursorRectResolver.invalidateCache()
         // NOTE: Focus changes never reset the shared InputModeStore. Korean/English
@@ -337,9 +358,6 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             session?.disarmFocusLossFinalizer()
             session?.markContextStale()
         }
-
-        // Set as active controller for toggle access
-        Self.sharedController = self
 
         // Ensure this session's composer has the current layout.
         let currentLayoutId = ConfigurationManager.shared.keyboardId
@@ -388,9 +406,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             session?.markContextStale()
             NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
             NotificationCenter.default.removeObserver(self, name: .romanKeyboardLayoutPreferenceChanged, object: nil)
-            if Self.sharedController === self {
-                Self.sharedController = nil
-            }
+            Self.activeControllerRegistry.release(self)
         }
     }
 

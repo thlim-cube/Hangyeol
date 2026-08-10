@@ -173,6 +173,16 @@ final class InputSession: @unchecked Sendable {
         }
     }
 
+    /// Retire this session before another IMK controller becomes process-active.
+    /// This runs at the new controller's activation boundary, which is earlier than
+    /// the old controller's potentially late `deactivateServer` callback.
+    func retireForControllerHandoff() {
+        composer.dismissHanjaCandidates()
+        finalize(reason: .sessionReplacement)
+        disarmFocusLossFinalizer()
+        markContextStale()
+    }
+
     // MARK: Finalize (the single composition-ending path)
 
     /// Finalize the in-progress composition into this session's client in a SINGLE

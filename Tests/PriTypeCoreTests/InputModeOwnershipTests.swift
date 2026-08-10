@@ -53,3 +53,32 @@ struct InputModeOwnershipTests {
         #expect(second.inputMode == .korean)
     }
 }
+
+@Suite("Process-wide input ownership")
+struct ProcessWideInputOwnershipTests {
+    private final class Owner {}
+
+    @Test("Claim retires the previous owner before publishing the next owner")
+    func claimOrdersRetirementBeforeReplacement() {
+        let registry = ActiveOwnerHandoffRegistry<Owner>()
+        let first = Owner()
+        let second = Owner()
+        var retiredOwner: Owner?
+        var ownerVisibleDuringRetirement: Owner?
+
+        registry.claim(first) { _ in }
+        registry.claim(second) { retiring in
+            retiredOwner = retiring
+            ownerVisibleDuringRetirement = registry.owner
+        }
+
+        #expect(retiredOwner === first)
+        #expect(ownerVisibleDuringRetirement === first)
+        #expect(registry.owner === second)
+
+        registry.release(first)
+        #expect(registry.owner === second)
+        registry.release(second)
+        #expect(registry.owner == nil)
+    }
+}
