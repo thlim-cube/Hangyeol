@@ -664,6 +664,11 @@ public class HangulComposer: @unchecked Sendable {
         textConvenience.resetSpaceState()
     }
 
+    /// Invalidate timing-based conveniences without changing composition or Hanja context.
+    func resetTextConvenienceState() {
+        textConvenience.resetSpaceState()
+    }
+
     /// Drops in-progress composition without touching the current client.
     ///
     /// Secure text fields must receive raw key events from the system. Calling

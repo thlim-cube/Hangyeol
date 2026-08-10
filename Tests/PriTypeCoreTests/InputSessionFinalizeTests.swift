@@ -458,6 +458,43 @@ struct InputSessionFinalizeTests {
         #expect(client.insertCalls.isEmpty)
     }
 
+    @Test("Same-client reactivation without an owned marked composition resets convenience timing")
+    func sameClientReactivationWithoutOwnedMarkedCompositionResetsConvenience() {
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.apple.TextEdit"
+        let configuration = MockConfiguration()
+        configuration.englishTextConvenienceFallbackEnabled = true
+        let composer = HangulComposer(
+            statusBar: MockStatusBar(),
+            configuration: configuration
+        )
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID, documentAccessSafe: true),
+            composer: composer
+        )
+        _ = session.prepareForNonSecureClientWrites()
+        composer.setInputMode(.english)
+        let space = TestEventFactory.keyEvent(char: " ", keyCode: KeyCode.space)!
+
+        client.document = "x"
+        client.selectedRangeValue = NSRange(location: 1, length: 0)
+        #expect(!composer.handle(space, delegate: session.adapter))
+        client.document = "x "
+        client.selectedRangeValue = NSRange(location: 2, length: 0)
+
+        session.markContextStaleForSameClientReactivation()
+        #expect(session.refreshContextIfNeeded { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+        _ = session.prepareForNonSecureClientWrites()
+
+        client.document = "y "
+        client.selectedRangeValue = NSRange(location: 2, length: 0)
+        #expect(!composer.handle(space, delegate: session.adapter))
+        #expect(client.document == "y ")
+    }
+
     @Test("Same-client activation without marked ownership discards the old composition")
     func sameClientActivationWithoutMarkedOwnershipFailsClosed() {
         let (session, composer, client) = makeMarkedSession()
