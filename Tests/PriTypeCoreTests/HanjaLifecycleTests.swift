@@ -182,6 +182,83 @@ struct HanjaCursorCacheTests {
     }
 }
 
+@Suite("Hanja cursor field lifecycle", .serialized)
+struct HanjaCursorFieldLifecycleTests {
+    @Test("Host-passed Tab cannot reuse the previous field's cached caret")
+    func hostPassedTabInvalidatesCachedCaret() throws {
+        CursorRectResolver.invalidateCache()
+        defer { CursorRectResolver.invalidateCache() }
+        let (client, session, previousFieldCaret) = try makeCachedSession()
+
+        session.observeHostNavigationKeyDown(
+            keyCode: KeyCode.tab,
+            passedToHost: true
+        )
+        #expect(session.contextNeedsRefresh)
+        #expect(session.refreshContextIfNeeded { _ in
+            context(bundleId: client.bundleID)
+        })
+
+        client.firstRectValue = .zero
+        #expect(CursorRectResolver.resolve(
+            client: client,
+            sessionID: ObjectIdentifier(session),
+            accessibilityResolver: { nil }
+        ) != previousFieldCaret)
+    }
+
+    @Test("Candidate-consumed Tab preserves the current field's cached caret")
+    func candidateConsumedTabPreservesCachedCaret() throws {
+        CursorRectResolver.invalidateCache()
+        defer { CursorRectResolver.invalidateCache() }
+        let (client, session, currentFieldCaret) = try makeCachedSession()
+
+        session.observeHostNavigationKeyDown(
+            keyCode: KeyCode.tab,
+            passedToHost: false
+        )
+        #expect(!session.contextNeedsRefresh)
+
+        client.firstRectValue = .zero
+        #expect(CursorRectResolver.resolve(
+            client: client,
+            sessionID: ObjectIdentifier(session),
+            accessibilityResolver: { nil }
+        ) == currentFieldCaret)
+    }
+
+    private func makeCachedSession() throws -> (FakeIMKTextInput, InputSession, NSRect) {
+        let client = FakeIMKTextInput()
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: HangulComposer(
+                statusBar: MockStatusBar(),
+                configuration: MockConfiguration()
+            )
+        )
+        let frame = try #require(NSScreen.screens.first?.frame)
+        let caret = NSRect(x: frame.midX, y: frame.midY, width: 0, height: 18)
+        client.firstRectValue = caret
+        #expect(CursorRectResolver.resolve(
+            client: client,
+            sessionID: ObjectIdentifier(session),
+            accessibilityResolver: { nil }
+        ) == caret)
+        return (client, session, caret)
+    }
+
+    private func context(bundleId: String) -> ClientContext {
+        ClientContext(
+            bundleId: bundleId,
+            hasTextInputCapability: true,
+            isLikelyDesktopArea: false,
+            isLightweight: false,
+            documentAccessSafe: true
+        )
+    }
+}
+
 @Suite("Hanja candidate lifecycle")
 struct HanjaCandidateLifecycleTests {
     @Test("Mode transition dismisses an open candidate panel")

@@ -254,6 +254,7 @@ final class InputSession: @unchecked Sendable {
     func observeHostNavigationKeyDown(keyCode: UInt16, passedToHost: Bool) {
         guard keyCode == KeyCode.tab, passedToHost else { return }
         previousTabPassedToHost = true
+        CursorRectResolver.invalidateCache()
         markContextStale()
     }
 

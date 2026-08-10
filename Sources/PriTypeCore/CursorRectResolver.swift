@@ -27,6 +27,20 @@ public enum CursorRectResolver {
     /// Call BEFORE committing the preedit: Chromium updates cursor position
     /// asynchronously after commit, so post-commit queries return garbage.
     static func resolve(client: IMKTextInput?, sessionID: ObjectIdentifier? = nil) -> NSRect {
+        resolve(
+            client: client,
+            sessionID: sessionID,
+            accessibilityResolver: { getCursorRectViaAccessibility() }
+        )
+    }
+
+    /// Deterministic variant for lifecycle tests that must distinguish cache fallback
+    /// from Accessibility fallback without querying the focused macOS application.
+    static func resolve(
+        client: IMKTextInput?,
+        sessionID: ObjectIdentifier?,
+        accessibilityResolver: () -> NSRect?
+    ) -> NSRect {
         let screens = NSScreen.screens
         var cursorRect = mouseFallbackRect(
             at: NSEvent.mouseLocation,
@@ -107,7 +121,7 @@ public enum CursorRectResolver {
 
             // Strategy 4: AX element position (rough approximation)
             if !resolved {
-                if let axRect = getCursorRectViaAccessibility() {
+                if let axRect = accessibilityResolver() {
                     cursorRect = axRect
                     resolved = true
                     resolvedFromFreshSource = true

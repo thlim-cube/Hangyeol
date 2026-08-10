@@ -11,6 +11,7 @@ final class FakeIMKTextInput: NSObject, IMKTextInput {
     var bundleID = "com.example.synthetic"
     var insertCalls: [(String, NSRange)] = []
     var markCalls: [String] = []
+    var firstRectValue = NSRect.zero
 
     private func plainString(_ value: Any?) -> String {
         if let attributed = value as? NSAttributedString { return attributed.string }
@@ -82,6 +83,6 @@ final class FakeIMKTextInput: NSObject, IMKTextInput {
         attributedSubstring(from: range)?.string
     }
     func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer!) -> NSRect {
-        .zero
+        firstRectValue
     }
 }
