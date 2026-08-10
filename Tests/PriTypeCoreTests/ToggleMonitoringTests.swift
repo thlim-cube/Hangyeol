@@ -79,12 +79,22 @@ struct SuppressedKeyPairTests {
         #expect(state.keyUp(keyCode: 105) == .passThrough)
     }
 
-    @Test("A repeat first observed mid-hold never triggers")
+    @Test("A repeat first observed mid-hold preserves the host key pair")
     func repeatWithoutInitialDown() {
         var state = RegularKeyPressState()
 
-        #expect(state.keyDown(keyCode: 49, isRepeat: true, matchesBinding: true) == .suppress)
-        #expect(state.keyUp(keyCode: 49) == .suppress)
+        #expect(state.keyDown(keyCode: 49, isRepeat: true, matchesBinding: true) == .passThrough)
+        #expect(state.keyDown(keyCode: 49, isRepeat: true, matchesBinding: true) == .passThrough)
+        #expect(state.keyUp(keyCode: 49) == .passThrough)
+    }
+
+    @Test("A passed-through down cannot become suppressed when modifiers change")
+    func passedThroughDownKeepsItsRoute() {
+        var state = RegularKeyPressState()
+
+        #expect(state.keyDown(keyCode: 49, isRepeat: false, matchesBinding: false) == .passThrough)
+        #expect(state.keyDown(keyCode: 49, isRepeat: true, matchesBinding: true) == .passThrough)
+        #expect(state.keyUp(keyCode: 49) == .passThrough)
     }
 
     @Test("Unbound down and up pass through")

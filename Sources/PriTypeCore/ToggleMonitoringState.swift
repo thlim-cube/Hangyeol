@@ -296,6 +296,13 @@ struct RegularKeyPressState {
         if passedThroughKeyCodes.contains(keyCode) {
             return .passThrough
         }
+        // A repeat without an owned initial down may belong to a cycle that already
+        // reached the host. Fail open and keep its remaining repeat/up events on
+        // that route even if the shortcut starts matching mid-hold.
+        if isRepeat {
+            passedThroughKeyCodes.insert(keyCode)
+            return .passThrough
+        }
         guard matchesBinding else { return .passThrough }
         guard suppressionAllowed else {
             passedThroughKeyCodes.insert(keyCode)
@@ -303,7 +310,7 @@ struct RegularKeyPressState {
         }
 
         suppressedKeyCodes.insert(keyCode)
-        return isRepeat ? .suppress : .triggerAndSuppress
+        return .triggerAndSuppress
     }
 
     mutating func keyUp(keyCode: Int64) -> SuppressedKeyAction {
