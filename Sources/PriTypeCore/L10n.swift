@@ -40,6 +40,28 @@ public enum L10n {
         public static var title: String { localized("settings.title") }
         public static var footer: String { localized("settings.footer") }
     }
+
+    // MARK: - Status Bar
+
+    public enum status {
+        public static var inputHealth: String { localized("status.inputHealth") }
+        public static var ready: String { localized("status.ready") }
+        public static var starting: String { localized("status.starting") }
+        public static var fallbackActive: String { localized("status.fallbackActive") }
+        public static var needsAttention: String { localized("status.needsAttention") }
+        public static var secureInputActive: String { localized("status.secureInputActive") }
+        public static var currentMode: String { localized("status.currentMode") }
+        public static var korean: String { localized("status.korean") }
+        public static var english: String { localized("status.english") }
+        public static var monitor: String { localized("status.monitor") }
+        public static var monitorStarting: String { localized("status.monitorStarting") }
+        public static var monitorWaitingForPermission: String { localized("status.monitorWaitingForPermission") }
+        public static var monitorUnavailable: String { localized("status.monitorUnavailable") }
+        public static var permissionRequired: String { localized("status.permissionRequired") }
+        public static var systemSecureInput: String { localized("status.systemSecureInput") }
+        public static var active: String { localized("status.active") }
+        public static var inactive: String { localized("status.inactive") }
+    }
     
     // MARK: - Keyboard Layout
     

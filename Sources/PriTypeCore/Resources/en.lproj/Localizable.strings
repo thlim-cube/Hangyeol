@@ -4,6 +4,25 @@
 "settings.title" = "Settings";
 "settings.footer" = "Designed for macOS";
 
+/* Status Bar */
+"status.inputHealth" = "Input Health";
+"status.ready" = "Ready";
+"status.starting" = "Starting";
+"status.fallbackActive" = "Fallback monitor active";
+"status.needsAttention" = "Needs attention";
+"status.secureInputActive" = "Secure input active";
+"status.currentMode" = "Current mode";
+"status.korean" = "Korean";
+"status.english" = "English";
+"status.monitor" = "Toggle monitor";
+"status.monitorStarting" = "Starting";
+"status.monitorWaitingForPermission" = "Waiting for permission";
+"status.monitorUnavailable" = "Unavailable";
+"status.permissionRequired" = "Required";
+"status.systemSecureInput" = "System Secure Input";
+"status.active" = "Active";
+"status.inactive" = "Inactive";
+
 /* Keyboard Layout */
 "keyboard.title" = "Keyboard Layout";
 "keyboard.2set" = "2-Set Standard";

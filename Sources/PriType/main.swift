@@ -13,6 +13,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         DebugLogger.log("AppDelegate: applicationDidFinishLaunching")
+
+        // The single registered input source cannot expose PriType's internal
+        // Korean/English mode through the macOS input-source icon. Create the
+        // authoritative 한/A indicator once at process launch instead.
+        StatusBarManager.shared.setup()
         
         // Initialize IMK Server
         _ = IMKServer(name: kConnectionName, bundleIdentifier: Bundle.main.bundleIdentifier)
@@ -59,6 +64,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     private func setupIOKit() {
         // Check/request Accessibility permission
         if !IOKitManager.hasAccessibilityPermission() {
+            StatusBarManager.shared.setMonitorBackend(.waitingForAccessibility)
             DebugLogger.log("Requesting Accessibility permission...")
             IOKitManager.requestAccessibilityPermission()
             
@@ -94,6 +100,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         RightCommandSuppressor.shared.onTapFailed = {
             DebugLogger.log("CGEventTap stopped repeatedly — activating IOKit fallback")
             let started = IOKitManager.shared.start()
+            StatusBarManager.shared.setMonitorBackend(started ? .iokitFallback : .unavailable)
             DebugLogger.log("IOKit fallback start = \(started)")
         }
         
@@ -102,10 +109,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         
         // IOKit backup: Only start and activate actual toggle if CGEventTap failed
         if eventTapStarted {
+            StatusBarManager.shared.setMonitorBackend(.cgEventTap)
             DebugLogger.log("Primary: CGEventTap started successfully")
         } else {
             DebugLogger.log("Primary: CGEventTap FAILED - IOKit taking over as primary")
             let started = IOKitManager.shared.start()
+            StatusBarManager.shared.setMonitorBackend(started ? .iokitFallback : .unavailable)
             DebugLogger.log("Primary: IOKit fallback start = \(started)")
         }
         

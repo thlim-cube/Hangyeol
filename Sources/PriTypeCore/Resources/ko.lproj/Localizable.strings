@@ -4,6 +4,25 @@
 "settings.title" = "설정";
 "settings.footer" = "Designed for macOS";
 
+/* Status Bar */
+"status.inputHealth" = "입력 상태";
+"status.ready" = "정상";
+"status.starting" = "시작 중";
+"status.fallbackActive" = "대체 감시 중";
+"status.needsAttention" = "확인 필요";
+"status.secureInputActive" = "보안 입력 중";
+"status.currentMode" = "현재 모드";
+"status.korean" = "한글";
+"status.english" = "영문";
+"status.monitor" = "전환키 감시";
+"status.monitorStarting" = "시작 중";
+"status.monitorWaitingForPermission" = "권한 대기 중";
+"status.monitorUnavailable" = "사용 불가";
+"status.permissionRequired" = "권한 필요";
+"status.systemSecureInput" = "시스템 보안 입력";
+"status.active" = "활성";
+"status.inactive" = "비활성";
+
 /* Keyboard Layout */
 "keyboard.title" = "자판 배열";
 "keyboard.2set" = "두벌식 표준";

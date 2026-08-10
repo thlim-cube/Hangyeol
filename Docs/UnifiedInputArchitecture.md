@@ -63,14 +63,15 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 
 과거 RollbackPlan은 Korean/English 두 가짜 모드 등록을 제안했지만 채택하지 않는다. 이유:
 
-- 메뉴바 모드 표시는 [StatusBarManager](../Sources/PriTypeCore/StatusBarManager.swift)의 `한`/`A`가 담당한다.
+- 메뉴바 모드 표시는 앱 시작 시 초기화되는 [StatusBarManager](../Sources/PriTypeCore/StatusBarManager.swift)의 `한`/`A`가 담당한다.
   가짜 영어 모드의 유일한 명분(메뉴 표시)이 불필요하다.
 - 두 모드는 전환마다 `selectInputMode:`라는 **또 다른 비동기 IMK 호출을 hot path에 추가**한다.
   이는 `composer.inputMode`와 desync 가능 → 우리가 제거하려던 race를 재도입한다.
 - 2.7대에서 고생한 입력 소스 중복, `tsVisibleInputModeOrderedArrayKey` 튜닝, stale ID 정리가 다시 필요해진다.
 
 **트레이드오프(수용):** 영어 모드일 때도 macOS 메뉴바의 입력 소스 아이콘은 PriType(한글)로 남는다.
-이는 2.6.5와 동일한 화면상 사소함이며, 사용자에겐 PriType 자체 `가`/`A` 표시가 실질 지표다.
+이는 2.6.5와 동일한 화면상 사소함이며, 사용자에겐 PriType 자체 `한`/`A` 표시가 실질 지표다.
+상태바 메뉴는 현재 모드와 전환키 감시 backend, 손쉬운 사용 권한, 시스템 Secure Input 활성 여부만 표시하며 입력 문자열은 수집하지 않는다.
 
 ### 2.2 상태 소유권
 
@@ -81,7 +82,7 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 | 전환 정책(Caps Lock·fallback) | `InputModeCoordinator` | 한 곳에서만 판단 |
 | IMK 세션 edge(commit·override·layout) | `PriTypeInputController` | imperative 경계 |
 | 실제 TIS source 선택 | **macOS만** | Caps Lock 경로 한정 |
-| 사용자 표시(한/A) | `StatusBarManager` | |
+| 사용자 표시(한/A)·입력 상태 metadata | `StatusBarManager` | 입력 문자열 미수집 |
 | TIS 조회·stale 정리 | `InputSourceManager` | hot path 제외 |
 
 ---
