@@ -107,6 +107,10 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             ToggleMonitorStatusStore.shared.failStart(.eventTap, issue: .accessibilityPermissionRequired)
             return false
         }
+
+        // Resolve persisted bindings on the start caller before the event tap
+        // can deliver its first callback. Hot-path getters are memory-only after this.
+        ConfigurationManager.shared.prewarmKeyBindingCache()
         
         // Observe keyUp too, so every suppressed regular/combo down has a
         // matching suppressed release and the host never receives an orphan up.

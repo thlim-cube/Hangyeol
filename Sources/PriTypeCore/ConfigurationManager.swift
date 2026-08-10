@@ -328,7 +328,8 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     
     // MARK: - Private Properties
     
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
+    private let keyBindingDataReader: @Sendable (String) -> Data?
     private let capsLockSwitchState = CapsLockSwitchStateCache(
         reader: ConfigurationManager.readCapsLockInputSourceSwitchState
     )
@@ -355,7 +356,19 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
         forKey: Keys.englishTextConvenienceFallbackEnabled
     )
     
-    private init() {
+    private convenience init() {
+        self.init(
+            defaults: .standard,
+            keyBindingDataReader: { UserDefaults.standard.data(forKey: $0) }
+        )
+    }
+
+    init(
+        defaults: UserDefaults,
+        keyBindingDataReader: @escaping @Sendable (String) -> Data?
+    ) {
+        self.defaults = defaults
+        self.keyBindingDataReader = keyBindingDataReader
         defaults.removeObject(forKey: "com.pritype.autoCapitalize")
         defaults.removeObject(forKey: "com.pritype.doubleSpacePeriod")
         observeCapsLockInputSourcePreferenceChanges()
@@ -433,6 +446,13 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     private var _cachedToggleBinding: KeyBinding?
     private var _cachedHanjaBinding: KeyBinding?
     private let keyBindingLock = NSLock()
+
+    /// Resolve both persisted bindings before a keyboard monitor can invoke its callback.
+    /// Subsequent callback reads stay on the in-memory fast path.
+    func prewarmKeyBindingCache() {
+        _ = toggleKeyBinding
+        _ = hanjaKeyBinding
+    }
     
     /// The user-configured toggle key binding
     ///
@@ -447,7 +467,7 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
                 return cached
             }
             let binding: KeyBinding
-            if let data = defaults.data(forKey: Keys.toggleKeyBinding),
+            if let data = keyBindingDataReader(Keys.toggleKeyBinding),
                let decoded = try? JSONDecoder().decode(KeyBinding.self, from: data) {
                 // Fn and Caps Lock are not supported as PriType custom toggle keys.
                 binding = (decoded.keyCode == 63 || decoded.keyCode == 57) ? .defaultToggle : decoded
@@ -481,7 +501,7 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
                 return cached
             }
             let binding: KeyBinding
-            if let data = defaults.data(forKey: Keys.hanjaKeyBinding),
+            if let data = keyBindingDataReader(Keys.hanjaKeyBinding),
                let decoded = try? JSONDecoder().decode(KeyBinding.self, from: data) {
                 // Sanitize: Fn key (63) is not supported in CGEventTap
                 binding = decoded.keyCode == 63 ? .defaultHanja : decoded

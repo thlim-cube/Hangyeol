@@ -217,6 +217,58 @@ struct ConfigurationManagerTests {
         #expect(ConfigurationManager.shared.rightCommandAsToggle)
         #expect(!ConfigurationManager.shared.controlSpaceAsToggle)
     }
+
+    @Test("Binding prewarm resolves both persisted values and keeps hot-path reads in memory")
+    func keyBindingPrewarmKeepsHotPathInMemory() throws {
+        let suiteName = "com.pritype.tests.key-binding-prewarm.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(ToggleKey.controlSpace.rawValue, forKey: "com.pritype.toggleKey")
+        let storedHanja = KeyBinding(keyCode: 105, modifiers: 0, displayName: "F13")
+        defaults.set(
+            try JSONEncoder().encode(storedHanja),
+            forKey: "com.pritype.hanjaKeyBinding"
+        )
+
+        let probe = BindingDataReadProbe(defaults: defaults)
+        let config = ConfigurationManager(
+            defaults: defaults,
+            keyBindingDataReader: probe.read
+        )
+
+        #expect(probe.readCount == 0)
+        config.prewarmKeyBindingCache()
+        #expect(probe.readCount == 2)
+        #expect(config.toggleKeyBinding == ToggleKey.controlSpace.asKeyBinding)
+        #expect(config.hanjaKeyBinding == storedHanja)
+
+        // Change persistent values behind the cache. A callback-style read must
+        // retain the prewarmed snapshot without touching UserDefaults again.
+        defaults.set(ToggleKey.rightCommand.rawValue, forKey: "com.pritype.toggleKey")
+        defaults.set(
+            try JSONEncoder().encode(KeyBinding.defaultHanja),
+            forKey: "com.pritype.hanjaKeyBinding"
+        )
+        for _ in 0..<1_000 {
+            #expect(config.toggleKeyBinding == ToggleKey.controlSpace.asKeyBinding)
+            #expect(config.hanjaKeyBinding == storedHanja)
+        }
+        #expect(probe.readCount == 2)
+
+        // Settings writes still replace the in-memory snapshot immediately and
+        // persist it without forcing a read on the callback path.
+        let updatedToggle = KeyBinding(keyCode: 62, modifiers: 0, displayName: "우측 Control")
+        config.toggleKeyBinding = updatedToggle
+        config.hanjaKeyBinding = .defaultHanja
+        #expect(config.toggleKeyBinding == updatedToggle)
+        #expect(config.hanjaKeyBinding == .defaultHanja)
+        #expect(probe.readCount == 2)
+        #expect(try JSONDecoder().decode(
+            KeyBinding.self,
+            from: #require(defaults.data(forKey: "com.pritype.toggleKeyBinding"))
+        ) == updatedToggle)
+    }
     
     @Test("System double-space-period setting is readable")
     func systemDoubleSpacePeriodSettingIsReadable() {
@@ -224,4 +276,23 @@ struct ConfigurationManagerTests {
         #expect(value == true || value == false)
     }
 
+}
+
+private final class BindingDataReadProbe: @unchecked Sendable {
+    private let defaults: UserDefaults
+    private let lock = NSLock()
+    private var storedReadCount = 0
+
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
+    }
+
+    var readCount: Int {
+        lock.withLock { storedReadCount }
+    }
+
+    func read(_ key: String) -> Data? {
+        lock.withLock { storedReadCount += 1 }
+        return defaults.data(forKey: key)
+    }
 }
