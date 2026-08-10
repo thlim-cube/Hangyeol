@@ -626,15 +626,41 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         #endif
         guard let currentSession = session else { return }
         let activeSession = ensureSession(for: currentSession.client)
-        guard !shouldPassThroughSecureInput(
+        let isSecureInput = shouldPassThroughSecureInput(
             client: activeSession.client,
             context: activeSession.context
-        ) else {
-            activeSession.composer.dismissHanjaCandidates()
-            activeSession.discardForSecureInput()
-            return
+        )
+        Self.routeExternalHanjaLookup(
+            in: activeSession,
+            isSecureInput: isSecureInput,
+            reconcileOwnership: {
+                _ = InputModeCoordinator.shared.reconcileSystemOwnershipIfNeeded(for: self)
+            },
+            performLookup: { composer in
+                composer.triggerHanjaLookup()
+            }
+        )
+    }
+
+    /// Preserve the same fail-closed ordering as keyDown for an external shortcut.
+    /// Ownership reconciliation may finalize composition, so it must remain behind
+    /// the secure gate and complete before the composer's Korean-mode guard runs.
+    @discardableResult
+    static func routeExternalHanjaLookup(
+        in session: InputSession,
+        isSecureInput: Bool,
+        reconcileOwnership: () -> Void,
+        performLookup: (HangulComposer) -> Void
+    ) -> Bool {
+        guard !isSecureInput else {
+            session.composer.dismissHanjaCandidates()
+            session.discardForSecureInput()
+            return false
         }
-        activeSession.composer.triggerHanjaLookup()
+
+        reconcileOwnership()
+        performLookup(session.composer)
+        return true
     }
 
     // MARK: - Input Method Menu

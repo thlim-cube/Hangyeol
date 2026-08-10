@@ -183,6 +183,107 @@ struct InputModeOwnershipTests {
         #expect(client.document == "ㄱ")
         #expect(client.insertCalls.count == 1)
     }
+
+    @Test("Pending ownership reconciles before a nonsecure external Hanja lookup")
+    func pendingOwnershipReconcilesBeforeExternalHanjaLookup() {
+        let client = FakeIMKTextInput()
+        let store = InputModeStore()
+        let composer = makeComposer(store: store)
+        let session = InputSession(
+            client: client,
+            context: ClientContext(
+                bundleId: client.bundleID,
+                hasTextInputCapability: true,
+                isLikelyDesktopArea: false,
+                documentAccessSafe: true
+            ),
+            composer: composer
+        )
+        composer.setInputMode(.english)
+        var tracker = pendingOwnershipTracker()
+        var modeAtLookup: InputMode?
+
+        let routed = PriTypeInputController.routeExternalHanjaLookup(
+            in: session,
+            isSecureInput: false,
+            reconcileOwnership: {
+                guard tracker.hasPendingKoreanReconciliation else { return }
+                PriTypeInputController.applyMacOSOwnedInputSourceBoundary(to: session) {}
+                tracker.markReconciled()
+            },
+            performLookup: { lookupComposer in
+                modeAtLookup = lookupComposer.inputMode
+            }
+        )
+
+        #expect(routed)
+        #expect(modeAtLookup == .korean)
+        #expect(composer.inputMode == .korean)
+        #expect(!tracker.hasPendingKoreanReconciliation)
+    }
+
+    @Test("Secure external Hanja keeps ownership pending without client writes")
+    func secureExternalHanjaKeepsPendingOwnership() {
+        let client = FakeIMKTextInput()
+        let store = InputModeStore()
+        let composer = makeComposer(store: store)
+        let session = InputSession(
+            client: client,
+            context: ClientContext(
+                bundleId: client.bundleID,
+                hasTextInputCapability: true,
+                isLikelyDesktopArea: false,
+                documentAccessSafe: true
+            ),
+            composer: composer
+        )
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        makeComposer(store: store).setInputMode(.english)
+        var tracker = pendingOwnershipTracker()
+        let insertCountBefore = client.insertCalls.count
+        let markCountBefore = client.markCalls.count
+        var didReconcile = false
+        var didLookup = false
+
+        let routed = PriTypeInputController.routeExternalHanjaLookup(
+            in: session,
+            isSecureInput: true,
+            reconcileOwnership: {
+                didReconcile = true
+                guard tracker.hasPendingKoreanReconciliation else { return }
+                PriTypeInputController.applyMacOSOwnedInputSourceBoundary(to: session) {}
+                tracker.markReconciled()
+            },
+            performLookup: { _ in
+                didLookup = true
+            }
+        )
+
+        #expect(!routed)
+        #expect(!didReconcile)
+        #expect(!didLookup)
+        #expect(tracker.hasPendingKoreanReconciliation)
+        #expect(composer.inputMode == .english)
+        #expect(!composer.hasActiveComposition)
+        #expect(client.insertCalls.count == insertCountBefore)
+        #expect(client.markCalls.count == markCountBefore)
+    }
+
+    private func pendingOwnershipTracker() -> InputModeOwnershipTracker {
+        var tracker = InputModeOwnershipTracker()
+        _ = tracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: true,
+            selectedInputSource: .other
+        ))
+        _ = tracker.observe(InputModeOwnershipSnapshot(
+            macOSOwnsSwitching: true,
+            selectedInputSource: .priType
+        ))
+        return tracker
+    }
 }
 
 @Suite("Process-wide input ownership")
