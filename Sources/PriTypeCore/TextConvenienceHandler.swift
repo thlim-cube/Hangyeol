@@ -126,9 +126,13 @@ public final class TextConvenienceHandler: @unchecked Sendable {
     /// to prevent duplicate transformations in hosts that already handle them.
     public func handleEnglishModeInput(_ event: NSEvent, delegate: HangulComposerDelegate) -> Bool {
         guard isEnglishFallbackEnabled(),
-              event.type == .keyDown,
-              !event.isARepeat,
+              event.type == .keyDown else {
+            return false
+        }
+
+        guard !event.isARepeat,
               shouldHandleTextConvenience(event) else {
+            resetSpaceState()
             return false
         }
 

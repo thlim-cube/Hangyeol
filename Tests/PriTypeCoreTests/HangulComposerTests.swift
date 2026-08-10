@@ -170,6 +170,58 @@ struct HangulComposerTests {
         #expect(delegate.markedText.isEmpty)
     }
 
+    @Test("English fallback resets space timing after host-owned keyDown")
+    func englishFallbackResetsSpaceTimingAfterHostKeyDown() {
+        let interveningEvents: [(String, NSEvent)] = [
+            (
+                "modifier shortcut",
+                TestEventFactory.keyEvent(
+                    char: "v",
+                    keyCode: 9,
+                    modifiers: .command
+                )!
+            ),
+            (
+                "auto-repeat",
+                TestEventFactory.keyEvent(
+                    char: " ",
+                    keyCode: KeyCode.space,
+                    isARepeat: true
+                )!
+            ),
+            (
+                "non-fallback host key",
+                TestEventFactory.keyEvent(char: "Z", keyCode: 6)!
+            )
+        ]
+
+        for (caseName, interveningEvent) in interveningEvents {
+            let configuration = MockConfiguration()
+            configuration.englishTextConvenienceFallbackEnabled = true
+            let (composer, delegate, _) = makeComposer(configuration: configuration)
+            composer.setInputMode(.english)
+            let space = TestEventFactory.keyEvent(
+                char: " ",
+                keyCode: KeyCode.space
+            )!
+
+            delegate.fullText = "x"
+            #expect(!composer.handle(space, delegate: delegate))
+            delegate.fullText.append(" ")
+            #expect(
+                !composer.handle(interveningEvent, delegate: delegate),
+                "\(caseName) remains host-owned"
+            )
+
+            delegate.fullText = "y "
+            #expect(
+                !composer.handle(space, delegate: delegate),
+                "\(caseName) must break the previous Space timing chain"
+            )
+            #expect(delegate.fullText == "y ")
+        }
+    }
+
     @Test("English mode applies auto-capitalization fallback")
     func englishModeAutoCapitalizationFallback() {
         let configuration = MockConfiguration()
