@@ -11,7 +11,7 @@
 "status.fallbackActive" = "대체 감시 중";
 "status.needsAttention" = "확인 필요";
 "status.secureInputActive" = "보안 입력 중";
-"status.currentMode" = "현재 모드";
+"status.currentMode" = "표시 모드";
 "status.korean" = "한글";
 "status.english" = "영문";
 "status.monitor" = "전환키 감시";

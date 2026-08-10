@@ -11,7 +11,7 @@
 "status.fallbackActive" = "Fallback monitor active";
 "status.needsAttention" = "Needs attention";
 "status.secureInputActive" = "Secure input active";
-"status.currentMode" = "Current mode";
+"status.currentMode" = "Displayed mode";
 "status.korean" = "Korean";
 "status.english" = "English";
 "status.monitor" = "Toggle monitor";

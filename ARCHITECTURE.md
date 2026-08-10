@@ -58,9 +58,11 @@ keyDown ──► PriTypeInputController.handle()
               2. 중복 keyDown 억제           ← 동일 물리 이벤트 2회 전달 호스트(예: KakaoTalk) 방어, 전 모드 공통
               3. markKeystroke(bundleId)    ← 한자 cross-app 검증용
               4. Secure Input 게이트         ← 통과 시 session.discardForSecureInput() 후 raw pass-through
-              5. pending 소유권 정합화       ← 실제 macOS 입력 소스 경계만, Secure Input 통과 후 적용
-              6. ensureAdapterMatchesPolicy ← 실험 플래그 토글 등 delivery 모드 변경 반영
-              7. HangulComposer.handle(event, delegate: session.adapter)
+              5. field generation 승인       ← 현재 비보안 field에서만 client write 허용
+              6. pending 소유권 정합화       ← 실제 macOS 입력 소스 경계만, Secure Input 통과 후 적용
+              7. deferred Roman layout sync ← Secure custom toggle의 보류 작업
+              8. ensureAdapterMatchesPolicy ← 실험 플래그 토글 등 delivery 모드 변경 반영
+              9. HangulComposer.handle(event, delegate: session.adapter)
 
 조합 종료(어떤 이유든) ──► InputSession.finalize(reason:)   ★ 단일 경로
               • appDeactivate        — NSWorkspace 비활성 옵저버 (가장 이른 시점, 호스트가 아직 insertText를 수용)
@@ -75,13 +77,13 @@ keyDown ──► PriTypeInputController.handle()
 
 1. macOS가 키 이벤트를 `PriTypeInputController.handle()`에 전달한다.
 2. `ensureSession()`이 클라이언트·`ClientContext`·delivery 어댑터·중복키 상태·포커스 안전망을 묶은 `InputSession`을 반환한다(같은 클라이언트면 재사용, 다르면 재분석 후 교체).
-3. Secure Input·중복 keyDown 판정을 통과하면 `HangulComposer.handle()`에 위임한다.
+3. Secure Input·중복 keyDown 판정을 통과한 현재 field generation만 client write를 승인한 뒤 `HangulComposer.handle()`에 위임한다.
 4. `HangulComposer`는 libhangul-swift의 `ThreadSafeHangulInputContext`로 한글 조합을 수행하고, preedit과 commit을 어댑터 콜백으로 전달한다.
 5. `TextDelivery`의 어댑터(`MarkedTextAdapter` / `DirectInsertionAdapter` / `ImmediateModeAdapter`)가 `IMKTextInput` 프로토콜로 텍스트를 앱에 전달한다. 모드 선택은 `TextDeliveryPolicy.mode(for:)` 한 곳에서 결정한다.
 
 ### 조합 종료 단일 경로 (InputSession.finalize)
 
-과거 KakaoTalk 계열 버그(stranded preedit, 마지막 글자 유실, 이모티콘 팝업 깜빡임)는 조합 종료 이벤트마다 commit 시퀀스가 조금씩 달랐던 데서 왔다. 현재는 모든 종료 이벤트가 `InputSession.finalize(reason:)` 하나로 수렴한다. marked-text 경로는 `replacementRange = NSNotFound`인 canonical 1-op commit을 사용한다. 직접 삽입 경로는 이미 문서에 있는 실제 텍스트를 재삽입하지 않고 엔진만 flush하며, PriType가 만든 stale marked fallback만 소유 범위를 확인한 뒤 정리한다.
+과거 KakaoTalk 계열 버그(stranded preedit, 마지막 글자 유실, 이모티콘 팝업 깜빡임)는 조합 종료 이벤트마다 commit 시퀀스가 조금씩 달랐던 데서 왔다. 현재는 모든 종료 이벤트가 `InputSession.finalize(reason:)` 하나로 수렴한다. 현재 field generation이 비보안으로 확인된 경우에만 marked-text 경로에서 `replacementRange = NSNotFound`인 canonical 1-op commit을 사용하며, stale·미확인 generation은 client write 없이 engine·adapter·후보 상태를 폐기한다. 직접 삽입 경로는 이미 문서에 있는 실제 텍스트를 재삽입하지 않고 엔진만 flush하며, PriType가 만든 stale marked fallback도 같은 generation의 소유권이 확인된 경우에만 정리한다.
 
 - 포커스 상실: 세션이 소유한 `NSWorkspace` 비활성 옵저버가 IMK `deactivateServer`보다 먼저 finalize한다(네이티브 호스트가 이미 resign한 뒤의 insertText는 무시되기 때문). 옵저버는 세션 자신의 앱과만 비교하며, `deactivateServer`에서 반드시 disarm해 stale 옵저버가 이후 세션의 조합을 엉뚱한 클라이언트로 흘리는 것을 막는다.
 - controller 교체: 새 controller의 `activateServer`가 이전 controller의 늦은 `deactivateServer`보다 먼저 올 수 있다. 새 owner를 공개하기 전에 이전 session을 `.sessionReplacement`로 finalize하고 옵저버를 해제한다. 늦게 도착한 이전 controller의 release는 새 owner를 지우지 못한다.
@@ -92,7 +94,9 @@ keyDown ──► PriTypeInputController.handle()
 
 `RightCommandSuppressor`가 `CGEventTap`으로 시스템 레벨 키 이벤트를 가로채서 사용자가 설정한 전환키(기본: 우측 Command)와 한자키(기본: 우측 Option)를 처리한다. Key Recorder 방식으로 아무 키나 등록할 수 있다. `CGEventTap`은 일시 비활성화 시 물리 modifier 상태를 다시 동기화해 재활성화한다. 60초 안에 세 번째 비활성화가 발생하면 tap 자원을 먼저 완전히 해제한 뒤 IOKit으로 영구 인계한다. `ToggleMonitorStatusStore`가 시작 권한과 상태를 직렬화하므로 두 backend가 동시에 입력을 소유하지 않는다. IOKit fallback은 HID 매핑 가능한 modifier-only 바인딩만 지원하며, regular/combo 바인딩은 임의로 흉내 내지 않고 상태바의 제한 사항으로 노출한다.
 
-현재 한/영 전환 구조의 정식 명세는 [UnifiedInputArchitecture.md](Docs/UnifiedInputArchitecture.md)다(선택지 비교 원본은 [InputArchitectureHybridRollbackPlan.md](Docs/InputArchitectureHybridRollbackPlan.md), superseded). 핵심은 custom 전환키 경로에서 실제 ABC 입력 소스를 선택하지 않고, PriType 내부 mode 전환을 단일 트랜잭션으로 처리하는 것이다. 이 경로에서는 PriType 단일 입력 소스가 IMK 세션을 계속 소유하고, 영어는 조합 없이 raw key를 그대로 pass-through한다. 전환 요청은 stale session context를 먼저 갱신하며, Secure Input이면 client를 건드리지 않고 내부 mode만 바꾼 뒤 Roman layout 동기화를 다음 비보안 입력 직전까지 미룬다. Caps Lock 기반 실제 입력 소스 전환은 macOS가 소유한다.
+regular/combo 한자 바인딩은 `HanjaShortcutSessionState`가 `nonsecure`일 때만 down/repeat/up 쌍을 소비하고, `secure` 또는 `unknown`이면 전체 쌍을 host로 통과시킨다. modifier-only 한자키는 전역 단축키 계약을 유지하되 controller의 Secure Input 게이트가 후보 조회를 중단한다.
+
+현재 한/영 전환 구조의 정식 명세는 [UnifiedInputArchitecture.md](Docs/UnifiedInputArchitecture.md)다(선택지 비교 원본은 [InputArchitectureHybridRollbackPlan.md](Docs/InputArchitectureHybridRollbackPlan.md), superseded). 핵심은 custom 전환키 경로에서 실제 ABC 입력 소스를 선택하지 않고, PriType 내부 mode 전환을 단일 트랜잭션으로 처리하는 것이다. 이 경로에서는 PriType 단일 입력 소스가 IMK 세션을 계속 소유하고, 영어 기본 설정은 조합 없이 raw key를 그대로 pass-through한다. 전환 요청은 stale session context를 먼저 갱신하며, Secure Input이면 client를 건드리지 않고 내부 mode만 바꾼 뒤 Roman layout 동기화를 다음 비보안 입력 직전까지 미룬다. Caps Lock 기반 실제 입력 소스 전환은 macOS가 소유한다.
 
 ```mermaid
 flowchart TD
@@ -111,7 +115,7 @@ flowchart TD
     O --> I
     H --> I{"mode"}
     I -->|"korean"| J["libhangul 조합"]
-    I -->|"english"| K["순수 pass-through (return false), macOS가 영문 처리"]
+    I -->|"english"| K["기본 설정: pass-through (return false), macOS가 영문 처리"]
 ```
 
 이 구조에서 `InputSourceManager`는 입력 소스 전환의 주체가 아니다. TIS 목록 조회, stale entry 정리, 설치/마이그레이션 보조만 담당한다. 전환 hot path에 `TISSelectInputSource(com.apple.keylayout.ABC)`가 들어오면 2.7대에서 관찰된 한/영 씹힘과 모드 불일치가 재발할 수 있다.
@@ -121,12 +125,12 @@ flowchart TD
 | 상태 | 소유자 | 원칙 |
 |---|---|---|
 | 전환 요청 정책 | `InputModeCoordinator` | Caps Lock 정책과 active controller fallback을 한 곳에서 판단한다. |
-| 실제 조합 모드 | `HangulComposer.inputMode` | 2.6.5처럼 PriType 내부 mode의 source of truth다. |
+| 실제 한/영 모드 | process-global `InputModeStore` | 모든 session composer가 읽는 PriType 내부 mode의 source of truth다. |
 | host input mode 표시 | macOS TIS | custom 전환키에서는 입력 소스를 바꾸지 않으므로 메뉴바 source는 PriType 단일 항목으로 유지한다. |
 | macOS 실제 입력 소스 | macOS TIS | custom 전환키에서는 건드리지 않는다. Caps Lock 경로에서만 시스템이 소유한다. |
 | 영어 레이아웃 | IMK session | `overrideKeyboardWithKeyboardNamed`로 ABC/US 계열 layout을 요청한다. |
 
-PriType의 `ComponentInputModeDict`는 단일 mode `com.pritype.inputmethod.v2`만 등록한다. 내부 한/영 상태는 `HangulComposer.inputMode`가 들고, custom 전환키는 실제 Apple `ABC` source나 별도 English input mode를 선택하지 않는다.
+PriType의 `ComponentInputModeDict`는 단일 mode `com.pritype.inputmethod.v2`만 등록한다. 내부 한/영 상태는 process-global `InputModeStore`가 소유하고 각 session의 `HangulComposer`가 이를 읽는다. custom 전환키는 실제 Apple `ABC` source나 별도 English input mode를 선택하지 않는다.
 
 ## 한자 후보창 좌표 결정
 
@@ -170,6 +174,8 @@ PriType의 `ComponentInputModeDict`는 단일 mode `com.pritype.inputmethod.v2`�
 
 libhangul은 preedit 문자를 초성 자모(Choseong Jamo, U+1100~U+1112)로 반환하지만, JSON 키는 호환 자모(Compatibility Jamo, U+3131~U+314E)를 사용한다. `HanjaManager`에서 `Character.isChoseongJamo` 판별 후 `choseongToCompatibility`로 변환하여 검색한다.
 
+후보창을 열 때 generation·client identity·`InputSession` identity를 snapshot한다. mode/session/focus/mouse/Secure discard 경계는 후보창을 닫고 generation을 무효화하며, 늦게 도착한 callback은 client write 전에 snapshot 불일치로 중단한다.
+
 ```
 libhangul preedit: ᄆ (U+1106)
   → isChoseongJamo: true
@@ -209,7 +215,7 @@ libhangul preedit: ᄆ (U+1106)
 | **ConfigurationManager** | `UserDefaults` 기반 설정 관리. 자판 배열, `KeyBinding`(한/영 전환키·한자 입력키), 자동 대문자, 더블스페이스 마침표, 자동 업데이트 확인 옵션을 저장한다. 기존 `ToggleKey` enum에서 `KeyBinding` struct로의 자동 마이그레이션을 지원한다. `ConfigurationProviding` 프로토콜로 테스트 시 목(mock) 주입이 가능하다. |
 | **SettingsWindowController** | SwiftUI `NSHostingController` 기반 설정 창. Liquid Glass 스타일, Key Recorder(키 녹음) UI, 접근성 권한 확인/요청, Caps Lock 입력 소스 전환 안내를 포함한다. |
 | **StatusBarManager** | 앱 시작 시 생성되는 `NSStatusItem` 기반 표시기. `setMode(_:)`는 실제 mode를 기록하고, `setPendingMode(_:)`는 client/store를 건드리지 않는 다음 일반 입력 예상 mode만 기록한다. 한국어 정합화가 예정되면 실제 mode를 쓰기 전에 `"한"`을 우선 표시하며 실제 mode write·취소·정합화 완료 시 pending을 제거한다. 중앙 감시 상태에서 backend·제한 사항을 받아 손쉬운 사용 권한과 Secure Input 상태를 함께 표시하되 입력 문자열은 받지 않는다. |
-| **TextConvenienceHandler** | macOS 더블스페이스 마침표 설정을 한글 조합 경로에서 반영한다. 영어 모드는 순수 pass-through라 이 핸들러를 거치지 않는다(영문 편의는 macOS 소유). |
+| **TextConvenienceHandler** | macOS 더블스페이스 마침표 설정을 한글 조합 경로에서 반영한다. 영어 기본값은 host pass-through이며, 사용자가 영어 편의 대체 처리를 명시적으로 켠 경우에만 자동 대문자·스마트 문장부호·더블스페이스를 처리한다. |
 | **UpdateChecker** | GitHub Releases API를 통해 최신 버전을 확인한다. 24시간 스로틀, 실패 시 다음 실행 시 재시도, 시맨틱 버전 비교(`.numeric`)를 사용한다. |
 | **UpdateNotifier** | `UNUserNotificationCenter`를 사용해 업데이트 알림을 표시한다. 알림 클릭 시 릴리즈 페이지를 연다. |
 | **InputModeCoordinator** | 한/영 전환 조율 계층. custom 전환키 요청과 macOS 소유권 경계를 추적하되 mode를 직접 쓰지 않는다. 소유권 정합화는 pending으로 보관했다가 Secure Input 검사를 통과한 controller의 단일 전환 트랜잭션으로 넘긴다. |
@@ -248,8 +254,11 @@ fail-closed 정책을 사용한다.
 - 전역 플래그가 꺼져 있어도 client가 marked-text capability를 제공하지 않고 selection도 무효이면
   secure/non-text 영역으로 보고 pass-through한다.
 - pass-through 진입 시 libhangul과 delivery adapter의 추적만 버리고 client 문서에는 commit·clear를
-  보내지 않는다. pending Caps/TIS 소유권 정합화도 Secure Input 게이트 뒤로 미룬다. 상태바에는
-  다음 일반 입력의 예상 `한`만 표시하며 실제 `InputModeStore`와 client는 변경하지 않는다.
+  보내지 않는다.
+- pending Caps/TIS 소유권 정합화는 Secure Input 게이트 뒤로 미룬다. 이 경우 상태바에는 다음 일반
+  입력의 예상 `한`만 표시하며 실제 `InputModeStore`와 client는 변경하지 않는다.
+- Secure Input에서 사용자가 custom 전환키를 누른 경우에는 client write와 Roman layout override 없이
+  실제 내부 mode와 상태 표시만 바꾸고, Roman layout 동기화는 다음 비보안 입력 직전까지 보류한다.
 
 ## 동시성 (Concurrency) 및 스레드 안전성
 
@@ -280,6 +289,8 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ```
 
 > **참고**: Command Line Tools SDK에는 Testing 모듈이 포함되어 있지 않으므로 `DEVELOPER_DIR`로 Xcode SDK를 지정해야 한다.
+
+자동 회귀는 fake `IMKTextInput`, synthetic `NSEvent`, mock candidate presenter 기반이다. 설치된 IME의 실제 InputMethodKit callback 순서와 TextEdit·GoodNotes·KakaoTalk·Chromium/Electron·Secure field 동작은 별도 실기기 검증이 필요하다.
 
 ## 디렉토리 구조
 
