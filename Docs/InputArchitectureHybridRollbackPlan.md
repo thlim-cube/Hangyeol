@@ -8,11 +8,14 @@
 > 가짜 모드 2개를 버린 근거는 UnifiedInputArchitecture.md §2.1을 보라. 이 문서는 설계 검토 시의 선택지 비교와
 > 회귀 체크리스트 원본으로만 보존한다.
 
-## 구현 상태
+## 문서 상태와 사용 범위
 
-이 문서의 권장안은 현재 작업트리에 반영되어 있다. custom 한/영 전환키는 `InputModeCoordinator -> PriTypeInputController -> HangulComposer` 경로로만 처리하며, custom toggle hot path에서는 실제 `com.apple.keylayout.ABC` 입력 소스나 별도 PriType English input mode를 선택하지 않는다.
+이 문서는 현재 작업트리의 구현 상태나 구현 지침이 아니다. 아래 본문에서 `현재`, `현행`, `권장안`,
+`구현`이라고 쓴 부분은 2026-05-31 설계 검토 당시의 문맥을 보존한 것이다.
 
-이 문서는 앞으로 한/영 전환 구조를 점검할 때의 설계 명세와 회귀 검증 체크리스트로 유지한다.
+현재 구조를 판단하거나 새 구현·회귀 검증을 설계할 때는
+[UnifiedInputArchitecture.md](UnifiedInputArchitecture.md)와 [ARCHITECTURE.md](../ARCHITECTURE.md)만 따른다.
+이 문서는 당시 선택지 비교와 결정 배경을 확인하는 용도로만 사용한다.
 
 ## 목적
 
@@ -648,9 +651,14 @@ git switch -c codex/hybrid-input-architecture
 - 카카오톡 focus-loss 후 밑줄/마지막 글자 덮어쓰기 재발 없음
 - Finder ghost window 재발 없음
 
-## 계측 계획
+## 과거 계측 제안 (폐기됨)
 
-디버그 빌드에서만 다음 로그를 추가한다.
+> **폐기된 비안전 예시 — 구현 금지:** 아래 형식은 당시 제안 원문을 보존한 것이며 현재 진단 계약이 아니다.
+> raw `client`, `chars`, `modeID`, `keyCode`는 입력 내용이나 client 식별 정보를 노출할 수 있으므로 구현하거나
+> 복사하지 않는다. 현재 입력 진단은 [UnifiedInputArchitecture.md](UnifiedInputArchitecture.md)의
+> content-free structured metadata 계약만 사용한다.
+
+당시에는 디버그 빌드에 다음 로그를 추가하자는 제안이었다.
 
 ```text
 ToggleRequest source=CGEventTap key=RightCommand oldMode=korean nextMode=englishFake
@@ -660,9 +668,9 @@ FirstKeyAfterToggle keyCode=... chars=... composerMode=english consumed=false la
 KeyboardOverride requested=com.apple.keylayout.ABC result=...
 ```
 
-릴리즈 빌드에서는 로그 문자열 생성 자체가 없어야 한다.
+당시 제안도 릴리즈 빌드에서는 로그 문자열 생성 자체가 없어야 한다고 보았다.
 
-성능 기준:
+당시 성능 기준:
 
 - custom toggle callback 내부 동기 작업: 목표 1ms 미만
 - toggle부터 composer mode 변경 완료까지: 목표 5ms 미만
