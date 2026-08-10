@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 입력 정확도
+- 같은 물리 keyDown이 IMK에서 재전달될 때 이전 처리 결과와 관계없이 중복을 소비하도록 바꿨습니다. 50ms 추정 대신 이벤트 identity·전체 signature·동일 main-queue delivery turn을 사용해 Return 이중 실행을 막으면서 실제 빠른 연타는 보존합니다. 빈 `characters`의 Return/Numpad Enter도 keyCode로 조합을 확정합니다.
+- libhangul 조합을 client별 `InputSession`이 소유하고, process active controller는 이전 session을 확정한 뒤 교체하도록 했습니다. activate/deactivate 순서 역전과 인계 중 lifecycle 재진입이 새 owner를 덮어쓰지 않습니다.
+- 직접 삽입의 marked fallback, delivery mode 변경, 무효 selection 이후 fail-closed 복구를 보강했습니다. 검증하지 못한 문서 범위는 삭제하지 않으며, 손상 대신 현재 미검증 타건을 버린 뒤 다음 조합 경계에서 입력을 재개합니다.
+- 한자 후보창은 client/session/generation 수명주기를 검증하고 모든 클릭·모드·포커스 경계에서 stale 선택을 무효화합니다. 음수 좌표의 보조 화면, 화면별 AX 변환, 하단 mouse fallback을 지원합니다.
+
+### 한/영 전환과 상태
+- CGEventTap이 반복 실패하면 tap을 완전히 해제한 뒤 IOKit으로 한 번만 인계합니다. down/repeat/up 쌍, 좌우 modifier 상태와 fallback press 수명주기를 추적해 한 물리키가 두 번 전환되는 경로를 막았습니다.
+- IOKit fallback의 modifier-only 지원 범위를 중앙 상태에 기록하고, regular/combo 미지원과 시작 실패를 메뉴 막대 상태에 표시합니다.
+- Caps Lock 입력 소스 전환 설정을 hot path 밖에서 캐시하고, macOS 소유권 활성화 또는 ABC→PriType 복귀 때 다음 비보안 입력 전에 내부 모드를 한국어로 정합화합니다. 일반 탭·앱·필드 전환은 마지막 PriType 모드를 유지합니다.
+- 앱 시작 시 `한`/`A` 상태 표시를 생성하고 현재 backend, 제한 사항, 손쉬운 사용 권한, Secure Input 상태를 표시합니다. 연속 상태 알림은 중앙 저장소의 최신 snapshot을 main actor에서 순서대로 적용합니다.
+
+### 설정과 진단
+- 영어 편의 처리는 명시적 선택 기능으로 전환하고, 영어 모드에서 현재 Dvorak·AZERTY 등 ASCII-capable 자판을 존중하는 옵션을 추가했습니다.
+- DEBUG 입력 로그를 문자·preedit·문서 내용·bundle ID가 없는 구조화 metadata로 제한했습니다. 전환 요청부터 main 실행, 조합 확정, Roman layout override, mode write, 첫 handle까지 monotonic 지연을 추적하며 Release에서는 trace 비용이 없습니다.
+
 ## [2.7.5] - 2026-07-31
 
 ### 수정 (탭 전환 시 마지막 한/영 모드 유지)

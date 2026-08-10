@@ -5,6 +5,12 @@
 > 대상: PriType-Swift 유지보수자 · 기준: v2.6.5 단일‑IME 내부 한/영 토글 모델 유지·보완
 > 검증 기준일: 2026-06-05 · 모든 코드 주장은 현행 소스(`HEAD`, commit `fd72334`)와 `git show v2.6.5:` 대조로 확인함.
 
+> **문서 상태: historical proposal.** 이 문서는 2026-06-05 시점의 설계 후보와 단계별 수용 기준을
+> 보존한다. 모든 항목이 현재 구현됐다는 뜻은 아니다. 현행 계약은
+> [UnifiedInputArchitecture.md](UnifiedInputArchitecture.md)와 [ARCHITECTURE.md](../ARCHITECTURE.md)를
+> 따른다. 특히 Caps Lock은 PriType custom binding으로 가로채지 않고 macOS 입력 소스 전환이 소유하며,
+> IOKit fallback은 modifier-only 바인딩만 지원하고 나머지는 상태바에 제한으로 표시한다.
+
 ---
 
 ## 0. 결정된 방향 (재론의 금지)

@@ -236,18 +236,21 @@ direct-insertion 상태를 **`DirectInsertionAdapter`** 한 곳에 격리했다.
 `!ClientCompatibilityPolicy.directInsertionDenied`(Electron/Chromium/브라우저 denylist + 키워드
 휴리스틱).
 
-처음엔 native 허용목록 → 사용자 요청으로 허용목록 제거(모든 앱 시도) → **온디바이스 로그 분석 후
-Electron/Chromium denylist 도입.** 이유: Claude Desktop 등 Electron 앱에서 `selectedRange`/
-`attributedSubstring`이 비동기·부정확이라 캐럿 안정성 read-back이 매 키마다 오발동해 조합이 깨졌다
-(로그의 `abandoning stale preedit tracking` 폭주로 확인). 이는 정책이 아니라 **물리적 한계**(§2 예측
-적중) — 그래서 web/Electron은 마크드로 자동 폴백(거기선 깜빡임 이슈도 없음), direct insertion은
-모든 **네이티브** 앱(KakaoTalk·메모 등)에서 동작한다.
+처음에는 native 허용목록을 사용했으나 이를 제거하고, 온디바이스 로그 분석 뒤 Electron/Chromium
+denylist를 도입했다. 이유: Claude Desktop 등 Electron 앱에서 `selectedRange`/`attributedSubstring`이
+비동기·부정확해 캐럿 안정성 read-back이 매 키마다 실패하며 조합이 깨졌다.
+
+현재 직접 삽입은 사용자가 실험 옵션을 켠 상태에서 activation의 `documentAccessSafe` 프로브를 통과하고
+Electron/Chromium/browser denylist에 속하지 않을 때만 선택된다. 실행 중 문서 접근이 불안정해지면
+marked fallback 또는 fail-closed 경로로 전환하므로, 모든 네이티브 호스트의 지원을 보장하지 않는다.
 
 ### 8.1 온디바이스 로그로 잡은 추가 버그 2건
-- **조합 글자가 한 번에 지워짐 (KakaoTalk):** 일부 호스트가 동일 물리 keyDown을 **2회 전달** →
-  백스페이스 1번에 `context.backspace()` 2회 → 자모 2개 삭제. → `KeyEventDedup`(동일 keyCode·
-  비-repeat·50ms 이내 재전달을 중복으로 판정)으로 제거. **direct 모드 한정** 적용(마크드/출하 경로
-  무영향). auto-repeat(`isARepeat=true`)·빠른 타이핑(다른 keyCode)·사람 더블탭(>50ms)은 안전.
+- **동일 물리 keyDown 재전달:** 일부 호스트가 같은 keyDown을 두 번 전달해 Backspace가 자모 두 개를
+  지우거나 Return이 두 번 실행됐다. 현재 `KeyEventDeduplicator`는 모든 delivery 모드에 적용되며,
+  동일 `NSEvent` identity·동일한 전체 이벤트 signature 또는 같은 main-queue delivery turn의 재-wrap만
+  중복으로 판정한다. 50ms 시간 추정은 사용하지 않는다. 중복은 원래 이벤트의 handled 결과와 관계없이
+  항상 IMK에서 소비하므로 host 기본 Return도 한 번만 실행된다. auto-repeat과 다음 delivery turn의
+  실제 빠른 연타는 그대로 처리한다.
 - **Electron 조합 깨짐:** 위 denylist로 해결.
 
 **적대적 멀티에이전트 리뷰에서 잡아 고친 버그 5건(모두 direct-insertion 특유의 커서 손상 계열):**
@@ -261,14 +264,17 @@ Electron/Chromium denylist 도입.** 이유: Claude Desktop 등 Electron 앱에�
 5. *(medium)* `fellBackToMarked`가 영구 sticky → 일시적 나쁜 selectedRange가 세션 전체를 마크드로
    강등. → `resetPreeditTracking()`에서 재무장.
 
-**캐럿 안정성 가드(2·3의 근본 수정):** 라이브 음절을 지우기 전에
-`client.attributedSubstring`으로 **`[caret-len, len]`이 우리가 쓴 preedit과 실제로 일치하는지
-읽어 검증**하고, 불일치(클릭/화살표로 커서 이동, 읽기 실패)면 추적을 버리고 현재 커서에 새로
-삽입한다 — **검증 못 한 텍스트는 절대 삭제하지 않는다.** false-positive는 조합 연속성만 끊을 뿐
-손상은 없다(안전한 실패).
+**캐럿 안정성 및 fail-closed 가드:** usable caret가 예상 위치와 다르면 기존 live preedit 영역을
+`attributedSubstring`으로 검증한 뒤에만 삭제한다. 불일치하거나 읽을 수 없는 문서 텍스트는 삭제하지
+않는다. 이미 실제 preedit를 쓴 뒤 selection 자체가 무효가 되면 전체 preedit를 marked text로 다시
+만들지 않고 마지막으로 검증된 실제 텍스트를 보존하며, 엔진 경계가 끝날 때까지 새 조합 출력을
+억제한다. 이 경우 검증할 수 없는 현재 타건 하나가 표시되지 않을 수 있지만 `ㄱ가` 같은 중복·문서
+손상은 방지한다. Space·Arrow·Tab 등으로 해당 엔진 경계가 끝나면 직접 삽입을 다시 시도한다.
 
-**테스트:** `DirectInsertionTests.swift` — 플래너 수학, 허용목록, commit-before-mark 순서, 안정성
-가드, 통합(가짜 클라이언트로 받침 이동/스페이스 중복 없음·Escape 삭제·백스페이스 분해). 전체 146 통과.
+**테스트:** `DirectInsertionTests.swift`와 `InputSessionFinalizeTests.swift`는 플래너, denylist, caret
+검증, invalid-selection fail-closed와 직접 삽입 통합을 검증한다. `ReturnDeliveryTests.swift`는 최종
+문서 기준 Return exactly-once, 빈 characters, numpad Enter, 빠른 실제 연타 보존을 검증한다. 전체
+회귀는 `swift test`로 실행하며 변하는 테스트 개수는 문서에 고정하지 않는다.
 
 **남은 한계(설계상 불가피, 변하지 않음):** 가드는 *손상*을 막을 뿐, direct insertion이 매-키
 재기록으로 마크드보다 redraw가 많고(§2-가) undo/autocorrect를 퇴행시키는 점은 그대로다. 따라서

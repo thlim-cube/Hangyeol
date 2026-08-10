@@ -28,12 +28,14 @@
 그래서 "진짜 ABC + 무지연 내부 전환"은 양립 불가능하다. 전환 race(2.7.2의 씹힘/불일치)는
 *실제 입력 소스 선택*과 *PriType 내부 composer mode*가 서로 다른 비동기 시스템이라는 데서 온다.
 
-**결합안:** PriType 단일 입력 소스가 IMK 세션을 **영구 소유**하고, 한/영은 `HangulComposer.inputMode`
-하나로 내부 전환한다(2.6.5의 무지연·일관성). 영어는 조합하지 않고 raw key를 pass-through하며,
+**결합안:** custom 전환키 경로에서는 PriType 단일 입력 소스가 활성 IMK 세션을 유지하고, 한/영은
+`HangulComposer.inputMode` 하나로 내부 전환한다(2.6.5의 무지연·일관성). 영어는 조합하지 않고 raw key를 pass-through하며,
 `overrideKeyboardWithKeyboardNamed`로 로마자 레이아웃을 입혀 ABC를 *체감*으로 재현한다(2.7대의 통합 일부).
 기본값은 ABC/US를 강제하며, 사용자가 설정에서 명시적으로 켜면 Carbon이 제공하는 최근 사용
 ASCII-capable keyboard layout(Dvorak·AZERTY 등)을 대신 적용한다.
-Caps Lock 기반 전환은 그대로 macOS가 소유하고, 이때 PriType custom toggle은 비활성화한다.
+Caps Lock 기반 전환은 예외로 macOS가 실제 TIS source를 소유하고, 이때 PriType custom toggle은 비활성화한다.
+macOS 소유권 활성화 또는 ABC→PriType 재선택 경계는 pending으로 기록하고, 다음 비보안 PriType
+keyDown에서 내부 mode를 한국어로 정합화한다.
 
 ---
 
@@ -71,7 +73,7 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 
 **트레이드오프(수용):** 영어 모드일 때도 macOS 메뉴바의 입력 소스 아이콘은 PriType(한글)로 남는다.
 이는 2.6.5와 동일한 화면상 사소함이며, 사용자에겐 PriType 자체 `한`/`A` 표시가 실질 지표다.
-상태바 메뉴는 현재 모드와 전환키 감시 backend, 손쉬운 사용 권한, 시스템 Secure Input 활성 여부만 표시하며 입력 문자열은 수집하지 않는다.
+상태바 메뉴는 현재 모드와 중앙 감시 backend, IOKit 제한 사항, 손쉬운 사용 권한, 시스템 Secure Input 활성 여부만 표시하며 입력 문자열·preedit·문서 내용은 수집하지 않는다.
 
 ### 2.2 상태 소유권
 
@@ -79,7 +81,9 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 | --- | --- | --- |
 | 한/영 진리 | process-global `InputModeStore` | 모든 세션 composer가 읽는 단일 source of truth |
 | 한글 조합 | session-owned `HangulComposer` | client 간 preedit/commit 상태를 공유하지 않음 |
+| process active controller | `ActiveOwnerHandoffRegistry` | 새 controller publish 전 이전 session retire |
 | 전환 정책(Caps Lock·fallback) | `InputModeCoordinator` | 실제 TIS 소유권/선택 소스 경계만 pending으로 기록하고 mode는 직접 쓰지 않음 |
+| 감시 backend 단일 소유권·제한 | `ToggleMonitorStatusStore` | CGEventTap/IOKit 동시 실행 방지, IOKit 미지원 바인딩 노출 |
 | IMK 세션 edge(commit·override·layout) | `PriTypeInputController` | imperative 경계 |
 | 실제 TIS source 선택 | **macOS만** | Caps Lock 경로 한정 |
 | 사용자 표시(한/A)·입력 상태 metadata | `StatusBarManager` | 입력 문자열 미수집 |
@@ -97,9 +101,11 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 3. 모드 전환 전 active composition은 정확히 1회 commit한다.
 4. 전환 직후 keyDown을 막거나 replay하지 않는다. 전환이 즉시 완료되므로 불필요하다.
 5. 영어 편의 fallback이 꺼진 기본 상태에서 PriType는 printable key를 consume하지 않는다(`return false`).
-6. 일반 typing hot path에 TIS/AX 조회·UserDefaults JSON decode·로그 문자열 생성이 없다.
+6. Release의 일반 typing hot path에는 TIS/AX 조회, UserDefaults JSON decode, 로그 문자열 생성이나 latency trace 비용이 없다.
 7. Caps Lock on이면 custom toggle을 비활성화한다. 둘이 같은 키 이벤트에서 동시 동작하지 않는다.
 8. TIS 소유권/선택 소스 알림은 mode를 직접 쓰거나 조합을 commit하지 않고 pending만 기록한다.
+9. 새 controller는 이전 controller/session을 retire한 뒤에만 process active owner가 된다. 이전 controller의 늦은 `deactivateServer`는 새 owner를 해제하지 못한다.
+10. 입력 파이프라인 진단은 content-free structured metadata만 사용한다. Release hot path에는 로그 문자열 생성, clock read, trace 할당이 없다.
 
 ---
 
@@ -134,9 +140,11 @@ Caps Lock 정책·active controller 가드·전환 전 1회 commit을 한 곳(co
 > race가 사라진다. 한때 토글을 탭 콜백 안에서 동기 실행하는 안을 검토했으나, 2.6.5/2.7.2 어디에도 없던 신규
 > 동작(탭 콜백 내 IMK IPC)이라 `kCGEventTapDisabledByTimeout` 위험만 추가하고 이득이 불확실해 채택하지 않았다.
 
-### ④ inputMode write-path 단일화
-불변식 2를 코드 주석으로 명문화(`setInputMode`, `activateServer`). 탭·입력 필드·앱 전환이나 외부 입력
-소스에서 PriType로 돌아오는 동작은 내부 한/영 상태를 바꾸지 않으며, 사용자가 마지막으로 선택한 mode를 유지한다.
+### ④ controller-only inputMode write path
+`InputModeStore`를 쓰는 production 경계는 `PriTypeInputController`로 제한한다. 일반 탭·앱·필드
+activation은 마지막 mode를 유지한다. 단, macOS가 Caps Lock 전환을 소유하는 동안의 소유권 활성화
+또는 ABC→PriType 재선택은 실제 입력 소스 경계이므로 예외다. 이 경계는 coordinator가 pending으로만
+기록하고, Secure Input을 통과한 controller가 `.inputSourceOwnership` finalize 후 한국어 mode로 정합화한다.
 
 ---
 
@@ -149,12 +157,28 @@ Tap/IOKit  ──requestToggle(source)──►  InputModeCoordinator
       Controller: commit active composition (1회)
       Controller: overrideKeyboardWithKeyboardNamed(ABC/US 또는 opt-in 현재 Roman layout)
       Controller: composer.setInputMode(next)   ← 단일 진리 갱신
+
+TIS/소유권 알림 ──► InputModeOwnershipTracker
+   경계가 아니거나 TIS 조회 실패: no-op, 상태 추정 금지
+   실제 경계: pending Korean reconciliation만 기록
+
+다음 PriType keyDown
+   1. session/context 확인 및 중복 keyDown 판정
+   2. Secure Input 검사
+   3. pending이 있으면 controller가:
+      - session.finalize(.inputSourceOwnership)
+      - Hanja/local context 정리
+      - Roman keyboard override를 Korean 기준으로 동기화
+      - InputModeStore를 .korean으로 갱신
+   4. 현재 keyDown 정상 조합
 ```
 
 실패 처리:
 
 - active controller가 없으면 composer mode만 단독으로 바꾸지 않는다(다음 activate에서 stale state로 첫 글자 엉킴 방지).
-- `lastClient`/`lastKnownInputClient`가 모두 없으면 no-op.
+- active session이 없으면 custom toggle은 no-op이다.
+- Secure Input client에서는 pending 소유권 정합화를 실행하지 않으며 text commit이나 mode write도 하지 않는다.
+- TIS source를 조회할 수 없으면 선택 source를 추정하지 않는다.
 - Caps Lock 소유 상태면 custom toggle은 진입 자체가 거부된다.
 
 ---
@@ -181,6 +205,11 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build -c release 
 - Hanja 후보창 호출 및 좌표 — Chromium fallback 포함
 - 영어 모드 더블스페이스 — host(macOS)가 처리하는지 확인 (정제 ② 검증 의존)
 - Caps Lock 전환 on — custom toggle 비활성, macOS만 ABC↔PriType 전환
+- Caps Lock 전환 on, ABC→PriType 복귀 — 첫 비보안 keyDown 전에 내부 mode가 한국어로 정합화됨
+- 동일 PriType source에서 탭·앱·필드 이동 — 마지막 한/영 mode 유지
+- Secure Input 필드 — pending 소유권 경계가 있어도 commit/mode write 없음
+- 새 controller가 이전 deactivate보다 먼저 활성화 — 이전 조합 1회 확정, 늦은 deactivate가 새 owner에 영향 없음
+- CGEventTap 반복 실패 — tap 완전 해제 후 IOKit 단독 실행, 미지원 regular/combo 바인딩이 상태바에 표시됨
 
 ---
 

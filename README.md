@@ -31,6 +31,9 @@ PriType은 Swift와 InputMethodKit으로 만든 macOS용 한글 입력기입니�
 - **선택 가능한 전환키**
   macOS Caps Lock 입력 소스 전환을 쓰지 않는 경우, 우측 Command 등 원하는 키를 PriType 한/영 전환키로 지정할 수 있습니다. Caps Lock 전환이 켜져 있으면 PriType 전환키는 자동으로 비활성화됩니다.
 
+- **현재 모드와 입력 상태 표시**
+  메뉴 막대의 `한`/`A` 표시가 PriType 내부 모드를 즉시 보여 줍니다. 메뉴를 열면 현재 감시 backend, 손쉬운 사용 권한, IOKit fallback 제한과 시스템 Secure Input 상태를 확인할 수 있습니다. 입력 문자열이나 문서 내용은 수집하지 않습니다.
+
 - **macOS 설정 연동**
   스페이스 두 번으로 마침표 입력 등은 macOS 텍스트 입력 설정을 따릅니다. 영어 모드는 기본적으로 앱에 그대로 맡기며, 치환이 동작하지 않는 앱에서는 설정의 영어 편의 기능 대체 처리를 명시적으로 켤 수 있습니다.
 
@@ -53,6 +56,7 @@ PriType 앱 번들은 기본적으로 `/Library/Input Methods/PriTypeV2.app`에 
 macOS 설정에서 `Caps Lock 키로 ABC 입력 소스 전환`을 켜면, Caps Lock 전환은 macOS가 직접 관리합니다.
 
 이 모드에서는 PriType 설정의 별도 한/영 전환키가 비활성화됩니다. 전환 경로가 둘로 갈라지지 않도록 macOS 입력 소스 전환을 단일 기준으로 사용합니다.
+ABC에서 PriType로 돌아오면 다음 일반 입력 전에 PriType 내부 모드를 한국어로 맞춥니다. 비밀번호 등 Secure Input 필드에서는 이 정합화가 문서나 조합 상태를 건드리지 않습니다.
 
 ### 우측 Command 등으로 전환
 
@@ -95,12 +99,13 @@ swift build
   macOS 입력 소스 설정에서 Caps Lock 전환 옵션이 켜져 있는지 확인해 주세요. PriType 설정에서 Caps Lock을 직접 전환키로 지정하는 방식은 사용하지 않습니다.
 
 - **우측 Command 전환이 안 될 때**
-  손쉬운 사용 권한이 필요합니다. 권한을 부여한 뒤에도 동작하지 않으면 PriType을 재실행하거나 Mac을 재시동해 주세요.
+  손쉬운 사용 권한이 필요합니다. 권한을 부여한 뒤에도 동작하지 않으면 메뉴 막대의 PriType 메뉴에서 감시 상태를 확인해 주세요. IOKit fallback은 modifier-only 키만 지원하므로 regular key나 조합키가 제한으로 표시되면 modifier-only 전환키로 바꾸거나 손쉬운 사용 권한을 복구해야 합니다.
 
 ## 문서
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): 내부 구조, 입력 처리 흐름, 주요 모듈
-- [Docs/InputArchitectureHybridRollbackPlan.md](Docs/InputArchitectureHybridRollbackPlan.md): 2.6.5 기반 통합 입력 방식과 2.7.2 입력 소스 구조의 하이브리드 재설계 계획
+- [Docs/UnifiedInputArchitecture.md](Docs/UnifiedInputArchitecture.md): 현재 한/영 상태·소유권·전환 계약
+- [Docs/InputArchitectureHybridRollbackPlan.md](Docs/InputArchitectureHybridRollbackPlan.md): 채택하지 않은 가짜 모드 비교안 보관 문서
 - [BENCHMARK.md](BENCHMARK.md): 성능 측정 결과
 - [CHANGELOG.md](CHANGELOG.md): 버전별 변경 사항
 
