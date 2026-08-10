@@ -170,6 +170,9 @@ struct SettingsView: View {
             refreshCapsLockSwitchState()
             checkAccessibility()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .capsLockInputSourceSwitchChanged)) { _ in
+            capsLockSwitchEnabled = ConfigurationManager.shared.capsLockInputSourceSwitchEnabled
+        }
         .alert(L10n.keyBinding.capsLockBlockedTitle, isPresented: $showCapsLockBlockedAlert) {
             Button(L10n.keyBinding.capsLockOpenSettings) {
                 openInputSourceSettings()
@@ -614,7 +617,7 @@ struct SettingsView: View {
     }
 
     private func refreshCapsLockSwitchState() {
-        capsLockSwitchEnabled = ConfigurationManager.shared.capsLockInputSourceSwitchEnabled
+        capsLockSwitchEnabled = ConfigurationManager.shared.refreshCapsLockInputSourceSwitchState()
     }
 
     private func showRestoredConflict() {

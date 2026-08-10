@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import Carbon.HIToolbox
 
 // MARK: - Types
 
@@ -211,6 +212,8 @@ public extension Notification.Name {
     static let romanKeyboardLayoutPreferenceChanged = Notification.Name("PriTypeRomanKeyboardLayoutPreferenceChanged")
     /// Posted when a key binding changes
     static let keyBindingChanged = Notification.Name("PriTypeKeyBindingChanged")
+    /// Posted after the cached macOS Caps Lock input-source ownership changes
+    static let capsLockInputSourceSwitchChanged = Notification.Name("PriTypeCapsLockInputSourceSwitchChanged")
 }
 
 // MARK: - ConfigurationProviding Protocol
@@ -326,6 +329,11 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     // MARK: - Private Properties
     
     private let defaults = UserDefaults.standard
+    private let capsLockSwitchState = CapsLockSwitchStateCache(
+        reader: ConfigurationManager.readCapsLockInputSourceSwitchState
+    )
+    private var capsLockPreferenceObservers: [NSObjectProtocol] = []
+    private var distributedCapsLockPreferenceObservers: [NSObjectProtocol] = []
     private let systemTextFeatureLock = NSLock()
     private var cachedDoubleSpacePeriodEnabled: Bool = ConfigurationManager.readSystemTextFeature(
         key: SystemTextInputKeys.automaticPeriodSubstitution,
@@ -350,6 +358,7 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     private init() {
         defaults.removeObject(forKey: "com.pritype.autoCapitalize")
         defaults.removeObject(forKey: "com.pritype.doubleSpacePeriod")
+        observeCapsLockInputSourcePreferenceChanges()
     }
     
     // MARK: - Keys
@@ -542,6 +551,31 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     /// When this is enabled, PriType should not also run its own language
     /// toggle key. The system input-source switch becomes the single owner.
     public var capsLockInputSourceSwitchEnabled: Bool {
+        capsLockSwitchState.value
+    }
+
+    /// Refresh the cached ownership setting at a known system-change boundary.
+    ///
+    /// This method may synchronize CFPreferences and therefore must not be
+    /// called for every keyboard event. Keyboard callbacks use the cached
+    /// `capsLockInputSourceSwitchEnabled` property instead.
+    @discardableResult
+    public func refreshCapsLockInputSourceSwitchState() -> Bool {
+        if let change = capsLockSwitchState.refresh() {
+            publishCapsLockInputSourceSwitchChange(change)
+        }
+        return capsLockSwitchState.value
+    }
+
+    private static func readCapsLockInputSourceSwitchState() -> Bool {
+        // Invalidate Core Foundation's process-local view before an explicit
+        // refresh so changes made in System Settings are observable.
+        _ = CFPreferencesSynchronize(
+            kCFPreferencesAnyApplication,
+            kCFPreferencesCurrentUser,
+            kCFPreferencesAnyHost
+        )
+
         if let value = CFPreferencesCopyValue(
             "TISRomanSwitchState" as CFString,
             kCFPreferencesAnyApplication,
@@ -558,6 +592,52 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
 
         return UserDefaults.standard.object(forKey: "TISRomanSwitchState") != nil
             && UserDefaults.standard.integer(forKey: "TISRomanSwitchState") != 0
+    }
+
+    private func observeCapsLockInputSourcePreferenceChanges() {
+        let localCenter = NotificationCenter.default
+        capsLockPreferenceObservers.append(localCenter.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: defaults,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshCapsLockInputSourceSwitchState()
+        })
+
+        let distributedCenter = DistributedNotificationCenter.default()
+        let inputSourceNotificationNames = [
+            Notification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String),
+            Notification.Name(kTISNotifyEnabledKeyboardInputSourcesChanged as String)
+        ]
+        distributedCapsLockPreferenceObservers = inputSourceNotificationNames.map { name in
+            distributedCenter.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.refreshCapsLockInputSourceSwitchState()
+            }
+        }
+    }
+
+    private func publishCapsLockInputSourceSwitchChange(_ change: CapsLockSwitchStateCache.Change) {
+        let publish: @Sendable () -> Void = { [weak self] in
+            guard let self,
+                  self.capsLockSwitchState.value == change.currentValue else {
+                return
+            }
+            NotificationCenter.default.post(
+                name: .capsLockInputSourceSwitchChanged,
+                object: self,
+                userInfo: ["isEnabled": change.currentValue]
+            )
+        }
+
+        if Thread.isMainThread {
+            publish()
+        } else {
+            DispatchQueue.main.async(execute: publish)
+        }
     }
     
     // MARK: - Text Input Features

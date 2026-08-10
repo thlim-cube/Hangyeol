@@ -227,6 +227,12 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             // the existing TIS ownership behavior and avoid polluting the
             // physical modifier pressed set with its latched state.
             if keyCode == 57 {
+                // This low-frequency edge is also an ownership refresh
+                // boundary. Defer preference I/O until after the event-tap
+                // callback returns so key delivery is never delayed.
+                DispatchQueue.main.async {
+                    ConfigurationManager.shared.refreshCapsLockInputSourceSwitchState()
+                }
                 if isRecordingKey {
                     let recordCallback = onKeyRecorded
                     DispatchQueue.main.async {

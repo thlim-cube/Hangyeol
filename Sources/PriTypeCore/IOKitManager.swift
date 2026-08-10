@@ -35,6 +35,7 @@ public final class IOKitManager: @unchecked Sendable {
     private var manager: IOHIDManager?
     private var managerRunLoop: CFRunLoop?
     private var keyBindingObserver: NSObjectProtocol?
+    private var capsLockPreferenceObserver: NSObjectProtocol?
     private var lastPriTypeToggleEnabled: Bool?
 
     /// Whether the IOKit fallback currently owns keyboard monitoring.
@@ -169,6 +170,13 @@ public final class IOKitManager: @unchecked Sendable {
         ) { [weak self] _ in
             self?.refreshBindingLimitations()
         }
+        capsLockPreferenceObserver = NotificationCenter.default.addObserver(
+            forName: .capsLockInputSourceSwitchChanged,
+            object: ConfigurationManager.shared,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshBindingLimitations()
+        }
         
         let config = ConfigurationManager.shared
         let priTypeToggleEnabled = !config.capsLockInputSourceSwitchEnabled
@@ -192,6 +200,10 @@ public final class IOKitManager: @unchecked Sendable {
         if let keyBindingObserver {
             NotificationCenter.default.removeObserver(keyBindingObserver)
             self.keyBindingObserver = nil
+        }
+        if let capsLockPreferenceObserver {
+            NotificationCenter.default.removeObserver(capsLockPreferenceObserver)
+            self.capsLockPreferenceObserver = nil
         }
 
         guard let hidManager = manager else {
@@ -225,6 +237,14 @@ public final class IOKitManager: @unchecked Sendable {
         
         // Only interested in keyboard page
         guard usagePage == kHIDPage_KeyboardOrKeypad else { return }
+
+        if usage == 0x39, pressed {
+            // Refresh after returning from the hardware callback. The cached
+            // getter keeps every HID event free of CFPreferences work.
+            DispatchQueue.main.async {
+                ConfigurationManager.shared.refreshCapsLockInputSourceSwitchState()
+            }
+        }
         
         let config = ConfigurationManager.shared
         let toggleBinding = config.toggleKeyBinding

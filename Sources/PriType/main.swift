@@ -10,6 +10,7 @@ let kConnectionName = "PriType_InputString_v2"
 class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     
     private var hasLaunchedBefore = false
+    private var workspaceActivationObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         DebugLogger.log("AppDelegate: applicationDidFinishLaunching")
@@ -18,6 +19,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         // Korean/English mode through the macOS input-source icon. Create the
         // authoritative 한/A indicator once at process launch instead.
         StatusBarManager.shared.setup()
+
+        // System Settings writes TISRomanSwitchState outside this process.
+        // Refresh whenever application focus changes so both keyboard-monitor
+        // backends and the settings UI share the current ownership snapshot.
+        ConfigurationManager.shared.refreshCapsLockInputSourceSwitchState()
+        workspaceActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            ConfigurationManager.shared.refreshCapsLockInputSourceSwitchState()
+        }
         
         // Initialize IMK Server
         _ = IMKServer(name: kConnectionName, bundleIdentifier: Bundle.main.bundleIdentifier)
@@ -50,6 +63,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         
         // Mark as launched (don't show settings on first boot)
         hasLaunchedBefore = true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let workspaceActivationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(workspaceActivationObserver)
+            self.workspaceActivationObserver = nil
+        }
     }
     
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
