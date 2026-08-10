@@ -21,15 +21,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         StatusBarManager.shared.setup()
 
         // System Settings writes TISRomanSwitchState outside this process.
-        // Refresh whenever application focus changes so both keyboard-monitor
-        // backends and the settings UI share the current ownership snapshot.
+        // Refresh low-frequency system preference snapshots whenever application
+        // focus changes; key handling reads only their in-memory values.
         ConfigurationManager.shared.refreshCapsLockInputSourceSwitchState()
+        ConfigurationManager.shared.refreshSystemTextFeatureSnapshot()
         workspaceActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
             queue: .main
         ) { _ in
             ConfigurationManager.shared.refreshCapsLockInputSourceSwitchState()
+            ConfigurationManager.shared.refreshSystemTextFeatureSnapshot()
         }
         
         // Initialize IMK Server

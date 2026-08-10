@@ -330,48 +330,42 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     
     private let defaults: UserDefaults
     private let keyBindingDataReader: @Sendable (String) -> Data?
+    private let systemTextFeatureReader: @Sendable (String) -> Bool?
     private let capsLockSwitchState = CapsLockSwitchStateCache(
         reader: ConfigurationManager.readCapsLockInputSourceSwitchState
     )
-    private var capsLockPreferenceObservers: [NSObjectProtocol] = []
+    private var localPreferenceObservers: [NSObjectProtocol] = []
     private var distributedCapsLockPreferenceObservers: [NSObjectProtocol] = []
     private let systemTextFeatureLock = NSLock()
-    private var cachedDoubleSpacePeriodEnabled: Bool = ConfigurationManager.readSystemTextFeature(
-        key: SystemTextInputKeys.automaticPeriodSubstitution,
-        defaultValue: true
-    )
-    private var cachedAutoCapitalizationEnabled: Bool = ConfigurationManager.readSystemTextFeature(
-        key: SystemTextInputKeys.automaticCapitalization,
-        defaultValue: true
-    )
-    private var cachedSmartQuoteSubstitutionEnabled: Bool = ConfigurationManager.readSystemTextFeature(
-        key: SystemTextInputKeys.automaticQuoteSubstitution,
-        defaultValue: true
-    )
-    private var cachedSmartDashSubstitutionEnabled: Bool = ConfigurationManager.readSystemTextFeature(
-        key: SystemTextInputKeys.automaticDashSubstitution,
-        defaultValue: true
-    )
-    private var cachedEnglishTextConvenienceFallbackEnabled: Bool = UserDefaults.standard.bool(
-        forKey: Keys.englishTextConvenienceFallbackEnabled
-    )
+    private let systemTextFeatureRefreshLock = NSLock()
+    private var systemTextFeatureSnapshot: SystemTextFeatureSnapshot
+    private var cachedEnglishTextConvenienceFallbackEnabled: Bool
     
     private convenience init() {
         self.init(
             defaults: .standard,
-            keyBindingDataReader: { UserDefaults.standard.data(forKey: $0) }
+            keyBindingDataReader: { UserDefaults.standard.data(forKey: $0) },
+            systemTextFeatureReader: ConfigurationManager.readSystemTextFeature
         )
     }
 
     init(
         defaults: UserDefaults,
-        keyBindingDataReader: @escaping @Sendable (String) -> Data?
+        keyBindingDataReader: @escaping @Sendable (String) -> Data?,
+        systemTextFeatureReader: @escaping @Sendable (String) -> Bool? = ConfigurationManager.readSystemTextFeature
     ) {
         self.defaults = defaults
         self.keyBindingDataReader = keyBindingDataReader
+        self.systemTextFeatureReader = systemTextFeatureReader
+        self.systemTextFeatureSnapshot = ConfigurationManager.readSystemTextFeatureSnapshot(
+            using: systemTextFeatureReader
+        )
+        self.cachedEnglishTextConvenienceFallbackEnabled = defaults.bool(
+            forKey: Keys.englishTextConvenienceFallbackEnabled
+        )
         defaults.removeObject(forKey: "com.pritype.autoCapitalize")
         defaults.removeObject(forKey: "com.pritype.doubleSpacePeriod")
-        observeCapsLockInputSourcePreferenceChanges()
+        observeSystemPreferenceChanges()
     }
     
     // MARK: - Keys
@@ -393,6 +387,13 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
         static let automaticDashSubstitution = "NSAutomaticDashSubstitutionEnabled"
         static let automaticPeriodSubstitution = "NSAutomaticPeriodSubstitutionEnabled"
         static let automaticQuoteSubstitution = "NSAutomaticQuoteSubstitutionEnabled"
+    }
+
+    private struct SystemTextFeatureSnapshot: Equatable {
+        let doubleSpacePeriodEnabled: Bool
+        let autoCapitalizationEnabled: Bool
+        let smartQuoteSubstitutionEnabled: Bool
+        let smartDashSubstitutionEnabled: Bool
     }
 
     // MARK: - Keyboard Layout
@@ -614,14 +615,15 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
             && UserDefaults.standard.integer(forKey: "TISRomanSwitchState") != 0
     }
 
-    private func observeCapsLockInputSourcePreferenceChanges() {
+    private func observeSystemPreferenceChanges() {
         let localCenter = NotificationCenter.default
-        capsLockPreferenceObservers.append(localCenter.addObserver(
+        localPreferenceObservers.append(localCenter.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: defaults,
             queue: .main
         ) { [weak self] _ in
             self?.refreshCapsLockInputSourceSwitchState()
+            self?.refreshSystemTextFeatureSnapshot()
         })
 
         let distributedCenter = DistributedNotificationCenter.default()
@@ -665,7 +667,9 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     /// Mirrors macOS "Add period with double-space" for Korean input and the
     /// opt-in English text-convenience fallback.
     public var doubleSpacePeriodEnabled: Bool {
-        return systemTextFeatureLock.withLock { cachedDoubleSpacePeriodEnabled }
+        return systemTextFeatureLock.withLock {
+            systemTextFeatureSnapshot.doubleSpacePeriodEnabled
+        }
     }
 
     /// Mirrors macOS "Capitalize words automatically".
@@ -673,23 +677,61 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     /// PriType does not apply it in Korean composition. English mode uses it
     /// only when the explicit text-convenience fallback is enabled.
     public var autoCapitalizationEnabled: Bool {
-        return systemTextFeatureLock.withLock { cachedAutoCapitalizationEnabled }
+        return systemTextFeatureLock.withLock {
+            systemTextFeatureSnapshot.autoCapitalizationEnabled
+        }
     }
 
     /// Mirrors macOS "Use smart quotes".
     public var smartQuoteSubstitutionEnabled: Bool {
-        return systemTextFeatureLock.withLock { cachedSmartQuoteSubstitutionEnabled }
+        return systemTextFeatureLock.withLock {
+            systemTextFeatureSnapshot.smartQuoteSubstitutionEnabled
+        }
     }
 
     /// Mirrors macOS "Use smart dashes".
     public var smartDashSubstitutionEnabled: Bool {
-        return systemTextFeatureLock.withLock { cachedSmartDashSubstitutionEnabled }
+        return systemTextFeatureLock.withLock {
+            systemTextFeatureSnapshot.smartDashSubstitutionEnabled
+        }
     }
 
-    private static func readSystemTextFeature(key: String, defaultValue: Bool) -> Bool {
-        return UserDefaults.standard.object(forKey: key) == nil
-            ? defaultValue
-            : UserDefaults.standard.bool(forKey: key)
+    /// Refresh all macOS text-feature values at a known low-frequency boundary.
+    ///
+    /// `UserDefaults.didChangeNotification` covers writes made in this process,
+    /// but not writes from System Settings. The app therefore also calls this
+    /// method when application focus changes. Keyboard callbacks read only the
+    /// lock-protected snapshot and never touch `UserDefaults`.
+    @discardableResult
+    public func refreshSystemTextFeatureSnapshot() -> Bool {
+        systemTextFeatureRefreshLock.withLock {
+            let refreshed = ConfigurationManager.readSystemTextFeatureSnapshot(
+                using: systemTextFeatureReader
+            )
+            return systemTextFeatureLock.withLock {
+                guard systemTextFeatureSnapshot != refreshed else { return false }
+                systemTextFeatureSnapshot = refreshed
+                return true
+            }
+        }
+    }
+
+    private static func readSystemTextFeatureSnapshot(
+        using reader: @Sendable (String) -> Bool?
+    ) -> SystemTextFeatureSnapshot {
+        SystemTextFeatureSnapshot(
+            doubleSpacePeriodEnabled: reader(SystemTextInputKeys.automaticPeriodSubstitution) ?? true,
+            autoCapitalizationEnabled: reader(SystemTextInputKeys.automaticCapitalization) ?? true,
+            smartQuoteSubstitutionEnabled: reader(SystemTextInputKeys.automaticQuoteSubstitution) ?? true,
+            smartDashSubstitutionEnabled: reader(SystemTextInputKeys.automaticDashSubstitution) ?? true
+        )
+    }
+
+    private static func readSystemTextFeature(key: String) -> Bool? {
+        // NSGlobalDomain is part of the standard defaults search list, and a
+        // fresh object(forKey:) read picks up values written by other processes.
+        guard UserDefaults.standard.object(forKey: key) != nil else { return nil }
+        return UserDefaults.standard.bool(forKey: key)
     }
 
     /// Experimental Windows-style direct insertion (Phase 3). Default OFF.

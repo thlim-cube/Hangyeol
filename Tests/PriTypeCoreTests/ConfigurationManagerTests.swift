@@ -298,6 +298,73 @@ struct ConfigurationManagerTests {
             from: #require(defaults.data(forKey: "com.pritype.toggleKeyBinding"))
         ) == updatedToggle)
     }
+
+    @Test("System text features refresh as one snapshot and keep getters memory-only")
+    @MainActor
+    func systemTextFeatureSnapshotRefresh() throws {
+        let suiteName = "com.pritype.tests.system-text-features.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let probe = SystemTextFeatureReadProbe(values: [
+            "NSAutomaticPeriodSubstitutionEnabled": true,
+            "NSAutomaticCapitalizationEnabled": false,
+            "NSAutomaticQuoteSubstitutionEnabled": true,
+            "NSAutomaticDashSubstitutionEnabled": false
+        ])
+        let config = ConfigurationManager(
+            defaults: defaults,
+            keyBindingDataReader: { _ in nil },
+            systemTextFeatureReader: probe.read
+        )
+
+        #expect(probe.readCount == 4)
+        #expect(config.doubleSpacePeriodEnabled)
+        #expect(!config.autoCapitalizationEnabled)
+        #expect(config.smartQuoteSubstitutionEnabled)
+        #expect(!config.smartDashSubstitutionEnabled)
+        #expect(!config.englishTextConvenienceFallbackEnabled)
+
+        probe.replaceValues(with: [
+            "NSAutomaticPeriodSubstitutionEnabled": false,
+            "NSAutomaticCapitalizationEnabled": true,
+            "NSAutomaticQuoteSubstitutionEnabled": false,
+            "NSAutomaticDashSubstitutionEnabled": true
+        ])
+        NotificationCenter.default.post(
+            name: UserDefaults.didChangeNotification,
+            object: defaults
+        )
+
+        #expect(probe.readCount == 8)
+        #expect(!config.doubleSpacePeriodEnabled)
+        #expect(config.autoCapitalizationEnabled)
+        #expect(!config.smartQuoteSubstitutionEnabled)
+        #expect(config.smartDashSubstitutionEnabled)
+
+        let readsAfterRefresh = probe.readCount
+        for _ in 0..<1_000 {
+            #expect(!config.doubleSpacePeriodEnabled)
+            #expect(config.autoCapitalizationEnabled)
+            #expect(!config.smartQuoteSubstitutionEnabled)
+            #expect(config.smartDashSubstitutionEnabled)
+        }
+        #expect(probe.readCount == readsAfterRefresh)
+
+        probe.replaceValues(with: [
+            "NSAutomaticPeriodSubstitutionEnabled": true,
+            "NSAutomaticCapitalizationEnabled": true,
+            "NSAutomaticQuoteSubstitutionEnabled": true,
+            "NSAutomaticDashSubstitutionEnabled": true
+        ])
+        #expect(config.refreshSystemTextFeatureSnapshot())
+        #expect(probe.readCount == readsAfterRefresh + 4)
+        #expect(config.doubleSpacePeriodEnabled)
+        #expect(config.autoCapitalizationEnabled)
+        #expect(config.smartQuoteSubstitutionEnabled)
+        #expect(config.smartDashSubstitutionEnabled)
+        #expect(!config.refreshSystemTextFeatureSnapshot())
+    }
     
     @Test("System double-space-period setting is readable")
     func systemDoubleSpacePeriodSettingIsReadable() {
@@ -323,5 +390,32 @@ private final class BindingDataReadProbe: @unchecked Sendable {
     func read(_ key: String) -> Data? {
         lock.withLock { storedReadCount += 1 }
         return defaults.data(forKey: key)
+    }
+}
+
+private final class SystemTextFeatureReadProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: Bool]
+    private var storedReadCount = 0
+
+    init(values: [String: Bool]) {
+        self.values = values
+    }
+
+    var readCount: Int {
+        lock.withLock { storedReadCount }
+    }
+
+    func read(_ key: String) -> Bool? {
+        lock.withLock {
+            storedReadCount += 1
+            return values[key]
+        }
+    }
+
+    func replaceValues(with values: [String: Bool]) {
+        lock.withLock {
+            self.values = values
+        }
     }
 }
