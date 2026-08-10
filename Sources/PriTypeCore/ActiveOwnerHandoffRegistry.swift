@@ -6,6 +6,7 @@ import Foundation
 final class ActiveOwnerHandoffRegistry<Owner: AnyObject>: @unchecked Sendable {
     private let lock = NSLock()
     private weak var storedOwner: Owner?
+    private weak var pendingOwner: Owner?
     private var claimGeneration: UInt64 = 0
 
     var owner: Owner? {
@@ -18,6 +19,7 @@ final class ActiveOwnerHandoffRegistry<Owner: AnyObject>: @unchecked Sendable {
             // owner. A retire callback can synchronously trigger a newer activation;
             // only that newest claim may publish after callbacks unwind.
             claimGeneration &+= 1
+            pendingOwner = storedOwner === owner ? nil : owner
             return (storedOwner, claimGeneration)
         }
         guard previous !== owner else { return }
@@ -26,13 +28,23 @@ final class ActiveOwnerHandoffRegistry<Owner: AnyObject>: @unchecked Sendable {
             retire(previous)
         }
         lock.withLock {
-            guard claimGeneration == generation else { return }
+            guard claimGeneration == generation, pendingOwner === owner else { return }
             storedOwner = owner
+            pendingOwner = nil
         }
     }
 
     func release(_ owner: Owner) {
         lock.withLock {
+            if pendingOwner === owner {
+                // The claimant was released before its retire callback returned. Its
+                // predecessor is already being retired, so neither owner remains
+                // active and the outer claim must not publish after unwinding.
+                claimGeneration &+= 1
+                pendingOwner = nil
+                storedOwner = nil
+                return
+            }
             guard storedOwner === owner else { return }
             storedOwner = nil
         }

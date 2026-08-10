@@ -246,4 +246,18 @@ struct ProcessWideInputOwnershipTests {
 
         #expect(registry.owner === first)
     }
+
+    @Test("Releasing an in-flight claimant cancels its outer publication")
+    func reentrantReleaseCancelsInFlightClaim() {
+        let registry = ActiveOwnerHandoffRegistry<Owner>()
+        let first = Owner()
+        let second = Owner()
+
+        registry.claim(first) { _ in }
+        registry.claim(second) { _ in
+            registry.release(second)
+        }
+
+        #expect(registry.owner == nil)
+    }
 }
