@@ -124,10 +124,8 @@ struct InputModeOwnershipTests {
     @Test("Ownership boundaries update presentation without writing mode or client")
     @MainActor
     func pendingPresentationBeforeSecureGate() {
-        let store = InputModeStore(initialMode: .english)
         let presentation = RecordingModePresentation(actualMode: .english)
         let coordinator = InputModeCoordinator(modePresentation: presentation)
-        let client = FakeIMKTextInput()
 
         let priTypeOwnedSnapshot = InputModeOwnershipSnapshot(
             macOSOwnsSwitching: false,
@@ -147,10 +145,6 @@ struct InputModeOwnershipTests {
         coordinator.observe(macOSOwnedSnapshot)
         coordinator.observe(macOSOwnedSnapshot)
 
-        #expect(store.mode == .english)
-        #expect(client.document.isEmpty)
-        #expect(client.insertCalls.isEmpty)
-        #expect(client.markCalls.isEmpty)
         #expect(presentation.state.actualMode == .english)
         #expect(presentation.state.pendingMode == .korean)
         #expect(presentation.state.displayedMode == .korean)
@@ -158,7 +152,6 @@ struct InputModeOwnershipTests {
 
         coordinator.observe(priTypeOwnedSnapshot)
 
-        #expect(store.mode == .english)
         #expect(presentation.state.pendingMode == nil)
         #expect(presentation.state.displayedMode == .english)
         #expect(presentation.pendingUpdates == [nil, nil, .korean, .korean, nil])

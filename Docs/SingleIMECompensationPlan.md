@@ -7,15 +7,13 @@
 
 > **문서 상태: historical proposal.** 이 문서는 2026-06-05 시점의 설계 후보와 단계별 수용 기준을
 > 보존한다. 모든 항목이 현재 구현됐다는 뜻은 아니다. 현행 계약은
-> [UnifiedInputArchitecture.md](UnifiedInputArchitecture.md)와 [ARCHITECTURE.md](../ARCHITECTURE.md)를
-> 따른다. 특히 Caps Lock은 PriType custom binding으로 가로채지 않고 macOS 입력 소스 전환이 소유하며,
-> IOKit fallback은 modifier-only 바인딩만 지원하고 나머지는 상태바에 제한으로 표시한다.
+> [UnifiedInputArchitecture.md](UnifiedInputArchitecture.md)와 [ARCHITECTURE.md](../ARCHITECTURE.md)를 따른다.
 
 ---
 
 ## 0. 결정된 방향 (재론의 금지)
 
-PriType는 **하나의 macOS 입력 소스**(`com.pritype.inputmethod.v2`, `smKorean`)로 등록되고, 한/영은 **내부 상태**(`HangulComposer.inputMode`)로만 전환한다. 영어는 기본적으로 **순수 패스‑스루**(PriType이 아무것도 삽입하지 않고 `handle()`이 `false` 반환)이며, ABC/US 또는 사용자가 명시적으로 선택한 현재 Roman keyboard layout을 적용한다.
+PriType는 **하나의 macOS 입력 소스**(`com.pritype.inputmethod.v2`, `smKorean`)로 등록되고, 한/영은 **내부 상태**(`HangulComposer.inputMode`)로만 전환한다. 영어는 **순수 패스‑스루**(PriType가 아무것도 삽입하지 않고 `handle()`이 `false` 반환) + **ABC/US 키보드 레이아웃 오버라이드**로 처리한다.
 
 토글 핫패스에서 **`TISSelectInputSource()`를 절대 호출하지 않는다** — 이것이 2.7대 첫‑키 손실/모드 불일치의 근본 원인이었다. 등록(Info.plist)은 v2.6.5의 **최소 형태**를 절대 벗어나지 않는다. 이 두 가지는 협상 대상이 아니다.
 
@@ -27,8 +25,8 @@ PriType는 **하나의 macOS 입력 소스**(`com.pritype.inputmethod.v2`, `smKo
 
 | # | 약점 | 보상 설계 | 검증 |
 |---|------|-----------|------|
-| W1 | 메뉴바 입력소스 아이콘이 영어 모드에서도 PriType 로고로 고정 (모드 식별 불가) | `StatusBarManager`의 `한`/`A` 커스텀 인디케이터를 **권위 있는 신호**로 격상. 앱 시작 시 `setup()` 명시 호출 + 상태바 메뉴에 현재 모드와 입력 상태 metadata 표시. HUD는 구현하지 않는다. 메뉴바 고정은 §6.3에 **공식 트레이드오프로 문서화**. | 시작 배선 계약 테스트 + 온‑디바이스(육안) |
-| W2 | 영어 텍스트 편의(더블스페이스→마침표, 스마트따옴표)를 호스트에 위임 — 미검증 | 호스트(macOS Text Substitution) 책임이 기본. 미동작 앱을 위해 §5.2의 명시적 opt-in fallback을 제공. | 단위 + 온‑디바이스(필수, §10) |
+| W1 | 메뉴바 입력소스 아이콘이 영어 모드에서도 PriType 로고로 고정 (모드 식별 불가) | `StatusBarManager`의 `가`/`A` 커스텀 인디케이터를 **권위 있는 신호**로 격상. `setup()` 명시 호출 + 상태바 메뉴에 "현재 모드" 표시 + 토글 시 짧은 HUD(선택). 메뉴바 고정은 §6.3에 **공식 트레이드오프로 문서화**. | 단위(상태바 콜백) + 온‑디바이스(육안) |
+| W2 | 영어 텍스트 편의(더블스페이스→마침표, 스마트따옴표)를 호스트에 위임 — 미검증 | 호스트(macOS Text Substitution) 책임으로 **확정**. 온‑디바이스 검증을 GA 게이트로 지정. 실패 앱 발견 시 §5.2의 **최소 영어 버퍼 폴백**(더블스페이스 한정)만 복원. | 온‑디바이스(필수, §10) |
 | W3 | 비‑QWERTY 물리 레이아웃(Dvorak/AZERTY)에서 ABC 오버라이드가 사용자 레이아웃을 무시 | 기본은 ABC 오버라이드. 설정에 **"영어 모드에서 내 물리 키보드 레이아웃 존중"** 토글(기본 OFF). private selector 실패 시 명시적 로그 + 폴백. | 단위(폴백 분기) + 온‑디바이스 |
 | W4 | 한자 좌표 폴백이 마우스 위치로 떨어질 때 한도/경고 없음 | `isValidCursorRect` 강화(NaN/Inf/subnormal/초대형 좌표 거부) + 폴백 사용 시 전략 로그. 동일 앱 3회 연속 마우스 폴백 시 WARN. | 단위(좌표 검증) + 온‑디바이스(Chromium) |
 | W5 | 신규 설치 시 자동 활성화 안 됨 (사용자가 직접 입력소스 추가해야 함) | postinstall이 신규 설치에서만 입력소스 설정 열기 + (옵션) 안전 가드된 자동 등록(§7.4). | 온‑디바이스(설치 흐름) |
@@ -46,7 +44,7 @@ PriType는 **하나의 macOS 입력 소스**(`com.pritype.inputmethod.v2`, `smKo
 | B2 Caps Lock 소유권 모순 | **조건부 소유로 진짜 상호배타 구현** (§4). `keyCode 57` 무조건 거부/패스‑스루 제거, `TISRomanSwitchState`에 따라 분기. |
 | B3 영어 모드 범위 vs 시스템 컨텍스트 | 영어 모드는 **유저스페이스 한정**으로 범위 확정·문서화 (§5.4, §6.4). 시스템 UI는 macOS ABC 필수. |
 | B4 메뉴바 아이콘 고정 vs 사용자 기대 | **의도된 트레이드오프로 투명 문서화** (§6.3). 듀얼모드 등록(2.7 시도)은 TIS 오작동으로 거부됨을 명기. |
-| B5 Caps Lock LED 하드웨어 desync 불가피 | **consume‑without‑lock‑toggle 전략 채택** (§4.3) + 불가능 케이스 폴백. LED를 신뢰 인디케이터로 마케팅하지 않음. `한`/`A`가 진실. |
+| B5 Caps Lock LED 하드웨어 desync 불가피 | **consume‑without‑lock‑toggle 전략 채택** (§4.3) + 불가능 케이스 폴백. LED를 신뢰 인디케이터로 마케팅하지 않음. `가`/`A`가 진실. |
 | B6 CGEventTap 비결정적 실패 → IOKit 인계 미보장 | **하드 전환**: 재시도 한도 도달 시 탭 완전 정지 후 IOKit 시작 (§4.4). |
 | B7 단일‑모드 TIS 등록 취약 | **빌드 전·후 이중 검증** + 단위 테스트 + Xcode GUI 편집 금지 규약 (§3). |
 | B8 `overrideKeyboardWithKeyboardNamed:` private selector | respondsToSelector 가드 + 실패 시 명시 로그 + 사용자 레이아웃 폴백 옵션 (§5.3). 온‑디바이스 다중 macOS 버전 검증. |
@@ -145,7 +143,7 @@ binding = (decoded.keyCode == 63
 
 **채택 전략:**
 1. Caps Lock이 PriType 토글로 바인딩 + `TISRomanSwitchState=OFF`일 때, `flagsChanged`의 **lock‑on 엣지**(`.maskAlphaShift` 새로 set)에서 `triggerToggle()` 후 `return nil`로 **소비 시도**.
-2. **LED를 신뢰 인디케이터로 사용하지 않음**: `한`/`A` 상태바가 진실. 설정 `CapsLockStatusCard`에 "일부 키보드/macOS 버전에서 Caps Lock LED가 실제 모드와 다를 수 있습니다. 메뉴바의 `한`/`A`가 정확한 표시입니다"라 명시.
+2. **LED를 신뢰 인디케이터로 사용하지 않음**: `가`/`A` 상태바가 진실. 설정 `CapsLockStatusCard`에 "일부 키보드/macOS 버전에서 Caps Lock LED가 실제 모드와 다를 수 있습니다. 메뉴바의 `가`/`A`가 정확한 표시입니다"라 명시.
 3. **LED desync 감지 폴백** (critique 셋째 묶음 major): 500ms 주기로 IOKit(`IOHIDElement`)에서 Caps Lock lock‑state를 읽어 `inputMode`와 불일치 시 상태바에 경고 표식(아이콘 색/툴팁). 정정은 불가하므로 **알림만** 한다.
 4. **완전 억제 불가 시 폴백**: 온‑디바이스에서 LED 억제가 안 되는 것이 확인되면, 설정에 "Caps Lock LED가 모드와 어긋남 — Right Command/Control+Space 권장" 배너를 띄우되 기능은 유지(사용자 선택). **Caps Lock 바인딩을 lock‑state 신뢰성 솔루션으로 광고하지 않는다.**
 
@@ -190,17 +188,17 @@ DispatchQueue.main.async { onTapFailed?() }   // 그 다음에만 IOKit 시작
 
 ### 5.1 계약 (검증됨)
 
-`HangulComposer.handle()`에서 `inputMode == .english`이면 진행 중 조합 커밋 후 `localTextBuffer = ""`, 기본적으로 **`return false`**. 로컬 버퍼/마크드 텍스트 없음 → 커서‑버퍼 desync 원천 차단. Roman 글자는 컨트롤러가 기본 ABC/US 또는 opt-in 현재 ASCII-capable layout으로 보정한다.
+`HangulComposer.handle()`에서 `inputMode == .english`이면 진행 중 조합 커밋 후 `localTextBuffer = ""`, **`return false`**. 로컬 버퍼/마크드 텍스트 없음 → 커서‑버퍼 desync 원천 차단. Roman 글자는 컨트롤러의 `overrideKeyboardWithKeyboardNamed(ABC/US)`에서 나온다.
 
 ### 5.2 텍스트 편의 = 호스트 책임 (B2/W2)
 
-더블스페이스→마침표, 스마트 문장부호, 자동 대문자는 기본적으로 **macOS Text Substitution**이 패스‑스루 키에 적용한다. 특정 앱에서 동작하지 않을 때만 사용자가 영어 편의 fallback을 켠다. ON일 때 `TextConvenienceHandler.handleEnglishModeInput`이 네 치환을 처리하고, OFF에서는 문서 문맥 조회나 삽입 없이 순수 pass-through한다. 기본값은 OFF다.
+더블스페이스→마침표, 스마트따옴표, 자동수정은 **macOS Text Substitution**이 패스‑스루 키에 적용. PriType는 영어 모드에서 재구현하지 않음. **GA 게이트 검증** 후, 특정 앱(Slack/Electron 등)에서 더블스페이스가 안 되면 `TextConvenienceHandler.handleEnglishModeInput`을 **더블스페이스 한정**으로만 복원(전체 영어 버퍼는 복원 금지 — design debt 회귀 방지).
 
 ### 5.3 키보드 레이아웃 오버라이드 (B8/W3)
 
 `overrideKeyboardWithKeyboardNamed:`는 private selector(검증). 보강:
 1. `responds(to:)` 가드 + 호출 전후 로그(런타임 실패 감지).
-2. 실패 시 조용한 폴백 대신 **명시 로그** + 설정 "내 물리 키보드 레이아웃 존중"(기본 OFF=ABC 강제, ON=영어 모드에서 최근 ASCII-capable layout 적용). 한글 모드는 항상 ABC/US를 유지한다.
+2. 실패 시 조용한 폴백 대신 **명시 로그** + (옵션) 설정 "내 물리 키보드 레이아웃 존중"(기본 OFF=ABC 강제, ON=오버라이드 생략).
 3. **다중 macOS 버전 온‑디바이스 검증 필수**(14/15/16) — selector 가용성·동작 확인.
 
 ### 5.4 시스템 컨텍스트 경계 (B3)
@@ -221,7 +219,7 @@ DispatchQueue.main.async { onTapFailed?() }   // 그 다음에만 IOKit 시작
 
 ### 6.3 메뉴바 트레이드오프 (B4)
 
-macOS 입력소스 아이콘은 양 모드에서 PriType로 **고정**(단일‑IME 설계로 의도). 듀얼모드 등록(2.7 시도)은 TIS 오작동(한국어 조합 실패)으로 거부됨. **보상:** `StatusBarManager.setup()`을 `applicationDidFinishLaunching`에서 한 번 명시 호출하고, 상태바 메뉴에 현재 모드·감시 backend·손쉬운 사용 권한·시스템 Secure Input 상태를 입력 문자열 없이 표시한다. 릴리스 노트·설정에 트레이드오프를 투명하게 기재한다.
+macOS 입력소스 아이콘은 양 모드에서 PriType로 **고정**(단일‑IME 설계로 의도). 듀얼모드 등록(2.7 시도)은 TIS 오작동(한국어 조합 실패)으로 거부됨. **보상:** `StatusBarManager.setup()`을 `applicationDidFinishLaunching`에서 **명시 호출**(현행 미호출 검증됨 — lazy 의존 제거), 상태바 메뉴에 "현재 모드" 추가. 릴리스 노트·설정에 트레이드오프 투명 기재.
 
 ### 6.4 시스템 UI 경계 문서 (W6/B3)
 
@@ -292,9 +290,9 @@ Finder의 더미 IMK 윈도우 좌표 휴리스틱은 유일하게 정당한 좌
 1. 토글 핫패스에서 `TISSelectInputSource()` 호출 금지.
 2. `Info.plist`는 §3.2/3.3 계약 준수 — 모드 정확히 1개, `smKorean`, `[Hang]`, forbidden 0개. 모든 빌드가 검증 통과해야 함.
 3. 프로덕션의 `HangulComposer.inputMode` 쓰기 경로는 `performPriTypeModeTransition` 하나뿐.
-4. 영어 모드 기본값 = 순수 패스‑스루(`return false`, 로컬 버퍼/마크드 텍스트 없음). 명시적 편의 fallback ON에서만 실제 치환을 소비.
+4. 영어 모드 = 순수 패스‑스루(`return false`, 로컬 버퍼/마크드 텍스트 없음).
 5. Caps Lock 소유는 `TISRomanSwitchState`로 **진짜 상호배타**: ON=macOS, OFF=PriType(바인딩 시).
-6. `한`/`A` 상태바가 권위 인디케이터. LED/메뉴바 아이콘은 신뢰 대상 아님.
+6. `가`/`A` 상태바가 권위 인디케이터. LED/메뉴바 아이콘은 신뢰 대상 아님.
 7. CGEventTap/IOKit 중 **한 번에 하나만** 활성(하드 전환).
 8. 행동 기반 호환성 탐지만 허용(시스템 클라이언트·Finder 예외 제외).
 9. 정리(cleanup)는 데이터 레이어(prefs)만, 핫패스·`handle()` 비관여.
@@ -339,7 +337,7 @@ Finder의 더미 IMK 윈도우 좌표 휴리스틱은 유일하게 정당한 좌
 **수용:** 설정 변경 시 UI/배너 갱신(온‑디바이스 #5); 상태바 launch 시 즉시 표시.
 
 ### Phase 4 — 영어 완전성 + 레이아웃 폴백 (B8/W3/B3)
-**파일:** `PriTypeInputController.swift`(responds(to:) 가드 + 로그 + 레이아웃 옵션), `SettingsWindowController.swift`(레이아웃 존중·영어 편의 토글), `TextConvenienceHandler.swift`(명시적 opt-in fallback, 기본 비활성), `Docs/UnifiedInputArchitecture.md §4.x/§7`.
+**파일:** `PriTypeInputController.swift`(responds(to:) 가드 + 로그 + 레이아웃 옵션), `SettingsWindowController.swift`(레이아웃 존중 토글), `TextConvenienceHandler.swift`(폴백 훅 — 더블스페이스 한정, 기본 비활성), `Docs/UnifiedInputArchitecture.md §4.x/§7`.
 **수용:** 온‑디바이스 #1(GA 게이트)/#4; selector 실패 분기 단위.
 
 ### Phase 5 — 자기충족성/공존 + 설치 (W7/B10)
@@ -379,7 +377,7 @@ Finder의 더미 IMK 윈도우 좌표 휴리스틱은 유일하게 정당한 좌
 - `/Users/naen/Git/PriType-Swift/Sources/PriTypeCore/HangulComposer.swift` (영어 패스‑스루 L368‑374, Return/GoodNotes L198, `isValidCursorRect`)
 - `/Users/naen/Git/PriType-Swift/Sources/PriTypeCore/ClientContextDetector.swift` (`ClientCompatibilityPolicy` L101‑106)
 - `/Users/naen/Git/PriType-Swift/Sources/PriTypeCore/SettingsWindowController.swift` (Key Recorder Caps Lock 차단 L939‑944)
-- `/Users/naen/Git/PriType-Swift/Sources/PriTypeCore/StatusBarManager.swift` (startup `setup()` 명시 호출)
+- `/Users/naen/Git/PriType-Swift/Sources/PriTypeCore/StatusBarManager.swift` (`setup()` 미호출)
 - `/Users/naen/Git/PriType-Swift/Sources/PriTypeCore/InputSourceManager.swift`
 - `/Users/naen/Git/PriType-Swift/Sources/PriType/main.swift` (`onTapFailed`/IOKit 선택)
 - `/Users/naen/Git/PriType-Swift/Sources/PriTypeVerify/` (검증기 확장 위치 — 이미 존재)

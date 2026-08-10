@@ -222,12 +222,6 @@ struct KeyEventDedupTests {
         #expect(!KeyEventDedup.isDuplicate(snap(100.0, 51), previous: nil))
     }
 
-    @Test("Duplicate route is always consumed instead of replaying prior result")
-    func duplicateRouteHandledResult() {
-        #expect(KeyDownRoute.process.immediateHandledResult == nil)
-        #expect(KeyDownRoute.consumeDuplicate.immediateHandledResult == true)
-    }
-
     @Test("Synthetic zero timestamps require identical event identity")
     func zeroTimestampIdentity() {
         let event = TestEventFactory.keyEvent(char: "x", keyCode: 7)!

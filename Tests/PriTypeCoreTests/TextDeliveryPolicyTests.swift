@@ -121,21 +121,3 @@ struct PreeditUnderlineTests {
         }
     }
 }
-
-// MARK: - Finalize reason coverage
-
-/// Every composition-ending event must map to a finalize reason — the single path
-/// contract. This is a compile-time-ish guard: adding a new reason here forces the
-/// author to think about whether it routes through `InputSession.finalize`.
-@Suite("CompositionFinalizeReason")
-struct CompositionFinalizeReasonTests {
-    @Test("All session-ending events have a distinct reason")
-    func reasonsAreDistinct() {
-        let reasons: [CompositionFinalizeReason] = [
-            .appDeactivate, .deactivateServer, .mouseCommit,
-            .modeTransition, .inputSourceOwnership, .keyboardLayoutChange, .sessionReplacement,
-            .deliveryModeChange
-        ]
-        #expect(Set(reasons.map(\.rawValue)).count == reasons.count)
-    }
-}

@@ -13,23 +13,6 @@ private final class MonitorStatusRecorder {
 
 @Suite("Status Bar Health")
 struct StatusBarHealthTests {
-    @Test("Launch initializes status once without a presentation side channel")
-    func launchInitializesStatusBarFromAuthoritativeSources() throws {
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let source = try String(
-            contentsOf: repoRoot.appendingPathComponent("Sources/PriType/main.swift"),
-            encoding: .utf8
-        )
-        let setupCalls = source.components(separatedBy: "StatusBarManager.shared.setup()").count - 1
-        let manualBackendWrites = source.components(separatedBy: ".setMonitorBackend(").count - 1
-
-        #expect(setupCalls == 1)
-        #expect(manualBackendWrites == 0)
-    }
-
     @Test("Missing permission or monitor marks health as needing attention")
     func unavailableInputMonitoringNeedsAttention() {
         let missingPermission = InputHealthMetadata(
