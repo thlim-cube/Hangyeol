@@ -188,6 +188,67 @@ struct InputSessionFinalizeTests {
         #expect(client.insertCalls.count == writeCountAtNavigation)
     }
 
+    @Test("Text convenience timing does not cross field boundaries")
+    func textConvenienceTimingDoesNotCrossFieldBoundaries() {
+        let boundaries: [(String, (InputSession) -> Void)] = [
+            ("mouse", { session in
+                _ = session.reconcileMouseDown(
+                    characterIndex: 0,
+                    markedRange: NSRange(location: NSNotFound, length: 0)
+                )
+            }),
+            ("host commit", { $0.finishHostCommitBoundary() }),
+            ("Tab", {
+                $0.observeHostNavigationKeyDown(
+                    keyCode: KeyCode.tab,
+                    passedToHost: true
+                )
+            }),
+            ("app switch", {
+                _ = $0.finalize(reason: .appDeactivate)
+                $0.markContextStale()
+            })
+        ]
+
+        for (boundaryName, applyBoundary) in boundaries {
+            let client = FakeIMKTextInput()
+            client.bundleID = "com.example.synthetic.\(boundaryName)"
+            let configuration = MockConfiguration()
+            configuration.englishTextConvenienceFallbackEnabled = true
+            let composer = HangulComposer(
+                statusBar: MockStatusBar(),
+                configuration: configuration
+            )
+            let session = InputSession(
+                client: client,
+                context: context(bundleId: client.bundleID, documentAccessSafe: true),
+                composer: composer
+            )
+            _ = session.prepareForNonSecureClientWrites()
+            composer.setInputMode(.english)
+
+            let space = TestEventFactory.keyEvent(
+                char: " ",
+                keyCode: KeyCode.space
+            )!
+            client.document = "x"
+            client.selectedRangeValue = NSRange(location: 1, length: 0)
+            #expect(!composer.handle(space, delegate: session.adapter))
+            client.document = "x "
+            client.selectedRangeValue = NSRange(location: 2, length: 0)
+
+            applyBoundary(session)
+
+            client.document = "y "
+            client.selectedRangeValue = NSRange(location: 2, length: 0)
+            #expect(
+                !composer.handle(space, delegate: session.adapter),
+                "\(boundaryName) must not reuse the previous field's space timing"
+            )
+            #expect(client.document == "y ")
+        }
+    }
+
     @Test("A new physical Tab and auto-repeat do not inherit duplicate disposition")
     func newTabEventsDoNotInheritDuplicateDisposition() async {
         let client = FakeIMKTextInput()

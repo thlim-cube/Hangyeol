@@ -109,9 +109,11 @@ public final class TextConvenienceHandler: @unchecked Sendable {
         return .normalSpace
     }
     
-    /// Reset the space state (call when non-space character is typed)
+    /// Reset the complete space state (call when text context changes or a
+    /// non-space character is typed).
     public func resetSpaceState() {
         lastWasSpace = false
+        lastSpaceTime = 0
     }
 
     // MARK: - English Fallback

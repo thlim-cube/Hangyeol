@@ -144,6 +144,7 @@ final class InputSession: @unchecked Sendable {
 
     func markContextStale() {
         invalidateHanjaShortcutSessionState()
+        composer.resetTextConvenienceState()
         contextNeedsRefresh = true
     }
 

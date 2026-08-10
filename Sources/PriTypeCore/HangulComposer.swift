@@ -206,7 +206,7 @@ public class HangulComposer: @unchecked Sendable {
         // Re-initialize context with new keyboard ID
         keyboardLayoutId = id
         context = ThreadSafeHangulInputContext(keyboard: id)
-        localTextBuffer = ""
+        clearLocalBuffer()
     }
     
     /// Set Korean or English mode from the PriType controller.
@@ -238,8 +238,7 @@ public class HangulComposer: @unchecked Sendable {
         }
 
         inputModeStore.setMode(mode)
-        localTextBuffer = ""
-        textConvenience.resetSpaceState()
+        clearLocalBuffer()
         statusBar.setMode(inputMode)
         DebugLogger.event("composer.mode_written", metadata: [
             .state("mode", inputMode == .korean ? "korean" : "english")
@@ -423,7 +422,7 @@ public class HangulComposer: @unchecked Sendable {
         if keyCode == KeyCode.leftArrow || keyCode == KeyCode.rightArrow ||
            keyCode == KeyCode.upArrow || keyCode == KeyCode.downArrow ||
            keyCode == KeyCode.tab || keyCode == KeyCode.return || keyCode == KeyCode.numpadEnter {
-            localTextBuffer = ""
+            clearLocalBuffer()
         }
         
         // English mode stays inside the PriType input source but performs no
@@ -644,9 +643,17 @@ public class HangulComposer: @unchecked Sendable {
         localTextBuffer = ""
     }
     
-    /// Clear the local text buffer without affecting composition state.
+    /// Clear field-local text context without affecting composition state.
     public func clearLocalBuffer() {
         localTextBuffer = ""
+        resetTextConvenienceState()
+    }
+
+    /// Invalidate timing-based conveniences while preserving Hanja buffer context.
+    /// App deactivation intentionally keeps the last Hangul character available,
+    /// but a later field must never inherit the previous field's space timing.
+    func resetTextConvenienceState() {
+        textConvenience.resetSpaceState()
     }
 
     /// Drops in-progress composition without touching the current client.
@@ -656,8 +663,7 @@ public class HangulComposer: @unchecked Sendable {
     /// trigger host-app warning beeps, so this reset intentionally has no delegate.
     public func discardCompositionForPassThrough() {
         context.reset()
-        localTextBuffer = ""
-        textConvenience.resetSpaceState()
+        clearLocalBuffer()
     }
     
     /// Bundle ID of the app where the last keystroke was processed.
