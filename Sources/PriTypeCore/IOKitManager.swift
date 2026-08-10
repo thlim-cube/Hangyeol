@@ -96,16 +96,24 @@ public final class IOKitManager: @unchecked Sendable {
     public func start() -> Bool {
         guard manager == nil else {
             refreshBindingLimitations()
-            DebugLogger.log("IOKitManager: Already running")
+            DebugLogger.event("toggle_backend.start_skipped", metadata: [
+                .state("backend", "iokit"),
+                .state("reason", "already_running")
+            ])
             return true
         }
 
         guard ToggleMonitorStatusStore.shared.reserveStart(.iokit) else {
-            DebugLogger.log("IOKitManager: Start blocked because another backend owns monitoring")
+            DebugLogger.event("toggle_backend.start_skipped", metadata: [
+                .state("backend", "iokit"),
+                .state("reason", "backend_owned")
+            ])
             return false
         }
         
-        DebugLogger.log("IOKitManager: Starting IOKit-only toggle detection...")
+        DebugLogger.event("toggle_backend.starting", metadata: [
+            .state("backend", "iokit")
+        ])
         
         // Create HID Manager
         let hidManager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -137,7 +145,10 @@ public final class IOKitManager: @unchecked Sendable {
         // Open manager
         let result = IOHIDManagerOpen(hidManager, IOOptionBits(kIOHIDOptionsTypeNone))
         if result != kIOReturnSuccess {
-            DebugLogger.log("IOKitManager: Failed to open IOHIDManager: \(result)")
+            DebugLogger.event("toggle_backend.start_failed", metadata: [
+                .state("backend", "iokit"),
+                .statusCode("status_code", Int(result))
+            ])
             if let managerRunLoop {
                 IOHIDManagerUnscheduleFromRunLoop(hidManager, managerRunLoop, CFRunLoopMode.defaultMode.rawValue)
             }
@@ -170,7 +181,9 @@ public final class IOKitManager: @unchecked Sendable {
                 priTypeToggleEnabled: priTypeToggleEnabled
             )
         )
-        DebugLogger.log("IOKitManager: Started successfully (toggle=\(config.toggleKeyBinding.displayName), hanja=\(config.hanjaKeyBinding.displayName))")
+        DebugLogger.event("toggle_backend.started", metadata: [
+            .state("backend", "iokit")
+        ])
         return true
     }
     
@@ -196,7 +209,9 @@ public final class IOKitManager: @unchecked Sendable {
         resetKeyState()
         ToggleMonitorStatusStore.shared.markStopped(.iokit)
         
-        DebugLogger.log("IOKitManager: Stopped")
+        DebugLogger.event("toggle_backend.stopped", metadata: [
+            .state("backend", "iokit")
+        ])
     }
     
     // MARK: - Input Handling
@@ -210,11 +225,6 @@ public final class IOKitManager: @unchecked Sendable {
         
         // Only interested in keyboard page
         guard usagePage == kHIDPage_KeyboardOrKeypad else { return }
-        
-        // Log events for debugging (limit to modifiers to reduce noise)
-        if usage >= 0xE0 && usage <= 0xE7 {
-            DebugLogger.log("IOKitManager: Modifier key 0x\(String(usage, radix: 16)) \(pressed ? "DOWN" : "UP")")
-        }
         
         let config = ConfigurationManager.shared
         let toggleBinding = config.toggleKeyBinding
@@ -244,19 +254,31 @@ public final class IOKitManager: @unchecked Sendable {
         if priTypeToggleEnabled && toggleBinding.isModifierOnly, let expectedUsage = toggleUsage {
             switch togglePressState.handle(usage: usage, pressed: pressed, toggleUsage: expectedUsage) {
             case .pressed:
-                DebugLogger.log("IOKitManager: Toggle key DOWN (\(toggleBinding.displayName))")
+                DebugLogger.event("toggle.physical_down", metadata: [
+                    .state("backend", "iokit")
+                ])
             case .repeatIgnored:
-                DebugLogger.log("IOKitManager: Repeated toggle DOWN ignored")
+                DebugLogger.event("toggle.ignored", metadata: [
+                    .state("source", "iokit"),
+                    .state("reason", "repeat")
+                ])
             case .chorded:
-                DebugLogger.log("IOKitManager: Another physical key pressed while toggle key is down")
+                DebugLogger.event("toggle.chord_detected", metadata: [
+                    .state("backend", "iokit")
+                ])
             case .released(shouldToggle: true):
-                DebugLogger.log("IOKitManager: TOGGLE triggered! (\(toggleBinding.displayName))")
+                DebugLogger.event("toggle.requested", metadata: [
+                    .state("backend", "iokit")
+                ])
                 let callback = onRightCommandToggle
                 DispatchQueue.main.async {
                     callback?()
                 }
             case .released(shouldToggle: false):
-                DebugLogger.log("IOKitManager: Toggle skipped (used with other key)")
+                DebugLogger.event("toggle.ignored", metadata: [
+                    .state("source", "iokit"),
+                    .state("reason", "used_as_modifier")
+                ])
             case .none:
                 break
             }
@@ -276,19 +298,26 @@ public final class IOKitManager: @unchecked Sendable {
                 let elapsed = now.uptimeNanoseconds - lastHanjaTriggerTime.uptimeNanoseconds
                 let elapsedMs = elapsed / 1_000_000
                 if elapsedMs < 500 {
-                    DebugLogger.log("IOKitManager: Hanja key DEBOUNCED (\(elapsedMs)ms)")
+                    DebugLogger.event("hanja.request_debounced", metadata: [
+                        .state("backend", "iokit"),
+                        .durationMicroseconds("elapsed", elapsed / 1_000)
+                    ])
                     return
                 }
                 lastHanjaTriggerTime = now
                 
-                DebugLogger.log("IOKitManager: Hanja key DOWN (\(hanjaBinding.displayName)) - HANJA")
+                DebugLogger.event("hanja.requested", metadata: [
+                    .state("backend", "iokit")
+                ])
                 let callback = onRightOptionHanja
                 DispatchQueue.main.async {
                     callback?()
                 }
             } else if !pressed && hanjaKeyIsDown {
                 hanjaKeyIsDown = false
-                DebugLogger.log("IOKitManager: Hanja key UP (\(hanjaBinding.displayName))")
+                DebugLogger.event("hanja.physical_up", metadata: [
+                    .state("backend", "iokit")
+                ])
             }
         }
     }

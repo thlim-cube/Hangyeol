@@ -16,12 +16,28 @@ import os.log
 /// For input methods, logging user keystrokes could be a security risk.
 /// This implementation guarantees that **no logging code exists** in release builds,
 /// not just disabled - the code is literally not compiled.
+/// Input-pipeline diagnostics must use ``event(_:metadata:)`` so runtime strings
+/// cannot accidentally carry typed text, bundle identifiers, or document content.
 ///
 /// ## Usage
 /// ```swift
-/// DebugLogger.log("User pressed key")  // Only logs in DEBUG builds
+/// DebugLogger.event("input.session_activated")  // Only logs in DEBUG builds
 /// ```
 public final class DebugLogger: @unchecked Sendable {
+
+    /// Content-free fields accepted by structured input-pipeline diagnostics.
+    ///
+    /// Both field names and state values are `StaticString`s on purpose: a caller
+    /// cannot pass event characters, preedit text, bundle identifiers, or another
+    /// runtime string through this API. Numeric values are restricted to counts,
+    /// monotonic durations, and opaque trace identifiers.
+    public enum Metadata: Sendable {
+        case flag(StaticString, Bool)
+        case count(StaticString, Int)
+        case durationMicroseconds(StaticString, UInt64)
+        case state(StaticString, StaticString)
+        case statusCode(StaticString, Int)
+    }
     
     #if DEBUG
     
@@ -66,7 +82,7 @@ public final class DebugLogger: @unchecked Sendable {
         
         logQueue.async {
             guard let data = logMsg.data(using: .utf8) else {
-                logToConsole("Failed to encode log message: \(msg)", isError: true)
+                logToConsole("debug_log_encoding_failed", isError: true)
                 return
             }
             
@@ -76,23 +92,38 @@ public final class DebugLogger: @unchecked Sendable {
                 // Fallback to console on file error (avoid infinite recursion)
                 if !isLoggingError {
                     isLoggingError = true
-                    logToConsole("File logging failed: \(error.localizedDescription)", isError: true)
-                    logToConsole(msg, isError: false)
+                    // Do not copy the original file-log payload into public OSLog.
+                    // Input diagnostics are content-free, but keeping this fallback
+                    // payload-free makes a future unsafe call site fail closed.
+                    logToConsole("debug_log_file_write_failed", isError: true)
                     isLoggingError = false
                 }
             }
         }
     }
-    
-    /// Log sensitive input data (like keystrokes or composed strings).
-    /// By default, the actual content is redacted even in DEBUG builds to prevent accidental leakage.
-    /// To see actual input logs, compile with `-D PRITYPE_UNREDACT_SENSITIVE_LOGS`.
-    public static func logSensitive(_ msg: String, sensitiveContent: String) {
-        #if PRITYPE_UNREDACT_SENSITIVE_LOGS
-        log("\(msg): \(sensitiveContent)")
-        #else
-        log("\(msg): [REDACTED]")
-        #endif
+
+    /// Log a structured, content-free input-pipeline event.
+    public static func event(_ name: StaticString, metadata: @autoclosure () -> [Metadata] = []) {
+        log(formatEvent(name, metadata: metadata()))
+    }
+
+    static func formatEvent(_ name: StaticString, metadata: [Metadata]) -> String {
+        let fields = metadata.map { field -> String in
+            switch field {
+            case .flag(let key, let value):
+                return "\(key)=\(value)"
+            case .count(let key, let value):
+                return "\(key)=\(value)"
+            case .durationMicroseconds(let key, let value):
+                return "\(key)=\(value)us"
+            case .state(let key, let value):
+                return "\(key)=\(value)"
+            case .statusCode(let key, let value):
+                return "\(key)=\(value)"
+            }
+        }
+        guard !fields.isEmpty else { return "event=\(name)" }
+        return "event=\(name) " + fields.joined(separator: " ")
     }
     
     /// Log an error with context
@@ -189,8 +220,9 @@ public final class DebugLogger: @unchecked Sendable {
     
     /// No-op in release builds - arguments are never evaluated
     @inlinable
-    public static func logSensitive(_ msg: @autoclosure () -> String, sensitiveContent: @autoclosure () -> String) {
-        // Explicitly empty for zero overhead in release
+    public static func event(_ name: StaticString, metadata: @autoclosure () -> [Metadata] = []) {
+        // Explicitly empty for zero overhead in release. The metadata array and
+        // its values are not evaluated because they are wrapped in an autoclosure.
     }
     
     /// No-op in release builds - arguments are never evaluated

@@ -36,7 +36,9 @@ public final class HanjaManager: @unchecked Sendable {
             if table.load(filename: path) {
                 self.table = table
                 self.isLoaded = true
-                DebugLogger.log("HanjaManager: Loaded dictionary from bundle: \(path)")
+                DebugLogger.event("hanja.dictionary_loaded", metadata: [
+                    .state("source", "bundle")
+                ])
                 return
             }
         }
@@ -70,7 +72,10 @@ public final class HanjaManager: @unchecked Sendable {
             for (jamo, symbols) in raw {
                 jamoSymbols[jamo] = symbols.map { HanjaEntry(hangul: jamo, hanja: $0.char, meaning: $0.desc) }
             }
-            DebugLogger.log("HanjaManager: Loaded jamo symbols (\(jamoSymbols.count) keys, \(jamoSymbols.values.map(\.count).reduce(0, +)) entries)")
+            DebugLogger.event("hanja.symbols_loaded", metadata: [
+                .count("key_count", jamoSymbols.count),
+                .count("entry_count", jamoSymbols.values.map(\.count).reduce(0, +))
+            ])
         } catch {
             DebugLogger.log("HanjaManager: Failed to load jamo_symbols.json: \(error)")
         }

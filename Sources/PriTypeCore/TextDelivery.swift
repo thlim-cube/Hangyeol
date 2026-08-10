@@ -40,7 +40,9 @@ enum TextDeliveryPolicy {
         case .immediate:
             return ImmediateModeAdapter(client: client, bundleId: context.bundleId)
         case .directInsertion:
-            DebugLogger.log("TextDeliveryPolicy: DirectInsertionAdapter (experimental) for \(context.bundleId)")
+            DebugLogger.event("delivery.adapter_created", metadata: [
+                .state("mode", "direct_insertion")
+            ])
             return DirectInsertionAdapter(client: client, bundleId: context.bundleId)
         case .markedText:
             return MarkedTextAdapter(client: client, bundleId: context.bundleId)
@@ -292,7 +294,7 @@ final class DirectInsertionAdapter: BaseClientAdapter {
             if !verified {
                 livePreeditLength = 0
                 livePreeditText = ""
-                DebugLogger.log("DirectInsertionAdapter: caret moved (\(caret) != expected \(expectedCaret)), abandoning stale preedit tracking")
+                DebugLogger.event("delivery.preedit_tracking_abandoned")
             }
         }
 
@@ -310,7 +312,11 @@ final class DirectInsertionAdapter: BaseClientAdapter {
             livePreeditText = ""
             expectedCaret = NSNotFound
             renderMarkedFallback(text)
-            DebugLogger.log("DirectInsertionAdapter: invalid selectedRange, falling back to marked text")
+            DebugLogger.event("delivery.fallback", metadata: [
+                .state("from", "direct_insertion"),
+                .state("to", "marked_text"),
+                .state("reason", "invalid_selection")
+            ])
             return
         }
 
@@ -326,9 +332,13 @@ final class DirectInsertionAdapter: BaseClientAdapter {
         // ("렉") can be pinpointed. Only logs the slow ones to avoid spam.
         let totalMs = (tEnd - tStart) * 1000
         if totalMs > 8 {
-            DebugLogger.log(String(
-                format: "DirectInsert SLOW total=%.1fms selRange=%.1fms readback=%.1fms insert=%.1fms len=%d",
-                totalMs, (tAfterSel - tStart) * 1000, readbackMs, (tEnd - tBeforeInsert) * 1000, livePreeditLength))
+            DebugLogger.event("delivery.direct_insert_slow", metadata: [
+                .durationMicroseconds("total", UInt64(max(0, totalMs * 1_000))),
+                .durationMicroseconds("selection", UInt64(max(0, (tAfterSel - tStart) * 1_000_000))),
+                .durationMicroseconds("readback", UInt64(max(0, readbackMs * 1_000))),
+                .durationMicroseconds("insert", UInt64(max(0, (tEnd - tBeforeInsert) * 1_000_000))),
+                .count("live_preedit_length", livePreeditLength)
+            ])
         }
     }
 

@@ -128,7 +128,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             return session
         }
 
-        DebugLogger.log("PriTypeInputController: client changed or no session, analyzing (Slow Path)")
+        DebugLogger.event("input.session_replaced")
         let newSession = replaceSession(
             client: client,
             context: ClientContextDetector.analyze(client: client)
@@ -144,7 +144,10 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         let senderClient = sender as? IMKTextInput
         guard let session else { return false }
         if let senderClient, !session.matches(senderClient) {
-            DebugLogger.log("PriTypeInputController: ignored finalize for stale client reason=\(reason.rawValue)")
+            DebugLogger.event("composition.finalize_ignored", metadata: [
+                .state("reason", reason.diagnosticLabel),
+                .state("cause", "stale_client")
+            ])
             return false
         }
         session.finalize(reason: reason)
@@ -167,7 +170,9 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         let selector = NSSelectorFromString("overrideKeyboardWithKeyboardNamed:")
         let object = client as AnyObject
         guard object.responds(to: selector) else {
-            DebugLogger.log("PriTypeInputController: client does not support keyboard override")
+            DebugLogger.event("input.keyboard_override_skipped", metadata: [
+                .state("reason", "unsupported")
+            ])
             return
         }
 
@@ -185,7 +190,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         _ = object.perform(selector, with: layoutID)
         lastKeyboardOverrideClientID = clientID
         lastKeyboardOverrideTime = now
-        DebugLogger.log("PriTypeInputController: override keyboard layout -> \(layoutID)")
+        DebugLogger.event("input.keyboard_override_applied")
     }
 
     internal static func preferredRomanKeyboardLayoutID(
@@ -205,7 +210,9 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
     private static func currentASCIICapableKeyboardLayoutID() -> String? {
         guard let sourceReference = TISCopyCurrentASCIICapableKeyboardLayoutInputSource() else {
-            DebugLogger.log("PriTypeInputController: current Roman layout lookup failed, keeping ABC/US fallback")
+            DebugLogger.event("input.roman_layout_fallback", metadata: [
+                .state("reason", "lookup_failed")
+            ])
             return nil
         }
         let source = sourceReference.takeRetainedValue()
@@ -213,7 +220,9 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
               inputSourceBoolProperty(source, key: kTISPropertyInputSourceIsASCIICapable),
               let layoutID = inputSourceStringProperty(source, key: kTISPropertyInputSourceID),
               !layoutID.isEmpty else {
-            DebugLogger.log("PriTypeInputController: current Roman layout unavailable, keeping ABC/US fallback")
+            DebugLogger.event("input.roman_layout_fallback", metadata: [
+                .state("reason", "invalid_source")
+            ])
             return nil
         }
         return layoutID
@@ -253,13 +262,20 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
     public func performPriTypeModeTransition(source: InputModeCoordinator.ToggleSource) {
         guard let session else {
-            DebugLogger.log("PriTypeInputController: no current session for mode transition (\(source))")
+            DebugLogger.event("toggle.ignored", metadata: [
+                .state("source", source.diagnosticLabel),
+                .state("reason", "no_active_session")
+            ])
             return
         }
 
         let composer = session.composer
         let nextMode = composer.inputMode.toggled
-        DebugLogger.log("PriTypeInputController: mode transition \(composer.inputMode) -> \(nextMode) source=\(source)")
+        DebugLogger.event("toggle.transition_started", metadata: [
+            .state("source", source.diagnosticLabel),
+            .state("from", composer.inputMode == .korean ? "korean" : "english"),
+            .state("to", nextMode == .korean ? "korean" : "english")
+        ])
 
         composer.dismissHanjaCandidates()
         session.finalize(reason: .modeTransition)
@@ -290,7 +306,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
                 // is not reset; refresh expensive context once at the next keyDown.
                 session.markContextStale()
                 session.armFocusLossFinalizer()
-                DebugLogger.log("Reactivated existing input session")
+                DebugLogger.event("input.session_reactivated")
             } else {
                 // Analyze context lightly at activation and upgrade at first keyDown.
                 let newSession = replaceSession(
@@ -298,7 +314,9 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
                     context: ClientContextDetector.analyzeForActivation(client: client)
                 )
                 newSession.markContextStale()
-                DebugLogger.log("Activated new input session (lightweight context)")
+                DebugLogger.event("input.session_activated", metadata: [
+                    .flag("lightweight", newSession.context.isLightweight)
+                ])
             }
         } else {
             // Fallback if sender is not IMKTextInput (rare). Keep the old session's
@@ -366,7 +384,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
     @objc private func handleLayoutChange() {
         let newId = ConfigurationManager.shared.keyboardId
-        DebugLogger.log("PriTypeInputController: Layout changed to \(newId), updating composer")
+        DebugLogger.event("input.keyboard_layout_notification")
         // Layout switches mid-composition end the composition like any other
         // session-ending event — through the single finalize path.
         guard let session else { return }
@@ -446,14 +464,21 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // result: returning false again would repeat the host's default action.
         let keyDownSnapshot = KeyDownSnapshot(event: event)
         if let handled = session.registerKeyDown(keyDownSnapshot).immediateHandledResult {
-            DebugLogger.log("PriTypeInputController: dropped duplicate keyDown keyCode=\(event.keyCode)")
+            DebugLogger.event("input.duplicate_keydown_dropped", metadata: [
+                .flag("repeat", event.isARepeat)
+            ])
             return handled
         }
 
         #if DEBUG
         if debugHandleLogCount < 200 {
             debugHandleLogCount += 1
-            DebugLogger.log("PriTypeInputController: handle keyCode=\(event.keyCode) repeat=\(event.isARepeat) mode=\(composer.inputMode) chars='\(event.characters ?? "")' modifiers=\(event.modifierFlags.rawValue) bundle=\(session.context.bundleId) lightweight=\(session.context.isLightweight) immediate=\(session.context.shouldUseImmediateMode)")
+            DebugLogger.event("input.handle", metadata: [
+                .flag("repeat", event.isARepeat),
+                .state("mode", composer.inputMode == .korean ? "korean" : "english"),
+                .flag("lightweight_context", session.context.isLightweight),
+                .flag("immediate_delivery", session.context.shouldUseImmediateMode)
+            ])
         }
         #endif
 
@@ -478,14 +503,18 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         let bundleId = context.bundleId
 
         if SecureInputPolicy.isSystemSecureClient(bundleId) {
-            DebugLogger.log("Secure Input: System secure client (\(bundleId)), passing through")
+            DebugLogger.event("input.secure_passthrough", metadata: [
+                .state("reason", "system_client")
+            ])
             return true
         }
 
         let hasGlobalSecureInput = IsSecureEventInputEnabled()
 
         if hasGlobalSecureInput {
-            DebugLogger.log("Secure Input: global secure input active in '\(bundleId)', passing through")
+            DebugLogger.event("input.secure_passthrough", metadata: [
+                .state("reason", "global_secure_input")
+            ])
             return true
         }
 
@@ -497,7 +526,9 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         let hasInvalidSelection = selectionRange.location == NSNotFound
 
         if hasInvalidSelection {
-            DebugLogger.log("Secure Input: invalid selection in '\(bundleId)', passing through")
+            DebugLogger.event("input.secure_passthrough", metadata: [
+                .state("reason", "invalid_selection")
+            ])
             return true
         }
 

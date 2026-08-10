@@ -51,9 +51,13 @@ public enum CursorRectResolver {
                     cursorRect = rect
                     resolved = true
                     resolvedFromFreshSource = true
-                    DebugLogger.log("Hanja: cursor from firstRect (pre-commit): \(rect)")
+                    DebugLogger.event("hanja.cursor_resolved", metadata: [
+                        .state("strategy", "first_rect")
+                    ])
                 } else {
-                    DebugLogger.log("Hanja: firstRect returned invalid rect for range \(targetRange): \(rect)")
+                    DebugLogger.event("hanja.cursor_strategy_failed", metadata: [
+                        .state("strategy", "first_rect")
+                    ])
 
                     // Strategy 2: attributes(forCharacterIndex: pos-1)
                     // Like fcitx5, query the previously committed character (one IPC call only).
@@ -66,9 +70,13 @@ public enum CursorRectResolver {
                         cursorRect = lineRect
                         resolved = true
                         resolvedFromFreshSource = true
-                        DebugLogger.log("Hanja: cursor from attributes(idx \(queryIndex)): \(lineRect)")
+                        DebugLogger.event("hanja.cursor_resolved", metadata: [
+                            .state("strategy", "character_attributes")
+                        ])
                     } else {
-                        DebugLogger.log("Hanja: attributes(idx \(queryIndex)) also invalid: \(lineRect)")
+                        DebugLogger.event("hanja.cursor_strategy_failed", metadata: [
+                            .state("strategy", "character_attributes")
+                        ])
                     }
                 }
             }
@@ -88,7 +96,9 @@ public enum CursorRectResolver {
                ) {
                 cursorRect = cached
                 resolved = true
-                DebugLogger.log("Hanja: using cached last-known-good position: \(cached)")
+                DebugLogger.event("hanja.cursor_resolved", metadata: [
+                    .state("strategy", "cache")
+                ])
             }
 
             // Strategy 4: AX element position (rough approximation)
@@ -97,9 +107,13 @@ public enum CursorRectResolver {
                     cursorRect = axRect
                     resolved = true
                     resolvedFromFreshSource = true
-                    DebugLogger.log("Hanja: cursor from Accessibility API: \(axRect)")
+                    DebugLogger.event("hanja.cursor_resolved", metadata: [
+                        .state("strategy", "accessibility")
+                    ])
                 } else {
-                    DebugLogger.log("Hanja: all strategies failed, using mouse location")
+                    DebugLogger.event("hanja.cursor_resolved", metadata: [
+                        .state("strategy", "mouse")
+                    ])
                 }
             }
         }
@@ -215,24 +229,34 @@ public enum CursorRectResolver {
         // Fallback: If system-wide focused element fails (common in Chromium intermittently),
         // try going through the focused application instead
         if focusResult != .success || focusedElement == nil {
-            DebugLogger.log("Hanja AX: systemWide focusedElement failed (\(focusResult.rawValue)), trying app path")
+            DebugLogger.event("hanja.accessibility_retry", metadata: [
+                .state("operation", "focused_element"),
+                .statusCode("status_code", Int(focusResult.rawValue))
+            ])
 
             var focusedApp: AnyObject?
             if AXUIElementCopyAttributeValue(systemWide, kAXFocusedApplicationAttribute as CFString, &focusedApp) == .success,
                let appElement = validatedAXElement(focusedApp) {
                 focusResult = AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedElement)
                 if focusResult != .success {
-                    DebugLogger.log("Hanja AX: app focusedElement also failed (\(focusResult.rawValue))")
+                    DebugLogger.event("hanja.accessibility_failed", metadata: [
+                        .state("operation", "app_focused_element"),
+                        .statusCode("status_code", Int(focusResult.rawValue))
+                    ])
                     return nil
                 }
             } else {
-                DebugLogger.log("Hanja AX: focusedApplication also failed")
+                DebugLogger.event("hanja.accessibility_failed", metadata: [
+                    .state("operation", "focused_application")
+                ])
                 return nil
             }
         }
 
         guard let axElement = validatedAXElement(focusedElement) else {
-            DebugLogger.log("Hanja AX: focused value was not an AXUIElement")
+            DebugLogger.event("hanja.accessibility_failed", metadata: [
+                .state("operation", "focused_element_type")
+            ])
             return nil
         }
 
@@ -247,7 +271,9 @@ public enum CursorRectResolver {
             return rect
         }
 
-        DebugLogger.log("Hanja AX: all strategies failed")
+        DebugLogger.event("hanja.accessibility_failed", metadata: [
+            .state("operation", "all_strategies")
+        ])
         return nil
     }
 
@@ -257,14 +283,19 @@ public enum CursorRectResolver {
         var selectedRangeValue: AnyObject?
         let rangeResult = AXUIElementCopyAttributeValue(axElement, kAXSelectedTextRangeAttribute as CFString, &selectedRangeValue)
         guard rangeResult == .success, let rangeVal = validatedAXValue(selectedRangeValue) else {
-            DebugLogger.log("Hanja AX: selectedTextRange failed (\(rangeResult.rawValue))")
+            DebugLogger.event("hanja.accessibility_failed", metadata: [
+                .state("operation", "selected_text_range"),
+                .statusCode("status_code", Int(rangeResult.rawValue))
+            ])
             return nil
         }
 
         // Extract the CFRange to check if we have a zero-length selection (caret)
         var cfRange = CFRange(location: 0, length: 0)
         guard AXValueGetValue(rangeVal, .cfRange, &cfRange) else {
-            DebugLogger.log("Hanja AX: selectedTextRange was not a CFRange")
+            DebugLogger.event("hanja.accessibility_failed", metadata: [
+                .state("operation", "selected_range_type")
+            ])
             return nil
         }
 
@@ -293,18 +324,23 @@ public enum CursorRectResolver {
             &boundsValue
         )
         guard boundsResult == .success, let boundsVal = validatedAXValue(boundsValue) else {
-            DebugLogger.log("Hanja AX: boundsForRange failed (\(boundsResult.rawValue))")
+            DebugLogger.event("hanja.accessibility_failed", metadata: [
+                .state("operation", "bounds_for_range"),
+                .statusCode("status_code", Int(boundsResult.rawValue))
+            ])
             return nil
         }
 
         // Convert AXValue to CGRect
         var bounds = CGRect.zero
         guard AXValueGetValue(boundsVal, .cgRect, &bounds) else {
-            DebugLogger.log("Hanja AX: AXValueGetValue failed")
+            DebugLogger.event("hanja.accessibility_failed", metadata: [
+                .state("operation", "bounds_value")
+            ])
             return nil
         }
 
-        DebugLogger.log("Hanja AX: raw bounds = \(bounds)")
+        DebugLogger.event("hanja.accessibility_bounds_received")
 
         let screenFrames = NSScreen.screens.map(\.frame)
         guard let mainScreenFrame = NSScreen.main?.frame else { return nil }
@@ -318,7 +354,9 @@ public enum CursorRectResolver {
                let pv = validatedAXValue(posValue) {
                 var pos = CGPoint.zero
                 guard AXValueGetValue(pv, .cgPoint, &pos) else {
-                    DebugLogger.log("Hanja AX: element position was not a CGPoint")
+                    DebugLogger.event("hanja.accessibility_failed", metadata: [
+                        .state("operation", "element_position_type")
+                    ])
                     return nil
                 }
 
@@ -331,7 +369,7 @@ public enum CursorRectResolver {
                     screenFrames: screenFrames,
                     mainScreenFrame: mainScreenFrame
                 ) else { return nil }
-                DebugLogger.log("Hanja AX: Chrome partial → supplemented with element pos: \(result)")
+                DebugLogger.event("hanja.accessibility_bounds_supplemented")
 
                 if isValidCursorRect(result) { return result }
             }
@@ -345,7 +383,9 @@ public enum CursorRectResolver {
         ) else { return nil }
 
         guard isValidCursorRect(result) else {
-            DebugLogger.log("Hanja AX: converted rect invalid: \(result)")
+            DebugLogger.event("hanja.accessibility_failed", metadata: [
+                .state("operation", "coordinate_conversion")
+            ])
             return nil
         }
 
@@ -360,7 +400,9 @@ public enum CursorRectResolver {
         guard AXUIElementCopyAttributeValue(axElement, kAXPositionAttribute as CFString, &posValue) == .success,
               AXUIElementCopyAttributeValue(axElement, kAXSizeAttribute as CFString, &sizeValue) == .success,
               let pv = validatedAXValue(posValue), let sv = validatedAXValue(sizeValue) else {
-            DebugLogger.log("Hanja AX: element position/size unavailable")
+            DebugLogger.event("hanja.accessibility_failed", metadata: [
+                .state("operation", "element_geometry")
+            ])
             return nil
         }
 
@@ -368,7 +410,9 @@ public enum CursorRectResolver {
         var size = CGSize.zero
         guard AXValueGetValue(pv, .cgPoint, &pos),
               AXValueGetValue(sv, .cgSize, &size) else {
-            DebugLogger.log("Hanja AX: element position/size had unexpected AXValue types")
+            DebugLogger.event("hanja.accessibility_failed", metadata: [
+                .state("operation", "element_geometry_type")
+            ])
             return nil
         }
 
@@ -383,7 +427,9 @@ public enum CursorRectResolver {
               ) else { return nil }
         let result = NSRect(x: elementRect.minX, y: elementRect.minY, width: 0, height: defaultHeight)
 
-        DebugLogger.log("Hanja AX: element position fallback: \(result)")
+        DebugLogger.event("hanja.cursor_resolved", metadata: [
+            .state("strategy", "element_position")
+        ])
         guard isValidCursorRect(result) else { return nil }
         return result
     }

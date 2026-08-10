@@ -77,22 +77,33 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     @discardableResult
     public func start() -> Bool {
         guard eventTap == nil else {
-            DebugLogger.log("RightCommandSuppressor: Already running")
+            DebugLogger.event("toggle_backend.start_skipped", metadata: [
+                .state("backend", "event_tap"),
+                .state("reason", "already_running")
+            ])
             return true
         }
-
         guard !permanentlyHandedOff else {
-            DebugLogger.log("RightCommandSuppressor: Start blocked after permanent IOKit handoff")
+            DebugLogger.event("toggle_backend.start_skipped", metadata: [
+                .state("backend", "event_tap"),
+                .state("reason", "permanent_handoff")
+            ])
             return false
         }
 
         guard ToggleMonitorStatusStore.shared.reserveStart(.eventTap) else {
-            DebugLogger.log("RightCommandSuppressor: Start blocked because another backend owns monitoring")
+            DebugLogger.event("toggle_backend.start_skipped", metadata: [
+                .state("backend", "event_tap"),
+                .state("reason", "backend_owned")
+            ])
             return false
         }
         
         guard IOKitManager.hasAccessibilityPermission() else {
-            DebugLogger.log("RightCommandSuppressor: No Accessibility permission")
+            DebugLogger.event("toggle_backend.start_failed", metadata: [
+                .state("backend", "event_tap"),
+                .state("reason", "accessibility_permission")
+            ])
             ToggleMonitorStatusStore.shared.failStart(.eventTap, issue: .accessibilityPermissionRequired)
             return false
         }
@@ -114,7 +125,10 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         )
         
         guard let eventTap = eventTap else {
-            DebugLogger.log("RightCommandSuppressor: Failed to create event tap")
+            DebugLogger.event("toggle_backend.start_failed", metadata: [
+                .state("backend", "event_tap"),
+                .state("reason", "tap_creation")
+            ])
             permanentlyHandedOff = true
             _ = ToggleMonitorStatusStore.shared.beginEventTapHandoff()
             return false
@@ -122,7 +136,10 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         
         // Add to run loop
         guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0) else {
-            DebugLogger.log("RightCommandSuppressor: Failed to create run-loop source")
+            DebugLogger.event("toggle_backend.start_failed", metadata: [
+                .state("backend", "event_tap"),
+                .state("reason", "run_loop_source")
+            ])
             permanentlyHandedOff = true
             tearDownEventTap()
             _ = ToggleMonitorStatusStore.shared.beginEventTapHandoff()
@@ -138,8 +155,9 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         tapDisableTracker.reset()
         ToggleMonitorStatusStore.shared.markRunning(.eventTap)
         
-        let config = ConfigurationManager.shared
-        DebugLogger.log("RightCommandSuppressor: Started (toggle=\(config.toggleKeyBinding.displayName), hanja=\(config.hanjaKeyBinding.displayName))")
+        DebugLogger.event("toggle_backend.started", metadata: [
+            .state("backend", "event_tap")
+        ])
         return true
     }
     
@@ -150,7 +168,9 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         tapDisableTracker.reset()
         resetKeyState()
         ToggleMonitorStatusStore.shared.markStopped(.eventTap)
-        DebugLogger.log("RightCommandSuppressor: Stopped")
+        DebugLogger.event("toggle_backend.stopped", metadata: [
+            .state("backend", "event_tap")
+        ])
     }
     
     // MARK: - Event Handling
@@ -161,7 +181,11 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             switch tapDisableTracker.recordDisable(at: ProcessInfo.processInfo.systemUptime) {
             case .handoff:
-                DebugLogger.log("RightCommandSuppressor: Tap disabled repeatedly, handing off to IOKit")
+                DebugLogger.event("toggle_backend.degraded", metadata: [
+                    .state("from", "event_tap"),
+                    .state("to", "iokit"),
+                    .count("disable_count", tapDisableTracker.maximumRetryCount)
+                ])
                 permanentlyHandedOff = true
                 tearDownEventTap()
                 resetKeyState()
@@ -174,7 +198,10 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                     callback?()
                 }
             case .reenable(let attempt):
-                DebugLogger.log("RightCommandSuppressor: Tap disabled (\(attempt)/\(tapDisableTracker.maximumRetryCount)), re-enabling")
+                DebugLogger.event("toggle_backend.recovering", metadata: [
+                    .state("backend", "event_tap"),
+                    .count("disable_count", attempt)
+                ])
                 if let tap = eventTap {
                     CGEvent.tapEnable(tap: tap, enable: true)
                 }
@@ -191,7 +218,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         let priTypeToggleEnabled = !config.capsLockInputSourceSwitchEnabled
 
         if type == .keyUp, regularKeyState.keyUp(keyCode: keyCode) == .suppress {
-            DebugLogger.log("RightCommandSuppressor: Suppressed regular key UP")
+            DebugLogger.event("input.suppressed_key_up")
             return nil
         }
 
@@ -217,11 +244,15 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             if transition == .up, modifierKeyState.consumeSuppressedRelease(keyCode: keyCode) {
                 if suppressedToggleModifierKeyCode == keyCode {
                     suppressedToggleModifierKeyCode = nil
-                    DebugLogger.log("RightCommandSuppressor: Toggle modifier UP")
+                    DebugLogger.event("toggle.physical_up", metadata: [
+                        .state("backend", "event_tap")
+                    ])
                 }
                 if suppressedHanjaModifierKeyCode == keyCode {
                     suppressedHanjaModifierKeyCode = nil
-                    DebugLogger.log("RightCommandSuppressor: Hanja modifier UP")
+                    DebugLogger.event("hanja.physical_up", metadata: [
+                        .state("backend", "event_tap")
+                    ])
                 }
                 return nil
             }
@@ -243,7 +274,9 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                keyCode == toggleBinding.keyCode {
                 suppressedToggleModifierKeyCode = keyCode
                 modifierKeyState.suppressUntilRelease(keyCode: keyCode)
-                DebugLogger.log("RightCommandSuppressor: Toggle modifier DOWN (\(toggleBinding.displayName))")
+                DebugLogger.event("toggle.requested", metadata: [
+                    .state("backend", "event_tap")
+                ])
                 triggerToggle()
                 return nil
             }
@@ -260,12 +293,17 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 let elapsed = now.uptimeNanoseconds - lastHanjaTriggerTime.uptimeNanoseconds
                 let elapsedMs = elapsed / 1_000_000
                 if elapsedMs < 500 {
-                    DebugLogger.log("RightCommandSuppressor: Hanja modifier DEBOUNCED (\(elapsedMs)ms)")
+                    DebugLogger.event("hanja.request_debounced", metadata: [
+                        .state("backend", "event_tap"),
+                        .durationMicroseconds("elapsed", elapsed / 1_000)
+                    ])
                     return nil
                 }
                 lastHanjaTriggerTime = now
 
-                DebugLogger.log("RightCommandSuppressor: Hanja modifier DOWN (\(hanjaBinding.displayName))")
+                DebugLogger.event("hanja.requested", metadata: [
+                    .state("backend", "event_tap")
+                ])
                 triggerHanjaLookup()
                 return nil
             }
@@ -309,7 +347,9 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 matchesBinding: toggleMatches
             ) {
             case .triggerAndSuppress:
-                DebugLogger.log("RightCommandSuppressor: Regular/combo toggle DOWN (\(toggleBinding.displayName))")
+                DebugLogger.event("toggle.requested", metadata: [
+                    .state("backend", "event_tap")
+                ])
                 triggerToggle()
                 return nil
             case .suppress:
@@ -332,7 +372,9 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 matchesBinding: hanjaMatches
             ) {
             case .triggerAndSuppress:
-                DebugLogger.log("RightCommandSuppressor: Regular/combo Hanja DOWN (\(hanjaBinding.displayName))")
+                DebugLogger.event("hanja.requested", metadata: [
+                    .state("backend", "event_tap")
+                ])
                 triggerHanjaLookup()
                 return nil
             case .suppress:
@@ -352,7 +394,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 var newFlags = event.flags
                 newFlags.remove(modifierMask)
                 event.flags = newFlags
-                DebugLogger.log("RightCommandSuppressor: Stripped suppressed toggle modifier")
+                DebugLogger.event("input.toggle_modifier_stripped")
             }
         }
         

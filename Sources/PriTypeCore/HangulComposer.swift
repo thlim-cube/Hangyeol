@@ -105,7 +105,7 @@ public class HangulComposer: @unchecked Sendable {
     public private(set) var keyboardLayoutId: String = PriTypeConfig.defaultKeyboardId
     private var context: ThreadSafeHangulInputContext = {
        let ctx = ThreadSafeHangulInputContext(keyboard: PriTypeConfig.defaultKeyboardId)
-       DebugLogger.log("Configured context with 2-set (id: '\(PriTypeConfig.defaultKeyboardId)')")
+       DebugLogger.event("composer.context_configured")
        return ctx
     }()
     
@@ -184,7 +184,7 @@ public class HangulComposer: @unchecked Sendable {
                 configuration.englishTextConvenienceFallbackEnabled
             }
         )
-        DebugLogger.log("HangulComposer init")
+        DebugLogger.event("composer.initialized")
     }
 
     // MARK: - Public Methods
@@ -204,7 +204,7 @@ public class HangulComposer: @unchecked Sendable {
             return
         }
         
-        DebugLogger.log("HangulComposer: Updating keyboard layout '\(keyboardLayoutId)' -> '\(id)'")
+        DebugLogger.event("composer.keyboard_layout_changing")
         // Commit existing text before switching to avoid corruption
         if let delegate = lastDelegate, !context.isEmpty() {
             commitComposition(delegate: delegate)
@@ -235,18 +235,22 @@ public class HangulComposer: @unchecked Sendable {
             return
         }
 
-        DebugLogger.log("setInputMode called externally: \(mode)")
+        DebugLogger.event("composer.mode_write_requested", metadata: [
+            .state("mode", mode == .korean ? "korean" : "english")
+        ])
 
         if let delegate = lastDelegate, !context.isEmpty() {
             commitComposition(delegate: delegate)
-            DebugLogger.log("Composition committed before explicit mode switch")
+            DebugLogger.event("composition.committed_before_mode_write")
         }
 
         inputModeStore.setMode(mode)
         localTextBuffer = ""
         textConvenience.resetSpaceState()
         statusBar.setMode(inputMode)
-        DebugLogger.log("Mode set to: \(inputMode)")
+        DebugLogger.event("composer.mode_written", metadata: [
+            .state("mode", inputMode == .korean ? "korean" : "english")
+        ])
     }
 
     // MARK: - Private Helpers
@@ -265,23 +269,32 @@ public class HangulComposer: @unchecked Sendable {
 
             if hadComposition && ClientCompatibilityPolicy.needsDirectNewlineAfterReturnCommit(bundleId: lastInputBundleId) {
                 delegate.insertText("\n")
-                DebugLogger.log("Return -> GoodNotes compatibility: inserted newline and consumed original Return")
+                DebugLogger.event("input.return", metadata: [
+                    .state("action", "insert_newline_and_consume")
+                ])
                 return true
             }
 
             if hadComposition && ClientCompatibilityPolicy.needsReturnConsumedAfterCompositionCommit(bundleId: lastInputBundleId) {
-                DebugLogger.log("Return -> committed composition and consumed original Return for host compatibility")
+                DebugLogger.event("input.return", metadata: [
+                    .state("action", "commit_and_consume")
+                ])
                 return true
             }
 
-            DebugLogger.log("Return -> committed composition and passed original Return to app (hadComposition=\(hadComposition))")
+            DebugLogger.event("input.return", metadata: [
+                .state("action", "pass_through"),
+                .flag("had_composition", hadComposition)
+            ])
             return false
         }
         
         // Escape - only consume if there's an active composition to cancel
         if keyCode == KeyCode.escape {
             if !context.isEmpty() {
-                DebugLogger.log("Escape -> cancel composition")
+                DebugLogger.event("composition.cancelled", metadata: [
+                    .state("reason", "escape")
+                ])
                 cancelComposition(delegate: delegate)
                 localTextBuffer = ""
                 return true
@@ -295,7 +308,10 @@ public class HangulComposer: @unchecked Sendable {
             commitComposition(delegate: delegate)
             let result = textConvenience.handleDoubleSpacePeriod(buffer: &localTextBuffer, delegate: delegate, checkHangul: true)
             if result == .convertedToPeriod {
-                DebugLogger.log("Double-space -> period (Korean mode)")
+                DebugLogger.event("text_convenience.applied", metadata: [
+                    .state("feature", "double_space_period"),
+                    .state("mode", "korean")
+                ])
                 return true
             }
             delegate.insertText(" ")
@@ -358,7 +374,7 @@ public class HangulComposer: @unchecked Sendable {
         }
         
         // Failure case - try committing first then retry
-        DebugLogger.log("Process failed")
+        DebugLogger.event("composer.process_failed")
         
         if !context.isEmpty() {
             commitComposition(delegate: delegate)
@@ -366,20 +382,24 @@ public class HangulComposer: @unchecked Sendable {
         
         // Retry with clean context
         if context.process(Character(char)) {
-            DebugLogger.log("Retry success")
+            DebugLogger.event("composer.retry_succeeded")
             updateComposition(delegate: delegate)
             return true
         }
         
         // Still failed - insert printable ASCII directly
         if KeyCode.isPrintableASCII(charCode) {
-            DebugLogger.log("Retry failed, inserting printable char")
+            DebugLogger.event("composer.retry_failed", metadata: [
+                .state("fallback", "direct_insert")
+            ])
             delegate.insertText(String(char))
             appendToBuffer(String(char))
             return true
         }
         
-        DebugLogger.log("Retry failed, skipping non-printable char")
+        DebugLogger.event("composer.retry_failed", metadata: [
+            .state("fallback", "pass_through")
+        ])
         return false
     }
     
@@ -501,7 +521,7 @@ public class HangulComposer: @unchecked Sendable {
         if let firstScalar = inputCharacters.unicodeScalars.first {
             let firstCharCode = UInt32(firstScalar.value)
             if KeyCode.shouldPassThrough(firstCharCode) {
-                DebugLogger.log("Non-printable key detected, passing to system")
+                DebugLogger.event("input.non_text_key_passthrough")
                 if !context.isEmpty() {
                     commitComposition(delegate: delegate)
                     delegate.setMarkedText("")
@@ -576,7 +596,9 @@ public class HangulComposer: @unchecked Sendable {
             let finalStr = CompositionHelpers.convertAndNormalize(flushed)
             delegate.insertText(finalStr)
             appendToBuffer(finalStr)
-            DebugLogger.logSensitive("commitComposition inserted", sensitiveContent: "'\(commitStr)'")
+            DebugLogger.event("composition.committed", metadata: [
+                .count("length", finalStr.count)
+            ])
         }
     }
 
@@ -699,7 +721,7 @@ public class HangulComposer: @unchecked Sendable {
         // Toggle behavior: if already showing, dismiss
         if hanjaMode || candidateWindow.isVisible {
             dismissHanjaCandidates()
-            DebugLogger.log("Hanja: Toggled off")
+            DebugLogger.event("hanja.window_toggled_off")
             return
         }
         
@@ -708,7 +730,9 @@ public class HangulComposer: @unchecked Sendable {
             ?? lastStrongDelegate
             ?? lastDelegate
         guard let delegate = activeDelegate else {
-            DebugLogger.log("Hanja: No delegate available")
+            DebugLogger.event("hanja.lookup_skipped", metadata: [
+                .state("reason", "no_active_delegate")
+            ])
             return
         }
         _ = handleHanjaLookup(delegate: delegate)
@@ -718,7 +742,9 @@ public class HangulComposer: @unchecked Sendable {
     /// Searches based on the current preedit (composing) text, or the last committed Hangul character
     private func handleHanjaLookup(delegate: HangulComposerDelegate) -> Bool {
         guard inputMode == .korean else {
-            DebugLogger.log("Hanja: Not in Korean mode, skipping")
+            DebugLogger.event("hanja.lookup_skipped", metadata: [
+                .state("reason", "english_mode")
+            ])
             return false
         }
         
@@ -736,7 +762,10 @@ public class HangulComposer: @unchecked Sendable {
         if !preeditStr.isEmpty {
             searchKey = preeditStr
             hadPreedit = true
-            DebugLogger.log("Hanja: searchKey from preedit: '\(searchKey)'")
+            DebugLogger.event("hanja.lookup_source", metadata: [
+                .state("source", "composition"),
+                .count("length", searchKey.count)
+            ])
         }
         
         // Strategy 2: localTextBuffer (last typed character) — only if from the same app
@@ -750,7 +779,10 @@ public class HangulComposer: @unchecked Sendable {
             if isBufferFromApp(currentBundleId),
                let lastChar = localTextBuffer.last, lastChar.isHangulChar {
                 searchKey = String(lastChar)
-                DebugLogger.log("Hanja: searchKey from localTextBuffer: '\(searchKey)'")
+                DebugLogger.event("hanja.lookup_source", metadata: [
+                    .state("source", "local_buffer"),
+                    .count("length", searchKey.count)
+                ])
             }
         }
         
@@ -759,22 +791,33 @@ public class HangulComposer: @unchecked Sendable {
         if searchKey.isEmpty {
             if let text = delegate.textBeforeCursor(length: 1), let lastChar = text.last, lastChar.isHangulChar {
                 searchKey = String(lastChar)
-                DebugLogger.log("Hanja: searchKey from textBeforeCursor: '\(searchKey)'")
+                DebugLogger.event("hanja.lookup_source", metadata: [
+                    .state("source", "cursor_context"),
+                    .count("length", searchKey.count)
+                ])
             }
         }
         
         guard !searchKey.isEmpty else {
-            DebugLogger.log("Hanja: No Hangul text to look up (buffer='\(localTextBuffer)', preedit='\(preeditStr)')")
+            DebugLogger.event("hanja.lookup_skipped", metadata: [
+                .state("reason", "no_candidate_text")
+            ])
             return true // Consume the key but don't open the window
         }
         
         let entries = HanjaManager.shared.search(key: searchKey)
         guard !entries.isEmpty else {
-            DebugLogger.log("Hanja: No results for '\(searchKey)'")
+            DebugLogger.event("hanja.lookup_completed", metadata: [
+                .count("result_count", 0),
+                .count("query_length", searchKey.count)
+            ])
             return true
         }
         
-        DebugLogger.log("Hanja: Found \(entries.count) entries for '\(searchKey)'")
+        DebugLogger.event("hanja.lookup_completed", metadata: [
+            .count("result_count", entries.count),
+            .count("query_length", searchKey.count)
+        ])
         
         hanjaMode = true
         hanjaKey = searchKey
@@ -821,9 +864,10 @@ public class HangulComposer: @unchecked Sendable {
             cursorRect: cursorRect,
             onSelect: { [weak self] entry in
                 guard let self = self else { return }
-
                 guard self.hanjaGeneration == snapshotGeneration, self.hanjaMode else {
-                    DebugLogger.log("Hanja: Ignoring callback from stale candidate generation")
+                    DebugLogger.event("hanja.selection_aborted", metadata: [
+                        .state("reason", "stale_generation")
+                    ])
                     return
                 }
 
@@ -836,7 +880,9 @@ public class HangulComposer: @unchecked Sendable {
                           clientID: ObjectIdentifier(client as AnyObject),
                           sessionID: activeSessionID
                       ) else {
-                    DebugLogger.log("Hanja: Candidate session changed since show — aborting selection")
+                    DebugLogger.event("hanja.selection_aborted", metadata: [
+                        .state("reason", "session_changed")
+                    ])
                     self.invalidateHanjaState()
                     return
                 }
@@ -852,12 +898,14 @@ public class HangulComposer: @unchecked Sendable {
 
                 self.localTextBuffer = String(self.localTextBuffer.dropLast(replacementCharacterCount)) + entry.hanja
                 self.invalidateHanjaState()
-                DebugLogger.log("Hanja: Selected '\(entry.hanja)' (\(entry.meaning))")
+                DebugLogger.event("hanja.candidate_selected", metadata: [
+                    .count("replacement_length", replacementLength)
+                ])
             },
             onDismiss: { [weak self] in
                 guard let self, self.hanjaGeneration == snapshotGeneration else { return }
                 self.invalidateHanjaState()
-                DebugLogger.log("Hanja: Dismissed")
+                DebugLogger.event("hanja.window_dismissed")
             }
         )
         

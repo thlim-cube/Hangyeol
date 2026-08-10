@@ -14,6 +14,17 @@ enum CompositionFinalizeReason: String {
     case modeTransition         // PriType custom toggle key (한/영)
     case keyboardLayoutChange   // 두벌식/세벌식 layout switch mid-composition
     case sessionReplacement     // a different IMK client became active first
+
+    var diagnosticLabel: StaticString {
+        switch self {
+        case .appDeactivate: "app_deactivate"
+        case .deactivateServer: "deactivate_server"
+        case .mouseCommit: "mouse_commit"
+        case .modeTransition: "mode_transition"
+        case .keyboardLayoutChange: "keyboard_layout_change"
+        case .sessionReplacement: "session_replacement"
+        }
+    }
 }
 
 // MARK: - InputSession
@@ -166,7 +177,9 @@ final class InputSession: @unchecked Sendable {
                 if markedRange.location != NSNotFound, markedRange.length > 0 {
                     client.insertText("", replacementRange: markedRange)
                     direct.resetPreeditTracking()
-                    DebugLogger.log("InputSession: cleared owned marked fallback reason=\(reason.rawValue)")
+                    DebugLogger.event("composition.marked_fallback_cleared", metadata: [
+                        .state("reason", reason.diagnosticLabel)
+                    ])
                     return true
                 }
             }
@@ -184,7 +197,11 @@ final class InputSession: @unchecked Sendable {
            !direct.usesMarkedTextFallback {
             _ = composer.flushCommitString()   // flush engine + update buffer; do NOT insert
             direct.resetPreeditTracking()
-            DebugLogger.log("InputSession: finalize[\(reason.rawValue)] direct-insertion (already in document, no re-insert)")
+            DebugLogger.event("composition.finalized", metadata: [
+                .state("reason", reason.diagnosticLabel),
+                .state("delivery", "direct_insertion"),
+                .flag("inserted", false)
+            ])
             return true
         }
 
@@ -202,7 +219,12 @@ final class InputSession: @unchecked Sendable {
     ) {
         let markedRange = client.markedRange()
         let committed = composer.flushCommitString()
-        DebugLogger.log("InputSession: finalize[\(reason.rawValue)] client=\(client.bundleIdentifier() ?? "?") marked=(\(markedRange.location),\(markedRange.length)) len=\(committed.count)")
+        DebugLogger.event("composition.finalized", metadata: [
+            .state("reason", reason.diagnosticLabel),
+            .state("delivery", "marked_text"),
+            .flag("had_marked_range", markedRange.location != NSNotFound && markedRange.length > 0),
+            .count("committed_length", committed.count)
+        ])
         if !committed.isEmpty {
             // Canonical finalize: NSNotFound asks the host to convert its OWN marked
             // text to committed (composition-end), rather than an explicit marked-range

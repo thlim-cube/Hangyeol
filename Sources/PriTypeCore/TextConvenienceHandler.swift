@@ -94,7 +94,10 @@ public final class TextConvenienceHandler: @unchecked Sendable {
                         buffer.removeLast()
                         buffer.append(". ")
                         lastWasSpace = false
-                        DebugLogger.log("Double-space -> period (Context validated)")
+                        DebugLogger.event("text_convenience.applied", metadata: [
+                            .state("feature", "double_space_period"),
+                            .state("mode", "korean")
+                        ])
                         return .convertedToPeriod
                     }
                 }
@@ -160,7 +163,10 @@ public final class TextConvenienceHandler: @unchecked Sendable {
 
         delegate.replaceTextBeforeCursor(length: 1, with: ". ")
         lastWasSpace = false
-        DebugLogger.log("Double-space -> period (English fallback)")
+        DebugLogger.event("text_convenience.applied", metadata: [
+            .state("feature", "double_space_period"),
+            .state("mode", "english")
+        ])
         return true
     }
 
@@ -180,7 +186,10 @@ public final class TextConvenienceHandler: @unchecked Sendable {
         }
 
         delegate.insertText(String(typed).uppercased())
-        DebugLogger.log("Auto-capitalize English fallback")
+        DebugLogger.event("text_convenience.applied", metadata: [
+            .state("feature", "auto_capitalization"),
+            .state("mode", "english")
+        ])
         return true
     }
 
@@ -192,7 +201,10 @@ public final class TextConvenienceHandler: @unchecked Sendable {
         }
 
         delegate.replaceTextBeforeCursor(length: 1, with: "—")
-        DebugLogger.log("Smart dash English fallback")
+        DebugLogger.event("text_convenience.applied", metadata: [
+            .state("feature", "smart_dash"),
+            .state("mode", "english")
+        ])
         return true
     }
 
@@ -218,7 +230,10 @@ public final class TextConvenienceHandler: @unchecked Sendable {
             return false
         }
 
-        DebugLogger.log("Smart quote English fallback")
+        DebugLogger.event("text_convenience.applied", metadata: [
+            .state("feature", "smart_quote"),
+            .state("mode", "english")
+        ])
         return true
     }
 

@@ -12,6 +12,13 @@ public final class InputModeCoordinator: @unchecked Sendable {
     public enum ToggleSource: Sendable {
         case customKey
         case iokitFallback
+
+        var diagnosticLabel: StaticString {
+            switch self {
+            case .customKey: "event_tap"
+            case .iokitFallback: "iokit"
+            }
+        }
     }
 
     private init() {}
@@ -25,12 +32,18 @@ public final class InputModeCoordinator: @unchecked Sendable {
         }
 
         guard !ConfigurationManager.shared.capsLockInputSourceSwitchEnabled else {
-            DebugLogger.log("InputModeCoordinator: ignored custom toggle because Caps Lock owns switching")
+            DebugLogger.event("toggle.ignored", metadata: [
+                .state("source", source.diagnosticLabel),
+                .state("reason", "caps_lock_owns_switching")
+            ])
             return
         }
 
         guard let controller = PriTypeInputController.sharedController else {
-            DebugLogger.log("InputModeCoordinator: ignored custom toggle because no active controller exists")
+            DebugLogger.event("toggle.ignored", metadata: [
+                .state("source", source.diagnosticLabel),
+                .state("reason", "no_active_controller")
+            ])
             return
         }
 

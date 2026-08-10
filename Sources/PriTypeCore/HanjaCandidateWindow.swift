@@ -119,7 +119,9 @@ public final class HanjaCandidateWindow: HanjaCandidatePresenting, @unchecked Se
         positionWindow(near: cursorRect)
         panel.orderFrontRegardless()
         
-        DebugLogger.log("Hanja: Window shown at \(panel.frame), level=\(panel.level.rawValue)")
+        DebugLogger.event("hanja.window_shown", metadata: [
+            .count("candidate_count", candidates.count)
+        ])
     }
     
     /// Dismiss the candidate window (hides without destroying)
