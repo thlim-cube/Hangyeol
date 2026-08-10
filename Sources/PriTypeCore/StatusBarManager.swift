@@ -66,6 +66,27 @@ struct InputMonitorPresentation: Equatable {
     }
 }
 
+/// Delivers monitor changes synchronously on the main actor and resolves each
+/// notification against the authoritative store snapshot.
+@MainActor
+func addToggleMonitorStatusObserver(
+    store: ToggleMonitorStatusStore = .shared,
+    notificationCenter: NotificationCenter = .default,
+    receive: @escaping @MainActor @Sendable (ToggleMonitorStatus) -> Void
+) -> NSObjectProtocol {
+    let token = notificationCenter.addObserver(
+        forName: .toggleMonitorStatusChanged,
+        object: store,
+        queue: .main
+    ) { [store] _ in
+        MainActor.assumeIsolated {
+            receive(store.status)
+        }
+    }
+    receive(store.status)
+    return token
+}
+
 // MARK: - StatusBarManager
 
 /// Manages a status bar item to show current input mode (한/A) and redacted
@@ -190,7 +211,7 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate
 
     @MainActor
     public func menuWillOpen(_ menu: NSMenu) {
-        refreshInputHealth()
+        applyToggleMonitorStatus(ToggleMonitorStatusStore.shared.status)
     }
 
     @MainActor
@@ -266,19 +287,9 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, NSMenuDelegate
     @MainActor
     private func observeToggleMonitorStatus() {
         guard monitorStatusObserver == nil else { return }
-        monitorStatusObserver = NotificationCenter.default.addObserver(
-            forName: .toggleMonitorStatusChanged,
-            object: ToggleMonitorStatusStore.shared,
-            queue: .main
-        ) { [weak self] notification in
-            guard let status = notification.userInfo?["status"] as? ToggleMonitorStatus else {
-                return
-            }
-            Task { @MainActor [weak self] in
-                self?.applyToggleMonitorStatus(status)
-            }
+        monitorStatusObserver = addToggleMonitorStatusObserver { [weak self] status in
+            self?.applyToggleMonitorStatus(status)
         }
-        applyToggleMonitorStatus(ToggleMonitorStatusStore.shared.status)
     }
 
     @MainActor

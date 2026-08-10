@@ -2,6 +2,15 @@ import Foundation
 import Testing
 @testable import PriTypeCore
 
+@MainActor
+private final class MonitorStatusRecorder {
+    private(set) var statuses: [ToggleMonitorStatus] = []
+
+    func record(_ status: ToggleMonitorStatus) {
+        statuses.append(status)
+    }
+}
+
 @Suite("Status Bar Health")
 struct StatusBarHealthTests {
     @Test("Launch initializes the status bar exactly once")
@@ -78,5 +87,33 @@ struct StatusBarHealthTests {
         #expect(presentation.limitations == [.unsupportedIOKitToggleBinding("Control+Space")])
         #expect(health.needsAttention)
         #expect(health.usesFallback)
+    }
+
+    @Test("Monitor notifications synchronously apply the authoritative store status")
+    @MainActor
+    func monitorNotificationOrdering() {
+        let store = ToggleMonitorStatusStore()
+        let recorder = MonitorStatusRecorder()
+        let observer = addToggleMonitorStatusObserver(store: store, receive: recorder.record)
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        #expect(recorder.statuses == [.stopped])
+
+        #expect(store.reserveStart(.eventTap))
+        #expect(recorder.statuses.last == .starting(.eventTap))
+
+        store.markRunning(.eventTap)
+        let runningStatus = ToggleMonitorStatus.running(backend: .eventTap, limitations: [])
+        #expect(recorder.statuses.last == runningStatus)
+
+        let countBeforeStaleNotification = recorder.statuses.count
+        NotificationCenter.default.post(
+            name: .toggleMonitorStatusChanged,
+            object: store,
+            userInfo: ["status": ToggleMonitorStatus.starting(.eventTap)]
+        )
+
+        #expect(recorder.statuses.count == countBeforeStaleNotification + 1)
+        #expect(recorder.statuses.last == runningStatus)
     }
 }
