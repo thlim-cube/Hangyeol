@@ -65,6 +65,12 @@ public class HangulComposer: @unchecked Sendable {
     
     /// Whether Hanja candidate mode is currently active
     private var hanjaMode = false
+
+    /// Identifies this composer when it uses the process-wide candidate presenter.
+    private let hanjaOwnerID = UUID()
+
+    /// The exact presenter generation owned by this composer, if any.
+    private var hanjaPresentationID: HanjaCandidatePresentationID?
     
     /// Invalidates callbacks retained by a previous candidate window. A client can
     /// change between panel presentation and a mouse/keyboard selection.
@@ -443,9 +449,12 @@ public class HangulComposer: @unchecked Sendable {
         }
         
         // If Hanja candidate window is visible, forward keys to it
-        if hanjaMode {
-            let consumed = candidateWindow.handleKey(event)
-            if !candidateWindow.isVisible {
+        if hanjaMode, let presentationID = hanjaPresentationID {
+            let consumed = candidateWindow.handleKey(
+                event,
+                presentationID: presentationID
+            )
+            if candidateWindow.visiblePresentationID != presentationID {
                 invalidateHanjaState()
             }
             if consumed {
@@ -671,16 +680,17 @@ public class HangulComposer: @unchecked Sendable {
     /// End the current candidate interaction and invalidate callbacks captured by
     /// its panel. Controllers call this whenever the owning input session ends.
     func dismissHanjaCandidates() {
-        let shouldDismissWindow = hanjaMode
+        let presentationID = hanjaPresentationID
         invalidateHanjaState()
-        if shouldDismissWindow {
-            candidateWindow.dismiss()
+        if let presentationID {
+            candidateWindow.dismiss(presentationID: presentationID)
         }
     }
 
     private func invalidateHanjaState() {
         hanjaGeneration &+= 1
         hanjaMode = false
+        hanjaPresentationID = nil
     }
     
     /// Trigger Hanja lookup externally (called by RightCommandSuppressor via CGEventTap)
@@ -688,11 +698,22 @@ public class HangulComposer: @unchecked Sendable {
     /// This is the public entry point for Hanja conversion.
     /// Acts as a toggle: dismisses if already visible, opens if not.
     public func triggerHanjaLookup() {
-        // Toggle behavior: if already showing, dismiss
-        if hanjaMode || candidateWindow.isVisible {
-            dismissHanjaCandidates()
+        // The presenter is process-wide while composers are session-local. Dismiss
+        // the exact visible generation, including one orphaned by an old composer.
+        if let visiblePresentationID = candidateWindow.visiblePresentationID {
+            if visiblePresentationID == hanjaPresentationID {
+                dismissHanjaCandidates()
+            } else {
+                invalidateHanjaState()
+                candidateWindow.dismiss(presentationID: visiblePresentationID)
+            }
             DebugLogger.event("hanja.window_toggled_off")
             return
+        }
+
+        // Recover if AppKit hid the panel without delivering its dismiss callback.
+        if hanjaMode {
+            invalidateHanjaState()
         }
         
         // Production lookups use the active session-owned adapter. Standalone callers
@@ -792,6 +813,11 @@ public class HangulComposer: @unchecked Sendable {
         hanjaMode = true
         hanjaGeneration &+= 1
         let snapshotGeneration = hanjaGeneration
+        let presentationID = HanjaCandidatePresentationID(
+            ownerID: hanjaOwnerID,
+            generation: snapshotGeneration
+        )
+        hanjaPresentationID = presentationID
         
         // IMPORTANT: Capture cursor position BEFORE commit.
         // Chromium/Electron apps update cursor position asynchronously after commit,
@@ -829,11 +855,14 @@ public class HangulComposer: @unchecked Sendable {
         }()
         
         candidateWindow.show(
+            presentationID: presentationID,
             entries: entries,
             cursorRect: cursorRect,
             onSelect: { [weak self] entry in
                 guard let self = self else { return }
-                guard self.hanjaGeneration == snapshotGeneration, self.hanjaMode else {
+                guard self.hanjaGeneration == snapshotGeneration,
+                      self.hanjaPresentationID == presentationID,
+                      self.hanjaMode else {
                     DebugLogger.event("hanja.selection_aborted", metadata: [
                         .state("reason", "stale_generation")
                     ])
@@ -872,7 +901,9 @@ public class HangulComposer: @unchecked Sendable {
                 ])
             },
             onDismiss: { [weak self] in
-                guard let self, self.hanjaGeneration == snapshotGeneration else { return }
+                guard let self,
+                      self.hanjaGeneration == snapshotGeneration,
+                      self.hanjaPresentationID == presentationID else { return }
                 self.invalidateHanjaState()
                 DebugLogger.event("hanja.window_dismissed")
             }

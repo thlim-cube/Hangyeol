@@ -1,16 +1,24 @@
 import Cocoa
 import SwiftUI
 
+struct HanjaCandidatePresentationID: Hashable, Sendable {
+    let ownerID: UUID
+    let generation: UInt64
+}
+
 protocol HanjaCandidatePresenting: AnyObject, Sendable {
     var isVisible: Bool { get }
+    var visiblePresentationID: HanjaCandidatePresentationID? { get }
     func show(
+        presentationID: HanjaCandidatePresentationID,
         entries: [HanjaEntry],
         cursorRect: NSRect,
         onSelect: @escaping @Sendable (HanjaEntry) -> Void,
         onDismiss: @escaping @Sendable () -> Void
     )
-    func dismiss()
-    func handleKey(_ event: NSEvent) -> Bool
+    @discardableResult
+    func dismiss(presentationID: HanjaCandidatePresentationID) -> Bool
+    func handleKey(_ event: NSEvent, presentationID: HanjaCandidatePresentationID) -> Bool
 }
 
 /// Custom floating candidate window for Hanja selection
@@ -28,10 +36,18 @@ public final class HanjaCandidateWindow: HanjaCandidatePresenting, @unchecked Se
     private let pageSize = 9
     private var onSelect: (@Sendable (HanjaEntry) -> Void)?
     private var onDismiss: (@Sendable () -> Void)?
+    private var presentationID: HanjaCandidatePresentationID?
     
     public var isVisible: Bool {
         MainActor.assumeIsolated {
             window?.isVisible ?? false
+        }
+    }
+
+    var visiblePresentationID: HanjaCandidatePresentationID? {
+        MainActor.assumeIsolated {
+            guard window?.isVisible == true else { return nil }
+            return presentationID
         }
     }
     
@@ -43,7 +59,8 @@ public final class HanjaCandidateWindow: HanjaCandidatePresenting, @unchecked Se
     ///   - cursorRect: The rect near the text cursor to position the window
     ///   - onSelect: Callback when a candidate is selected
     ///   - onDismiss: Callback when the window is dismissed
-    public func show(
+    func show(
+        presentationID: HanjaCandidatePresentationID,
         entries: [HanjaEntry],
         cursorRect: NSRect,
         onSelect: @escaping @Sendable (HanjaEntry) -> Void,
@@ -51,6 +68,7 @@ public final class HanjaCandidateWindow: HanjaCandidatePresenting, @unchecked Se
     ) {
         MainActor.assumeIsolated {
             showOnMain(
+                presentationID: presentationID,
                 entries: entries,
                 cursorRect: cursorRect,
                 onSelect: onSelect,
@@ -61,20 +79,26 @@ public final class HanjaCandidateWindow: HanjaCandidatePresenting, @unchecked Se
 
     @MainActor
     private func showOnMain(
+        presentationID: HanjaCandidatePresentationID,
         entries: [HanjaEntry],
         cursorRect: NSRect,
         onSelect: @escaping @Sendable (HanjaEntry) -> Void,
         onDismiss: @escaping @Sendable () -> Void
     ) {
+        guard !entries.isEmpty else {
+            return
+        }
+
+        if let previousPresentationID = self.presentationID,
+           previousPresentationID != presentationID {
+            _ = dismissOnMain(presentationID: previousPresentationID)
+        }
+
+        self.presentationID = presentationID
         self.candidates = entries
         self.currentPage = 0
         self.onSelect = onSelect
         self.onDismiss = onDismiss
-        
-        guard !entries.isEmpty else {
-            dismiss()
-            return
-        }
         
         // Reuse existing panel or create a new one
         let panel: NSPanel
@@ -125,40 +149,53 @@ public final class HanjaCandidateWindow: HanjaCandidatePresenting, @unchecked Se
     }
     
     /// Dismiss the candidate window (hides without destroying)
-    public func dismiss() {
+    @discardableResult
+    func dismiss(presentationID: HanjaCandidatePresentationID) -> Bool {
         MainActor.assumeIsolated {
-            dismissOnMain()
+            dismissOnMain(presentationID: presentationID)
         }
     }
 
     @MainActor
-    private func dismissOnMain() {
+    private func dismissOnMain(presentationID: HanjaCandidatePresentationID) -> Bool {
+        guard self.presentationID == presentationID else { return false }
+
         window?.orderOut(nil)
         candidates = []
         let dismissCallback = onDismiss
+        self.presentationID = nil
         onDismiss = nil
         onSelect = nil
         dismissCallback?()
+        return true
     }
     
     /// Handle a key event while the candidate window is visible
     /// - Returns: true if the event was consumed
-    public func handleKey(_ event: NSEvent) -> Bool {
+    func handleKey(_ event: NSEvent, presentationID: HanjaCandidatePresentationID) -> Bool {
         let keyCode = event.keyCode
         let digit = event.charactersIgnoringModifiers?.first?.wholeNumberValue
 
         return MainActor.assumeIsolated {
-            handleKeyOnMain(keyCode: keyCode, digit: digit)
+            handleKeyOnMain(
+                keyCode: keyCode,
+                digit: digit,
+                presentationID: presentationID
+            )
         }
     }
 
     @MainActor
-    private func handleKeyOnMain(keyCode: UInt16, digit: Int?) -> Bool {
-        guard isVisible else { return false }
+    private func handleKeyOnMain(
+        keyCode: UInt16,
+        digit: Int?,
+        presentationID: HanjaCandidatePresentationID
+    ) -> Bool {
+        guard self.presentationID == presentationID, isVisible else { return false }
 
         // ESC -> dismiss
         if keyCode == 53 { // Escape
-            dismiss()
+            _ = dismissOnMain(presentationID: presentationID)
             return true
         }
         
@@ -166,7 +203,7 @@ public final class HanjaCandidateWindow: HanjaCandidatePresenting, @unchecked Se
         if let digit, digit >= 1 && digit <= 9 {
             let index = (currentPage * pageSize) + (digit - 1)
             if index < candidates.count {
-                selectCandidate(at: index)
+                selectCandidate(at: index, presentationID: presentationID)
                 return true
             }
         }
@@ -175,7 +212,7 @@ public final class HanjaCandidateWindow: HanjaCandidatePresenting, @unchecked Se
         if keyCode == 36 || keyCode == 76 { // Return / Numpad Enter
             let index = currentPage * pageSize
             if index < candidates.count {
-                selectCandidate(at: index)
+                selectCandidate(at: index, presentationID: presentationID)
                 return true
             }
         }
@@ -217,28 +254,35 @@ public final class HanjaCandidateWindow: HanjaCandidatePresenting, @unchecked Se
         }
         
         // Any other key -> dismiss and don't consume
-        dismiss()
+        _ = dismissOnMain(presentationID: presentationID)
         return false
     }
     
     // MARK: - Private
     
     @MainActor
-    private func selectCandidate(at index: Int) {
-        guard index < candidates.count else { return }
+    private func selectCandidate(
+        at index: Int,
+        presentationID: HanjaCandidatePresentationID
+    ) {
+        guard self.presentationID == presentationID,
+              index < candidates.count else { return }
         let entry = candidates[index]
         let callback = onSelect
         // Selection owns composer cleanup, so invoke it before clearing the callbacks.
         callback?(entry)
         // Do not fire onDismiss after a successful selection; it is a separate exit path.
-        dismissWithoutCallback()
+        dismissWithoutCallback(presentationID: presentationID)
     }
     
     /// Hide the window after selection without invoking the independent dismiss callback.
     @MainActor
-    private func dismissWithoutCallback() {
+    private func dismissWithoutCallback(presentationID: HanjaCandidatePresentationID) {
+        guard self.presentationID == presentationID else { return }
+
         window?.orderOut(nil)
         candidates = []
+        self.presentationID = nil
         onSelect = nil
         onDismiss = nil
         currentPage = 0
@@ -246,7 +290,7 @@ public final class HanjaCandidateWindow: HanjaCandidatePresenting, @unchecked Se
     
     @MainActor
     private func updateContent() {
-        guard let window = window else { return }
+        guard let window = window, let presentationID else { return }
         
         let startIndex = currentPage * pageSize
         let endIndex = min(startIndex + pageSize, candidates.count)
@@ -260,7 +304,7 @@ public final class HanjaCandidateWindow: HanjaCandidatePresenting, @unchecked Se
             totalPages: totalPages,
             onSelect: { [weak self] index in
                 let globalIndex = (self?.currentPage ?? 0) * (self?.pageSize ?? 9) + index
-                self?.selectCandidate(at: globalIndex)
+                self?.selectCandidate(at: globalIndex, presentationID: presentationID)
             }
         )
         

@@ -343,6 +343,53 @@ struct HanjaCandidateLifecycleTests {
         #expect(presenter.dismissCount == 2)
     }
 
+    @Test("A new composer dismisses an orphaned process-wide candidate panel")
+    func newComposerDismissesOrphanedPanel() {
+        let presenter = MockHanjaCandidatePresenter()
+        var originalComposer: HangulComposer? = makeComposer(presenter: presenter)
+        let originalDelegate = MockComposerDelegate()
+        openCandidate(composer: originalComposer!, delegate: originalDelegate)
+        #expect(presenter.isVisible)
+
+        originalComposer = nil
+        let nextComposer = makeComposer(presenter: presenter)
+        nextComposer.triggerHanjaLookup()
+
+        #expect(!presenter.isVisible)
+        #expect(presenter.dismissCount == 1)
+    }
+
+    @Test("A previous composer cannot dismiss a newer composer's panel")
+    func previousComposerCannotDismissNewerPanel() throws {
+        let presenter = MockHanjaCandidatePresenter()
+        let originalComposer = makeComposer(presenter: presenter)
+        let nextComposer = makeComposer(presenter: presenter)
+        let originalDelegate = MockComposerDelegate()
+        let nextDelegate = MockComposerDelegate()
+        openCandidate(composer: originalComposer, delegate: originalDelegate)
+        let oldDismissCallback = try #require(presenter.dismissCallbacks.first)
+
+        let shortcut = TestEventFactory.keyEvent(
+            char: "x",
+            keyCode: 7,
+            modifiers: .command
+        )!
+        _ = nextComposer.handle(shortcut, delegate: nextDelegate)
+        nextDelegate.fullText = "가"
+        nextComposer.triggerHanjaLookup() // close the foreign panel
+        #expect(!presenter.isVisible)
+        nextComposer.triggerHanjaLookup() // open the next composer's panel
+        #expect(presenter.isVisible)
+
+        originalComposer.dismissHanjaCandidates()
+        #expect(presenter.isVisible)
+        #expect(presenter.dismissCount == 1)
+
+        oldDismissCallback()
+        #expect(presenter.isVisible)
+        #expect(presenter.dismissCount == 1)
+    }
+
     @Test("A click dismisses a candidate after lookup committed the composition")
     func clickDismissesCandidateAfterCompositionCommit() throws {
         let presenter = MockHanjaCandidatePresenter()
@@ -538,27 +585,43 @@ struct HanjaCandidateLifecycleTests {
 
 private final class MockHanjaCandidatePresenter: HanjaCandidatePresenting, @unchecked Sendable {
     var isVisible = false
+    var visiblePresentationID: HanjaCandidatePresentationID? {
+        isVisible ? presentationID : nil
+    }
     var consumedKeyCodes: Set<UInt16> = []
     private(set) var dismissCount = 0
     private(set) var selectionCallbacks: [@Sendable (HanjaEntry) -> Void] = []
+    private(set) var dismissCallbacks: [@Sendable () -> Void] = []
+    private var presentationID: HanjaCandidatePresentationID?
 
     func show(
+        presentationID: HanjaCandidatePresentationID,
         entries: [HanjaEntry],
         cursorRect: NSRect,
         onSelect: @escaping @Sendable (HanjaEntry) -> Void,
         onDismiss: @escaping @Sendable () -> Void
     ) {
+        self.presentationID = presentationID
         isVisible = !entries.isEmpty
         selectionCallbacks.append(onSelect)
+        dismissCallbacks.append(onDismiss)
     }
 
-    func dismiss() {
+    func dismiss(presentationID: HanjaCandidatePresentationID) -> Bool {
+        guard self.presentationID == presentationID else { return false }
+
+        self.presentationID = nil
         isVisible = false
         dismissCount += 1
+        return true
     }
 
-    func handleKey(_ event: NSEvent) -> Bool {
-        consumedKeyCodes.contains(event.keyCode)
+    func handleKey(
+        _ event: NSEvent,
+        presentationID: HanjaCandidatePresentationID
+    ) -> Bool {
+        guard self.presentationID == presentationID else { return false }
+        return consumedKeyCodes.contains(event.keyCode)
     }
 }
 
