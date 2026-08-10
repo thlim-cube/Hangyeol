@@ -96,7 +96,7 @@ struct SecureToggleTests {
             )
         })
         var operationOrder: [String] = []
-        _ = session.reconcileDeferredMarkedTextAfterSecureInput()
+        _ = session.prepareForNonSecureClientWrites()
         #expect(session.reconcileDeferredRomanKeyboardLayoutSync { _, mode in
             keyboardOverrideModes.append(mode)
             operationOrder.append("layout")

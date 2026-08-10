@@ -356,7 +356,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             return false
         }
 
-        _ = session.reconcileDeferredMarkedTextAfterSecureInput()
+        _ = session.prepareForNonSecureClientWrites()
         session.ensureAdapterMatchesPolicy()
         session.cancelDeferredRomanKeyboardLayoutSync()
         session.finalize(reason: .modeTransition)
@@ -620,7 +620,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // A previous Secure Input pass-through may have left PriType-owned marked
         // text in the host. This is the first point that proves client writes are
         // safe again; lifecycle callbacks alone must never perform this cleanup.
-        _ = session.reconcileDeferredMarkedTextAfterSecureInput()
+        _ = session.prepareForNonSecureClientWrites()
 
         // Apply a pending macOS ownership/source boundary only after the secure
         // client check. This makes the first normal key use Korean without allowing
@@ -725,7 +725,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             session.discardForSecureInput()
             return false
         }
-        _ = session.reconcileDeferredMarkedTextAfterSecureInput()
+        _ = session.prepareForNonSecureClientWrites()
         reconcileOwnership()
         session.ensureAdapterMatchesPolicy()
         performLookup(session.composer)

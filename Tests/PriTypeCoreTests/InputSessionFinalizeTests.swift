@@ -29,6 +29,28 @@ struct InputSessionFinalizeTests {
         return (session, composer, client)
     }
 
+    private func makeMarkedSession() -> (InputSession, HangulComposer, FakeIMKTextInput) {
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.apple.TextEdit"
+        let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID, documentAccessSafe: true),
+            composer: composer
+        )
+        return (session, composer, client)
+    }
+
+    private func makeStaleDirectFallbackSession() -> (InputSession, HangulComposer, FakeIMKTextInput) {
+        let result = makeDirectFallbackSession()
+        _ = result.1.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: result.0.adapter
+        )
+        result.0.markContextStale()
+        return result
+    }
+
     @Test("Direct insertion marked fallback commits through the marked path")
     func directFallbackCommitsMarkedText() {
         let (session, composer, client) = makeDirectFallbackSession()
@@ -83,13 +105,82 @@ struct InputSessionFinalizeTests {
         #expect(client.markedText == "ㄱ")
         #expect(client.insertCalls.isEmpty)
 
-        #expect(session.reconcileDeferredMarkedTextAfterSecureInput())
+        #expect(session.prepareForNonSecureClientWrites())
         #expect(client.markedText.isEmpty)
         #expect(client.insertCalls.count == 1)
         #expect(client.insertCalls.first?.0 == "")
         #expect(client.insertCalls.first?.1 == NSRange(location: 0, length: 1))
-        #expect(!session.reconcileDeferredMarkedTextAfterSecureInput())
+        #expect(!session.prepareForNonSecureClientWrites())
         #expect(client.insertCalls.count == 1)
+    }
+
+    @Test("Canonical marked text is cleared once after same-field nonsecure resume")
+    func canonicalMarkedTextCleanupOnSameFieldResume() {
+        let (session, composer, client) = makeMarkedSession()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        #expect(client.markedText == "ㄱ")
+        #expect(client.insertCalls.isEmpty)
+
+        session.discardForSecureInput()
+
+        #expect(!composer.hasActiveComposition)
+        #expect(client.markedText == "ㄱ")
+        #expect(client.insertCalls.isEmpty)
+
+        #expect(session.prepareForNonSecureClientWrites())
+        #expect(client.markedText.isEmpty)
+        #expect(client.insertCalls.count == 1)
+        #expect(client.insertCalls.first?.0 == "")
+        #expect(!session.prepareForNonSecureClientWrites())
+        #expect(client.insertCalls.count == 1)
+    }
+
+    @Test("A refreshed field never receives deferred marked-text cleanup")
+    func refreshedFieldAbandonsDeferredMarkedCleanup() {
+        let (session, composer, client) = makeDirectFallbackSession()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        session.discardForSecureInput()
+        #expect(client.insertCalls.isEmpty)
+
+        session.markContextStale()
+        #expect(session.refreshContextIfNeeded { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: false)
+        })
+        client.markedText = "다른"
+        client.markedRangeValue = NSRange(location: 3, length: 2)
+
+        #expect(!session.prepareForNonSecureClientWrites())
+        #expect(client.insertCalls.isEmpty)
+        #expect(client.markedText == "다른")
+    }
+
+    @Test("A refreshed nonsecure field never receives the previous field's active preedit")
+    func refreshedFieldDiscardsActivePreeditWithoutWrite() {
+        let (session, composer, client) = makeMarkedSession()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        session.markContextStale()
+        #expect(session.refreshContextIfNeeded { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+        client.markedText = "다른"
+        client.markedRangeValue = NSRange(location: 4, length: 2)
+
+        #expect(!session.prepareForNonSecureClientWrites())
+        #expect(!composer.hasActiveComposition)
+        #expect(client.insertCalls.isEmpty)
+        #expect(client.markedText == "다른")
     }
 
     @Test("Secure discard followed by lifecycle handoff never writes to the client")
@@ -110,6 +201,55 @@ struct InputSessionFinalizeTests {
         #expect(client.insertCalls.isEmpty)
     }
 
+    @Test("A stale password-context deactivation discards without client writes")
+    func staleContextDeactivationDoesNotWrite() {
+        let (session, composer, client) = makeStaleDirectFallbackSession()
+
+        #expect(session.finalize(reason: .deactivateServer))
+
+        #expect(!composer.hasActiveComposition)
+        #expect(client.markedText == "ㄱ")
+        #expect(client.insertCalls.isEmpty)
+    }
+
+    @Test("A stale password-context controller handoff discards without client writes")
+    func staleContextControllerHandoffDoesNotWrite() {
+        let (session, composer, client) = makeStaleDirectFallbackSession()
+
+        session.retireForControllerHandoff()
+
+        #expect(!composer.hasActiveComposition)
+        #expect(client.markedText == "ㄱ")
+        #expect(client.insertCalls.isEmpty)
+    }
+
+    @Test("A stale password-context app deactivation discards without client writes")
+    func staleContextAppDeactivationDoesNotWrite() {
+        let (session, composer, client) = makeStaleDirectFallbackSession()
+
+        #expect(session.finalize(reason: .appDeactivate))
+
+        #expect(!composer.hasActiveComposition)
+        #expect(client.markedText == "ㄱ")
+        #expect(client.insertCalls.isEmpty)
+    }
+
+    @Test("A confirmed nonsecure app deactivation keeps the early marked commit")
+    func nonsecureAppDeactivationCommitsMarkedText() {
+        let (session, composer, client) = makeMarkedSession()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        #expect(session.finalize(reason: .appDeactivate))
+
+        #expect(!composer.hasActiveComposition)
+        #expect(client.document == "ㄱ")
+        #expect(client.markedText.isEmpty)
+        #expect(client.insertCalls.count == 1)
+    }
+
     @Test("Changing from marked to direct delivery finalizes through the old adapter")
     func markedToDirectFinalizesBeforeAdapterReplacement() {
         let client = FakeIMKTextInput()
@@ -127,6 +267,7 @@ struct InputSessionFinalizeTests {
         #expect(client.markedText == "ㄱ")
 
         session.refreshContext(context(bundleId: "com.nousresearch.hermes", documentAccessSafe: true))
+        _ = session.prepareForNonSecureClientWrites()
         session.ensureAdapterMatchesPolicy()
 
         #expect(session.adapter.deliveryMode == .directInsertion)
@@ -146,6 +287,7 @@ struct InputSessionFinalizeTests {
         #expect(client.document == "ㄱ")
 
         session.refreshContext(context(bundleId: client.bundleID, documentAccessSafe: false))
+        _ = session.prepareForNonSecureClientWrites()
         session.ensureAdapterMatchesPolicy()
 
         #expect(session.adapter.deliveryMode == .markedText)

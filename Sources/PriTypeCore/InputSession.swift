@@ -64,10 +64,20 @@ final class InputSession: @unchecked Sendable {
     // property of the host's event delivery, not of how we render composition.
     private var keyEventDeduplicator = KeyEventDeduplicator()
 
-    /// PriType rendered marked text through a direct-insertion fallback, then had to
-    /// enter Secure Input without touching the client. This ownership survives
-    /// ordinary lifecycle finalizers, which do not prove that client writes are safe.
-    private var hasDeferredOwnedMarkedTextCleanup = false
+    /// Increments whenever a re-analysis may refer to a different field. InputMethodKit
+    /// can reuse one client object across fields, so object identity alone cannot prove
+    /// that a later marked range still belongs to PriType's previous preedit.
+    private var contextGeneration: UInt64 = 0
+
+    /// The most recent generation that explicitly passed the nonsecure gate. The
+    /// initial generation is trusted for direct session tests and for a fully analyzed
+    /// client created synchronously inside `handle`; activation sessions are marked
+    /// stale before they can receive composition.
+    private var lastNonSecureGeneration: UInt64? = 0
+
+    /// Generation that owned marked text when a write-free discard became necessary.
+    /// A later field refresh changes `contextGeneration`, making cleanup fail closed.
+    private var deferredOwnedMarkedTextGeneration: UInt64?
 
     /// A custom toggle changed PriType's internal mode while Secure Input prevented
     /// `overrideKeyboardWithKeyboardNamed:`. The next nonsecure input boundary must
@@ -99,13 +109,19 @@ final class InputSession: @unchecked Sendable {
     /// applied separately, after the controller classifies the refreshed field as
     /// secure or nonsecure; rebuilding here could finalize into a password field.
     /// Re-arms the focus-loss finalizer when the owning app changed.
-    func refreshContext(_ newContext: ClientContext) {
+    func refreshContext(
+        _ newContext: ClientContext,
+        fieldIdentityMayHaveChanged: Bool = false
+    ) {
         // Do not expose the previous field's nonsecure classification while the
         // current field is being replaced. The controller republishes the result
         // only after its main-thread secure gate completes.
         HanjaShortcutSessionStateStore.shared.update(.unknown)
         let oldBundleId = context.bundleId
         context = newContext
+        if fieldIdentityMayHaveChanged {
+            contextGeneration &+= 1
+        }
         contextNeedsRefresh = false
         if focusLossObserver != nil, newContext.bundleId != oldBundleId {
             armFocusLossFinalizer()
@@ -126,7 +142,7 @@ final class InputSession: @unchecked Sendable {
         using analyze: (IMKTextInput) -> ClientContext
     ) -> Bool {
         guard contextNeedsRefresh else { return false }
-        refreshContext(analyze(client))
+        refreshContext(analyze(client), fieldIdentityMayHaveChanged: true)
         return true
     }
 
@@ -142,7 +158,7 @@ final class InputSession: @unchecked Sendable {
             return true
         }
         guard context.isLightweight, context.isFinder else { return false }
-        refreshContext(analyze(client))
+        refreshContext(analyze(client), fieldIdentityMayHaveChanged: true)
         return true
     }
 
@@ -158,6 +174,12 @@ final class InputSession: @unchecked Sendable {
         // tracking can be stranded when the experimental setting changes at runtime.
         finalize(reason: .deliveryModeChange)
         adapter = TextDeliveryPolicy.makeAdapter(for: client, context: context)
+    }
+
+    /// Client writes are safe only for the same analyzed field generation that
+    /// explicitly passed the nonsecure gate.
+    private var clientWritesAreConfirmedSafe: Bool {
+        !contextNeedsRefresh && lastNonSecureGeneration == contextGeneration
     }
 
     /// Mouse clicks inside a live marked composition keep composing. A marked-text
@@ -273,6 +295,19 @@ final class InputSession: @unchecked Sendable {
     /// every session-ending event can call it unconditionally.
     @discardableResult
     func finalize(reason: CompositionFinalizeReason) -> Bool {
+        guard clientWritesAreConfirmedSafe else {
+            let hadComposition = composer.hasActiveComposition
+                || (adapter as? DirectInsertionAdapter)?.usesMarkedTextFallback == true
+            discardCompositionWithoutClientWrite(rebuildAdapter: false)
+            if hadComposition {
+                DebugLogger.event("composition.discarded", metadata: [
+                    .state("reason", reason.diagnosticLabel),
+                    .state("cause", "client_write_unconfirmed")
+                ])
+            }
+            return hadComposition
+        }
+
         guard composer.hasActiveComposition else {
             if let direct = adapter as? DirectInsertionAdapter,
                direct.usesMarkedTextFallback {
@@ -318,13 +353,33 @@ final class InputSession: @unchecked Sendable {
         return true
     }
 
-    /// Clear PriType-owned marked text left behind when Secure Input forced a
-    /// write-free discard. Callers must invoke this only after the current client has
-    /// passed the nonsecure gate; generic lifecycle callbacks cannot establish that.
+    /// Confirm that the current generation passed the nonsecure gate, then clear
+    /// PriType-owned marked text only when it was created in that same generation.
+    /// Generic lifecycle callbacks cannot establish either condition.
     @discardableResult
-    func reconcileDeferredMarkedTextAfterSecureInput() -> Bool {
-        guard hasDeferredOwnedMarkedTextCleanup else { return false }
-        hasDeferredOwnedMarkedTextCleanup = false
+    func prepareForNonSecureClientWrites() -> Bool {
+        guard !contextNeedsRefresh else { return false }
+
+        // A preedit created before a possible field transition cannot be committed
+        // into the newly analyzed field, even when that new field is nonsecure.
+        if lastNonSecureGeneration != contextGeneration,
+           composer.hasActiveComposition
+            || (adapter as? DirectInsertionAdapter)?.usesMarkedTextFallback == true {
+            discardCompositionWithoutClientWrite(rebuildAdapter: false)
+        }
+        lastNonSecureGeneration = contextGeneration
+
+        guard let ownedGeneration = deferredOwnedMarkedTextGeneration else {
+            return false
+        }
+        deferredOwnedMarkedTextGeneration = nil
+
+        guard ownedGeneration == contextGeneration else {
+            DebugLogger.event("composition.deferred_marked_fallback_abandoned", metadata: [
+                .state("reason", "context_changed")
+            ])
+            return false
+        }
 
         let markedRange = client.markedRange()
         guard markedRange.location != NSNotFound, markedRange.length > 0 else {
@@ -379,6 +434,29 @@ final class InputSession: @unchecked Sendable {
         #endif
     }
 
+    /// Capture marked-text ownership before dropping the engine, then invalidate all
+    /// direct-insertion tracking without touching the current client.
+    private func discardCompositionWithoutClientWrite(rebuildAdapter: Bool) {
+        let direct = adapter as? DirectInsertionAdapter
+        let ownsMarkedText = direct?.usesMarkedTextFallback == true
+            || (adapter.deliveryMode == .markedText && composer.hasActiveComposition)
+        if deferredOwnedMarkedTextGeneration == nil,
+           ownsMarkedText,
+           let ownerGeneration = lastNonSecureGeneration {
+            deferredOwnedMarkedTextGeneration = ownerGeneration
+        }
+
+        composer.discardCompositionForPassThrough()
+        direct?.resetPreeditTracking()
+        lastNonSecureGeneration = nil
+
+        guard rebuildAdapter else { return }
+        let resolved = TextDeliveryPolicy.mode(for: context)
+        if adapter.deliveryMode != resolved {
+            adapter = TextDeliveryPolicy.makeAdapter(for: client, context: context)
+        }
+    }
+
     /// The marked-text finalize, callable against any client. `PriTypeInputController`
     /// uses this directly when IMK hands it a sender that is not this session's client.
     static func finalizeMarkedComposition(
@@ -412,19 +490,9 @@ final class InputSession: @unchecked Sendable {
     /// cleanup ownership; the client write itself remains deferred until a later
     /// nonsecure gate explicitly allows it.
     func discardForSecureInput() {
-        if let direct = adapter as? DirectInsertionAdapter,
-           direct.usesMarkedTextFallback {
-            hasDeferredOwnedMarkedTextCleanup = true
-        }
-        composer.discardCompositionForPassThrough()
-        (adapter as? DirectInsertionAdapter)?.resetPreeditTracking()
-
         // A stale same-client refresh can change the resolved policy before the
         // secure gate runs. Rebuild only after the engine is discarded, without the
         // normal finalize step that would write into the password client.
-        let resolved = TextDeliveryPolicy.mode(for: context)
-        if adapter.deliveryMode != resolved {
-            adapter = TextDeliveryPolicy.makeAdapter(for: client, context: context)
-        }
+        discardCompositionWithoutClientWrite(rebuildAdapter: true)
     }
 }
