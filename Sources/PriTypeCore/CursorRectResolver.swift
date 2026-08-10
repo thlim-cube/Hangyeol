@@ -27,10 +27,14 @@ public enum CursorRectResolver {
     /// Call BEFORE committing the preedit: Chromium updates cursor position
     /// asynchronously after commit, so post-commit queries return garbage.
     static func resolve(client: IMKTextInput?, sessionID: ObjectIdentifier? = nil) -> NSRect {
-        var cursorRect = NSRect(x: NSEvent.mouseLocation.x, y: NSEvent.mouseLocation.y - 20, width: 0, height: 20)
+        let screens = NSScreen.screens
+        var cursorRect = mouseFallbackRect(
+            at: NSEvent.mouseLocation,
+            screens: screens.map { (frame: $0.frame, visibleFrame: $0.visibleFrame) }
+        )
         var resolved = false
         var resolvedFromFreshSource = false
-        let screenFrames = NSScreen.screens.map(\.frame)
+        let screenFrames = screens.map(\.frame)
         let now = ProcessInfo.processInfo.systemUptime
 
         if let client {
@@ -137,6 +141,45 @@ public enum CursorRectResolver {
     /// prevents a caret from one field being reused after focus moves within an app.
     static func invalidateCache() {
         cursorCache.removeAll()
+    }
+
+    /// Keep the last-resort mouse caret on the display that owns the mouse.
+    /// `visibleFrame` clamping prevents the 20-point downward offset from moving
+    /// the anchor outside a secondary display at its bottom edge.
+    static func mouseFallbackRect(
+        at mouseLocation: NSPoint,
+        screens: [(frame: NSRect, visibleFrame: NSRect)]
+    ) -> NSRect {
+        let caretHeight: CGFloat = 20
+        let fallback = NSRect(
+            x: mouseLocation.x,
+            y: mouseLocation.y - caretHeight,
+            width: 0,
+            height: caretHeight
+        )
+
+        guard let screen = screens.first(where: { $0.frame.contains(mouseLocation) }) else {
+            return fallback
+        }
+
+        let visibleFrame = screen.visibleFrame
+        guard visibleFrame.width > 0,
+              visibleFrame.height >= caretHeight,
+              [visibleFrame.minX, visibleFrame.minY, visibleFrame.maxX, visibleFrame.maxY]
+              .allSatisfy(\.isFinite) else {
+            return fallback
+        }
+
+        // `NSRect.contains` excludes the maximum edges. Keep the zero-width
+        // anchor strictly inside so the candidate window selects this screen.
+        let maximumX = visibleFrame.maxX.nextDown
+        let maximumY = visibleFrame.maxY - caretHeight
+        return NSRect(
+            x: min(max(mouseLocation.x, visibleFrame.minX), maximumX),
+            y: min(max(fallback.minY, visibleFrame.minY), maximumY),
+            width: 0,
+            height: caretHeight
+        )
     }
 
     // MARK: - Cursor Position Validation

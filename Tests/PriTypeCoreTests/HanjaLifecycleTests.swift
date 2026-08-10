@@ -65,6 +65,22 @@ struct HanjaCursorGeometryTests {
             screenFrames: screens
         ))
     }
+
+    @Test("Mouse fallback stays inside the secondary display at its bottom edge")
+    func clampsMouseFallbackToSecondaryVisibleFrame() {
+        let belowVisibleFrame = NSRect(x: 0, y: -860, width: 1_600, height: 860)
+        let fallback = CursorRectResolver.mouseFallbackRect(
+            at: NSPoint(x: 500, y: -895),
+            screens: [
+                (frame: main, visibleFrame: main),
+                (frame: below, visibleFrame: belowVisibleFrame),
+            ]
+        )
+
+        #expect(fallback == NSRect(x: 500, y: -860, width: 0, height: 20))
+        #expect(below.contains(fallback.origin))
+        #expect(!main.contains(fallback.origin))
+    }
 }
 
 @Suite("Hanja cursor cache")
