@@ -417,17 +417,20 @@ public class HangulComposer: @unchecked Sendable {
              localTextBuffer = "" // Any system shortcut (Cmd+V, Cmd+Z, etc.) invalidates local context
              return false
         }
+
+        // Special keys are identified by hardware keyCode, not by their text
+        // payload. Some IMK clients deliver Return/Numpad Enter with empty
+        // `characters`; checking the payload first would leave the last Hangul
+        // syllable uncommitted while the host performs its Return action.
+        if let result = handleSpecialKey(keyCode: keyCode, delegate: delegate) {
+            return result
+        }
         
         guard let characters = event.characters, !characters.isEmpty else {
             return false
         }
         
         let inputCharacters = characters
-        
-        // Handle special keys (Return, Escape, Space, Arrow, Tab, Backspace)
-        if let result = handleSpecialKey(keyCode: keyCode, delegate: delegate) {
-            return result
-        }
         
         // Filter: If input contains non-printable characters (e.g., function keys, arrows)
         // This catches Fn+Arrow (Home/End/PageUp/PageDown) and other navigation keys

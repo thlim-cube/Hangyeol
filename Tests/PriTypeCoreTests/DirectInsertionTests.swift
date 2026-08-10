@@ -153,23 +153,55 @@ struct DirectInsertionDenylistTests {
 
 @Suite("KeyEventDedup")
 struct KeyEventDedupTests {
-    private func snap(_ t: TimeInterval, _ code: UInt16, _ repeat_: Bool = false) -> KeyDownSnapshot {
-        KeyDownSnapshot(timestamp: t, keyCode: code, isARepeat: repeat_)
+    private func snap(
+        _ t: TimeInterval,
+        _ code: UInt16,
+        _ repeat_: Bool = false,
+        modifiers: UInt = 0,
+        windowNumber: Int = 0,
+        keyboardType: Int64 = 0
+    ) -> KeyDownSnapshot {
+        KeyDownSnapshot(
+            timestamp: t,
+            keyCode: code,
+            modifierFlags: modifiers,
+            windowNumber: windowNumber,
+            keyboardType: keyboardType,
+            isARepeat: repeat_
+        )
     }
 
-    @Test("Exact re-delivery (same timestamp, same key) is a duplicate")
+    @Test("Exact full-signature re-delivery is a duplicate")
     func exactDuplicate() {
-        #expect(KeyEventDedup.isDuplicate(snap(100.0, 51), previous: snap(100.0, 51)))
+        #expect(KeyEventDedup.isDuplicate(
+            snap(100.0, 51, modifiers: 2, windowNumber: 3, keyboardType: 40),
+            previous: snap(100.0, 51, modifiers: 2, windowNumber: 3, keyboardType: 40)
+        ))
     }
 
-    @Test("Re-delivery within the window is a duplicate")
-    func withinWindow() {
-        #expect(KeyEventDedup.isDuplicate(snap(100.02, 51), previous: snap(100.0, 51)))
+    @Test("Fast physical double-tap is not collapsed")
+    func fastDoubleTap() {
+        #expect(!KeyEventDedup.isDuplicate(snap(100.02, 51), previous: snap(100.0, 51)))
     }
 
-    @Test("Outside the window is NOT a duplicate (human double-tap)")
-    func outsideWindow() {
-        #expect(!KeyEventDedup.isDuplicate(snap(100.2, 51), previous: snap(100.0, 51)))
+    @Test("Same timestamp with different modifiers is not a duplicate")
+    func differentModifiers() {
+        #expect(!KeyEventDedup.isDuplicate(
+            snap(100.0, 51, modifiers: 2),
+            previous: snap(100.0, 51, modifiers: 0)
+        ))
+    }
+
+    @Test("Same timestamp from another window or keyboard is not a duplicate")
+    func differentSourceSignature() {
+        #expect(!KeyEventDedup.isDuplicate(
+            snap(100.0, 51, windowNumber: 2),
+            previous: snap(100.0, 51, windowNumber: 1)
+        ))
+        #expect(!KeyEventDedup.isDuplicate(
+            snap(100.0, 51, keyboardType: 41),
+            previous: snap(100.0, 51, keyboardType: 40)
+        ))
     }
 
     @Test("Different keyCode is never a duplicate (fast typing)")
@@ -188,6 +220,64 @@ struct KeyEventDedupTests {
     @Test("No previous event ⇒ not a duplicate")
     func noPrevious() {
         #expect(!KeyEventDedup.isDuplicate(snap(100.0, 51), previous: nil))
+    }
+
+    @Test("Duplicate route is always consumed instead of replaying prior result")
+    func duplicateRouteHandledResult() {
+        #expect(KeyDownRoute.process.immediateHandledResult == nil)
+        #expect(KeyDownRoute.consumeDuplicate.immediateHandledResult == true)
+    }
+
+    @Test("Synthetic zero timestamps require identical event identity")
+    func zeroTimestampIdentity() {
+        let event = TestEventFactory.keyEvent(char: "x", keyCode: 7)!
+        #expect(KeyEventDedup.isDuplicate(
+            KeyDownSnapshot(event: event),
+            previous: KeyDownSnapshot(event: event)
+        ))
+        let first = TestEventFactory.keyEvent(char: "x", keyCode: 7)!
+        let second = TestEventFactory.keyEvent(char: "x", keyCode: 7)!
+        #expect(!KeyEventDedup.isDuplicate(
+            KeyDownSnapshot(event: second),
+            previous: KeyDownSnapshot(event: first)
+        ))
+    }
+
+    @Test("Same-turn re-entry is consumed without a millisecond guess")
+    func sameTurnReentry() {
+        var deduplicator = KeyEventDeduplicator()
+
+        #expect(deduplicator.route(snap(100.0, KeyCode.return)) == .process)
+        #expect(deduplicator.route(snap(100.02, KeyCode.return)) == .consumeDuplicate)
+
+        var typingDeduplicator = KeyEventDeduplicator()
+        #expect(typingDeduplicator.route(snap(200.0, 15)) == .process)
+        #expect(typingDeduplicator.route(snap(200.02, 15)) == .consumeDuplicate)
+    }
+
+    @Test("A later-turn same key remains a real fast double-tap")
+    func laterTurnDoubleTap() {
+        var deduplicator = KeyEventDeduplicator()
+        #expect(deduplicator.route(snap(100.0, 15)) == .process)
+
+        deduplicator.endDeliveryTurn(generation: deduplicator.deliveryTurnGeneration)
+
+        #expect(deduplicator.route(snap(100.02, 15)) == .process)
+    }
+
+    @Test("A stale queued clear cannot remove a newer turn guard")
+    func staleGenerationClear() {
+        var deduplicator = KeyEventDeduplicator()
+        #expect(deduplicator.route(snap(100.0, 15)) == .process)
+        let staleGeneration = deduplicator.deliveryTurnGeneration
+
+        #expect(deduplicator.route(snap(100.01, 40)) == .process)
+        let currentGeneration = deduplicator.deliveryTurnGeneration
+        deduplicator.endDeliveryTurn(generation: staleGeneration)
+
+        #expect(deduplicator.route(snap(100.02, 40)) == .consumeDuplicate)
+        deduplicator.endDeliveryTurn(generation: currentGeneration)
+        #expect(deduplicator.route(snap(100.03, 40)) == .process)
     }
 }
 

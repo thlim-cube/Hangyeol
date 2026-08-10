@@ -46,8 +46,7 @@ final class InputSession: @unchecked Sendable {
     // physical keyDown twice — double-processing input, notably one backspace
     // decomposing TWO jamo). Applies to every delivery mode; the duplicate is a
     // property of the host's event delivery, not of how we render composition.
-    private var lastKeyDown: KeyDownSnapshot?
-    private(set) var lastHandleResult = false
+    private var keyEventDeduplicator = KeyEventDeduplicator()
 
     init(client: IMKTextInput, context: ClientContext, composer: HangulComposer) {
         self.client = client
@@ -94,17 +93,18 @@ final class InputSession: @unchecked Sendable {
 
     // MARK: Duplicate keyDown suppression
 
-    /// Record the keyDown and report whether it is a machine re-delivery of the
-    /// previous one (same physical event delivered twice). The caller should replay
-    /// `lastHandleResult` for duplicates instead of processing the event again.
-    func registerKeyDown(_ snapshot: KeyDownSnapshot) -> Bool {
-        let duplicate = KeyEventDedup.isDuplicate(snapshot, previous: lastKeyDown)
-        lastKeyDown = snapshot
-        return duplicate
-    }
-
-    func recordHandleResult(_ result: Bool) {
-        lastHandleResult = result
+    /// Route the keyDown as new input or an exact re-delivery of the immediately
+    /// previous physical event. Duplicate events must be consumed by IMK even when
+    /// the original event returned false for host default handling.
+    func registerKeyDown(_ snapshot: KeyDownSnapshot) -> KeyDownRoute {
+        let route = keyEventDeduplicator.route(snapshot)
+        if route == .process, !snapshot.isARepeat {
+            let generation = keyEventDeduplicator.deliveryTurnGeneration
+            DispatchQueue.main.async { [weak self] in
+                self?.keyEventDeduplicator.endDeliveryTurn(generation: generation)
+            }
+        }
+        return route
     }
 
     // MARK: Focus-loss safety net

@@ -298,13 +298,13 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
         // 2. Duplicate-keyDown suppression. Some hosts (observed: KakaoTalk) deliver
         // the same physical keyDown to the IME twice. That double-processes input —
-        // notably one backspace decomposing TWO jamo, i.e. a composing syllable
-        // "deleted all at once". Drop the exact re-delivery and replay the original
-        // result. Host-event-level, so it applies in every delivery mode.
-        let keyDownSnapshot = KeyDownSnapshot(timestamp: event.timestamp, keyCode: event.keyCode, isARepeat: event.isARepeat)
-        if session.registerKeyDown(keyDownSnapshot) {
+        // notably one backspace decomposing TWO jamo, or Return reaching the host
+        // twice. Consume an exact re-delivery regardless of the original handled
+        // result: returning false again would repeat the host's default action.
+        let keyDownSnapshot = KeyDownSnapshot(event: event)
+        if let handled = session.registerKeyDown(keyDownSnapshot).immediateHandledResult {
             DebugLogger.log("PriTypeInputController: dropped duplicate keyDown keyCode=\(event.keyCode)")
-            return session.lastHandleResult
+            return handled
         }
 
         #if DEBUG
@@ -328,9 +328,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         session.ensureAdapterMatchesPolicy()
 
         // 6. Compose.
-        let handled = composer.handle(event, delegate: session.adapter)
-        session.recordHandleResult(handled)
-        return handled
+        return composer.handle(event, delegate: session.adapter)
     }
 
     private func shouldPassThroughSecureInput(client: IMKTextInput, context: ClientContext) -> Bool {

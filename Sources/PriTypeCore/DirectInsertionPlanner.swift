@@ -1,32 +1,146 @@
-import Foundation
+import Cocoa
 
 // MARK: - KeyEventDedup
 //
 // Some hosts (observed: KakaoTalk) deliver the SAME physical keyDown to the IME twice,
-// which makes each backspace decompose two jamo and each character double up. We drop a
-// keyDown that is an exact re-delivery of the immediately-preceding one. Distinguishing a
-// re-delivery from legitimate input is safe because:
-//   • auto-repeat events carry isARepeat=true (a real key HOLD) — never deduped here;
-//   • a human cannot tap the same key twice within 50ms;
-// so only a non-repeat same-keyCode event arriving <50ms after another non-repeat
-// same-keyCode event is a machine duplicate. Pure + testable.
+// which makes each backspace decompose two jamo and each character double up. We drop
+// only an exact re-delivery of the immediately-preceding event. A time window is not
+// enough evidence: two fast physical taps may legitimately have the same keyCode.
 
 struct KeyDownSnapshot: Equatable {
+    /// Object identity catches a host re-entering IMK with the same NSEvent instance.
+    /// It is nil for snapshots reconstructed in tests or from another event wrapper.
+    let eventIdentity: ObjectIdentifier?
     let timestamp: TimeInterval
     let keyCode: UInt16
+    let modifierFlags: UInt
+    let windowNumber: Int
+    let keyboardType: Int64
     let isARepeat: Bool
+
+    init(
+        eventIdentity: ObjectIdentifier? = nil,
+        timestamp: TimeInterval,
+        keyCode: UInt16,
+        modifierFlags: UInt = 0,
+        windowNumber: Int = 0,
+        keyboardType: Int64 = 0,
+        isARepeat: Bool = false
+    ) {
+        self.eventIdentity = eventIdentity
+        self.timestamp = timestamp
+        self.keyCode = keyCode
+        self.modifierFlags = modifierFlags
+        self.windowNumber = windowNumber
+        self.keyboardType = keyboardType
+        self.isARepeat = isARepeat
+    }
+
+    init(event: NSEvent) {
+        self.init(
+            eventIdentity: ObjectIdentifier(event),
+            timestamp: event.timestamp,
+            keyCode: event.keyCode,
+            modifierFlags: event.modifierFlags.intersection(.deviceIndependentFlagsMask).rawValue,
+            windowNumber: event.windowNumber,
+            keyboardType: event.cgEvent?.getIntegerValueField(.keyboardEventKeyboardType) ?? 0,
+            isARepeat: event.isARepeat
+        )
+    }
 }
 
 enum KeyEventDedup {
-    /// Maximum gap to treat two identical non-repeat keyDowns as one physical event.
-    static let duplicateWindow: TimeInterval = 0.05
-
     static func isDuplicate(_ event: KeyDownSnapshot, previous: KeyDownSnapshot?) -> Bool {
         guard let previous,
-              !event.isARepeat, !previous.isARepeat,
-              event.keyCode == previous.keyCode else { return false }
-        let dt = event.timestamp - previous.timestamp
-        return dt >= 0 && dt < duplicateWindow
+              !event.isARepeat, !previous.isARepeat else { return false }
+
+        if let eventIdentity = event.eventIdentity,
+           let previousIdentity = previous.eventIdentity,
+           eventIdentity == previousIdentity,
+           event.timestamp == previous.timestamp,
+           event.keyCode == previous.keyCode,
+           event.modifierFlags == previous.modifierFlags,
+           event.windowNumber == previous.windowNumber,
+           event.keyboardType == previous.keyboardType {
+            return true
+        }
+
+        // Real hardware events have a monotonic, non-zero timestamp. Requiring an
+        // exact full signature catches a re-wrapped delivery without guessing that a
+        // nearby tap "must" be the same physical event. The zero guard also keeps
+        // independently-created synthetic NSEvents from collapsing accidentally.
+        guard event.timestamp > 0, previous.timestamp > 0 else { return false }
+        return event.timestamp == previous.timestamp
+            && event.keyCode == previous.keyCode
+            && event.modifierFlags == previous.modifierFlags
+            && event.windowNumber == previous.windowNumber
+            && event.keyboardType == previous.keyboardType
+    }
+
+    /// A host may re-wrap the same keyDown before control returns to the main queue,
+    /// changing its timestamp in the process. Delivery-turn identity replaces the old
+    /// 50ms guess: a real fast `ㅋㅋ` double-tap arrives as two later turns, while an
+    /// immediate IMK re-entry remains in the current turn.
+    static func isSameDeliveryTurn(
+        _ event: KeyDownSnapshot,
+        previous: KeyDownSnapshot?
+    ) -> Bool {
+        guard let previous,
+              !event.isARepeat, !previous.isARepeat else { return false }
+        return event.keyCode == previous.keyCode
+            && event.modifierFlags == previous.modifierFlags
+            && event.windowNumber == previous.windowNumber
+            && event.keyboardType == previous.keyboardType
+    }
+}
+
+enum KeyDownRoute: Equatable {
+    case process
+    case consumeDuplicate
+
+    /// A duplicate never reaches the composer or host. In particular, this must not
+    /// replay a previous `false`, which would invoke the host default action twice.
+    var immediateHandledResult: Bool? {
+        switch self {
+        case .process:
+            nil
+        case .consumeDuplicate:
+            true
+        }
+    }
+}
+
+/// Stateful, immediately-previous-event deduplicator shared by production and the
+/// host-behavior regression harness. A duplicate route is always consumed by IMK;
+/// replaying the original `handled` result would pass a duplicated Return to the app.
+struct KeyEventDeduplicator {
+    private var previous: KeyDownSnapshot?
+    private var eventInCurrentDeliveryTurn: KeyDownSnapshot?
+    private(set) var deliveryTurnGeneration: UInt64 = 0
+
+    mutating func route(_ event: KeyDownSnapshot) -> KeyDownRoute {
+        let isDuplicate = KeyEventDedup.isDuplicate(event, previous: previous)
+            || KeyEventDedup.isSameDeliveryTurn(
+                event,
+                previous: eventInCurrentDeliveryTurn
+            )
+        previous = event
+        if isDuplicate {
+            return .consumeDuplicate
+        }
+
+        if !event.isARepeat {
+            deliveryTurnGeneration &+= 1
+            eventInCurrentDeliveryTurn = event
+        }
+        return .process
+    }
+
+    /// Clear the timestamp-independent re-entry guard on the next main-queue turn.
+    /// A generation prevents an older queued clear from removing a newer guard.
+    mutating func endDeliveryTurn(generation: UInt64) {
+        guard generation == deliveryTurnGeneration else { return }
+        eventInCurrentDeliveryTurn = nil
     }
 }
 
