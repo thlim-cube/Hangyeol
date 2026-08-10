@@ -11,7 +11,8 @@ import ApplicationServices
 ///
 /// ## Dynamic Key Binding
 /// Reads `ConfigurationManager.toggleKeyBinding` and `ConfigurationManager.hanjaKeyBinding`
-/// to determine which keys to monitor, supporting any user-configured key.
+/// to determine which keys to monitor. Modifier-only bindings are supported;
+/// regular/combo bindings are reported as fallback limitations.
 ///
 /// ## Relationship with RightCommandSuppressor
 /// - **Primary handler**: `RightCommandSuppressor` (CGEventTap)
@@ -19,7 +20,9 @@ import ApplicationServices
 ///
 /// The main entry point (`main.swift`) first attempts to start `RightCommandSuppressor`.
 /// If that fails, `IOKitManager` takes over as the primary toggle handler.
-/// When CGEventTap succeeds, `IOKitManager` runs in passive monitoring mode only.
+/// When CGEventTap succeeds, `IOKitManager` remains stopped so there is exactly
+/// one active owner. The fallback supports modifier-only bindings; unsupported
+/// regular/combo bindings are exposed through `ToggleMonitorStatusStore`.
 ///
 /// ## Primary Use Cases
 /// - Accessibility permission check (`hasAccessibilityPermission()`)
@@ -30,13 +33,18 @@ public final class IOKitManager: @unchecked Sendable {
     public static let shared = IOKitManager()
     
     private var manager: IOHIDManager?
+    private var managerRunLoop: CFRunLoop?
+    private var keyBindingObserver: NSObjectProtocol?
+    private var lastPriTypeToggleEnabled: Bool?
+
+    /// Whether the IOKit fallback currently owns keyboard monitoring.
+    public var isRunning: Bool { manager != nil }
     
     /// Callback when toggle key is pressed
     public var onRightCommandToggle: (@Sendable () -> Void)?
     
-    /// Track toggle key state
-    private var toggleKeyIsDown = false
-    private var anyOtherKeyPressed = false
+    /// Track one modifier-only down/chord/release cycle.
+    private var togglePressState = ReleaseTogglePressState()
     
     /// Track hanja key state
     private var hanjaKeyIsDown = false
@@ -52,7 +60,7 @@ public final class IOKitManager: @unchecked Sendable {
     // MARK: - HID Usage Mapping
     
     /// Map macOS virtual key code to HID usage
-    private static func hidUsage(for keyCode: Int64) -> UInt32? {
+    static func hidUsage(for keyCode: Int64) -> UInt32? {
         switch keyCode {
         case 54: return 0xE7  // Right GUI (Command)
         case 55: return 0xE3  // Left GUI (Command)
@@ -87,8 +95,14 @@ public final class IOKitManager: @unchecked Sendable {
     @discardableResult
     public func start() -> Bool {
         guard manager == nil else {
+            refreshBindingLimitations()
             DebugLogger.log("IOKitManager: Already running")
             return true
+        }
+
+        guard ToggleMonitorStatusStore.shared.reserveStart(.iokit) else {
+            DebugLogger.log("IOKitManager: Start blocked because another backend owns monitoring")
+            return false
         }
         
         DebugLogger.log("IOKitManager: Starting IOKit-only toggle detection...")
@@ -116,28 +130,71 @@ public final class IOKitManager: @unchecked Sendable {
         }, context)
         
         // Schedule with current run loop (like Gureum)
-        IOHIDManagerScheduleWithRunLoop(hidManager, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+        let currentRunLoop: CFRunLoop = CFRunLoopGetCurrent()
+        managerRunLoop = currentRunLoop
+        IOHIDManagerScheduleWithRunLoop(hidManager, currentRunLoop, CFRunLoopMode.defaultMode.rawValue)
         
         // Open manager
         let result = IOHIDManagerOpen(hidManager, IOOptionBits(kIOHIDOptionsTypeNone))
         if result != kIOReturnSuccess {
             DebugLogger.log("IOKitManager: Failed to open IOHIDManager: \(result)")
+            if let managerRunLoop {
+                IOHIDManagerUnscheduleFromRunLoop(hidManager, managerRunLoop, CFRunLoopMode.defaultMode.rawValue)
+            }
             manager = nil
+            managerRunLoop = nil
+            ToggleMonitorStatusStore.shared.failStart(
+                .iokit,
+                issue: .iokitOpenFailed(Int32(result))
+            )
             return false
+        }
+
+        resetKeyState()
+        keyBindingObserver = NotificationCenter.default.addObserver(
+            forName: .keyBindingChanged,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            self?.refreshBindingLimitations()
         }
         
         let config = ConfigurationManager.shared
+        let priTypeToggleEnabled = !config.capsLockInputSourceSwitchEnabled
+        lastPriTypeToggleEnabled = priTypeToggleEnabled
+        ToggleMonitorStatusStore.shared.markRunning(
+            .iokit,
+            limitations: Self.bindingLimitations(
+                toggleBinding: config.toggleKeyBinding,
+                hanjaBinding: config.hanjaKeyBinding,
+                priTypeToggleEnabled: priTypeToggleEnabled
+            )
+        )
         DebugLogger.log("IOKitManager: Started successfully (toggle=\(config.toggleKeyBinding.displayName), hanja=\(config.hanjaKeyBinding.displayName))")
         return true
     }
     
     /// Stop monitoring
     public func stop() {
-        guard let hidManager = manager else { return }
+        if let keyBindingObserver {
+            NotificationCenter.default.removeObserver(keyBindingObserver)
+            self.keyBindingObserver = nil
+        }
+
+        guard let hidManager = manager else {
+            ToggleMonitorStatusStore.shared.markStopped(.iokit)
+            return
+        }
         
-        IOHIDManagerUnscheduleFromRunLoop(hidManager, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+        if let managerRunLoop {
+            IOHIDManagerUnscheduleFromRunLoop(hidManager, managerRunLoop, CFRunLoopMode.defaultMode.rawValue)
+        }
         IOHIDManagerClose(hidManager, IOOptionBits(kIOHIDOptionsTypeNone))
         manager = nil
+        managerRunLoop = nil
+        lastPriTypeToggleEnabled = nil
+        resetKeyState()
+        ToggleMonitorStatusStore.shared.markStopped(.iokit)
         
         DebugLogger.log("IOKitManager: Stopped")
     }
@@ -163,9 +220,20 @@ public final class IOKitManager: @unchecked Sendable {
         let toggleBinding = config.toggleKeyBinding
         let hanjaBinding = config.hanjaKeyBinding
         let priTypeToggleEnabled = !config.capsLockInputSourceSwitchEnabled
+        if lastPriTypeToggleEnabled != priTypeToggleEnabled {
+            lastPriTypeToggleEnabled = priTypeToggleEnabled
+            resetKeyState()
+            ToggleMonitorStatusStore.shared.updateLimitations(
+                Self.bindingLimitations(
+                    toggleBinding: toggleBinding,
+                    hanjaBinding: hanjaBinding,
+                    priTypeToggleEnabled: priTypeToggleEnabled
+                ),
+                for: .iokit
+            )
+        }
         if !priTypeToggleEnabled {
-            toggleKeyIsDown = false
-            anyOtherKeyPressed = false
+            togglePressState.reset()
         }
         
         // Get HID usages for configured keys
@@ -173,29 +241,32 @@ public final class IOKitManager: @unchecked Sendable {
         let hanjaUsage = Self.hidUsage(for: hanjaBinding.keyCode)
 
         // Check for toggle key (only for modifier-only bindings)
-        if priTypeToggleEnabled && toggleBinding.isModifierOnly, let expectedUsage = toggleUsage, usage == expectedUsage {
-            if pressed {
-                // Toggle key pressed
-                toggleKeyIsDown = true
-                anyOtherKeyPressed = false
+        if priTypeToggleEnabled && toggleBinding.isModifierOnly, let expectedUsage = toggleUsage {
+            switch togglePressState.handle(usage: usage, pressed: pressed, toggleUsage: expectedUsage) {
+            case .pressed:
                 DebugLogger.log("IOKitManager: Toggle key DOWN (\(toggleBinding.displayName))")
-            } else {
-                // Toggle key released
-                if toggleKeyIsDown && !anyOtherKeyPressed {
-                    // Toggle!
-                    DebugLogger.log("IOKitManager: TOGGLE triggered! (\(toggleBinding.displayName))")
-                    let callback = onRightCommandToggle
-                    DispatchQueue.main.async {
-                        callback?()
-                    }
-                } else if anyOtherKeyPressed {
-                    DebugLogger.log("IOKitManager: Toggle skipped (used with other key)")
+            case .repeatIgnored:
+                DebugLogger.log("IOKitManager: Repeated toggle DOWN ignored")
+            case .chorded:
+                DebugLogger.log("IOKitManager: Another physical key pressed while toggle key is down")
+            case .released(shouldToggle: true):
+                DebugLogger.log("IOKitManager: TOGGLE triggered! (\(toggleBinding.displayName))")
+                let callback = onRightCommandToggle
+                DispatchQueue.main.async {
+                    callback?()
                 }
-                toggleKeyIsDown = false
-                anyOtherKeyPressed = false
+            case .released(shouldToggle: false):
+                DebugLogger.log("IOKitManager: Toggle skipped (used with other key)")
+            case .none:
+                break
             }
-        } else if let expectedUsage = hanjaUsage, usage == expectedUsage,
-                  hanjaBinding.keyCode != toggleBinding.keyCode {
+        } else {
+            togglePressState.reset()
+        }
+
+        if hanjaBinding.isModifierOnly,
+           let expectedUsage = hanjaUsage, usage == expectedUsage,
+           hanjaBinding.keyCode != toggleBinding.keyCode {
             // Hanja key (only if different from toggle key)
             if pressed && !hanjaKeyIsDown {
                 hanjaKeyIsDown = true
@@ -219,10 +290,47 @@ public final class IOKitManager: @unchecked Sendable {
                 hanjaKeyIsDown = false
                 DebugLogger.log("IOKitManager: Hanja key UP (\(hanjaBinding.displayName))")
             }
-        } else if priTypeToggleEnabled && toggleKeyIsDown && pressed && usage > 0 && usage < 0xE0 {
-            // Non-modifier key pressed while toggle key is down
-            anyOtherKeyPressed = true
-            DebugLogger.log("IOKitManager: Key pressed while toggle key is down (combo)")
         }
+    }
+
+    static func bindingLimitations(
+        toggleBinding: KeyBinding,
+        hanjaBinding: KeyBinding,
+        priTypeToggleEnabled: Bool
+    ) -> [ToggleMonitorIssue] {
+        var limitations: [ToggleMonitorIssue] = []
+
+        if priTypeToggleEnabled,
+           (!toggleBinding.isModifierOnly || hidUsage(for: toggleBinding.keyCode) == nil) {
+            limitations.append(.unsupportedIOKitToggleBinding(toggleBinding.displayName))
+        }
+
+        if hanjaBinding != toggleBinding,
+           (!hanjaBinding.isModifierOnly || hidUsage(for: hanjaBinding.keyCode) == nil) {
+            limitations.append(.unsupportedIOKitHanjaBinding(hanjaBinding.displayName))
+        }
+
+        return limitations
+    }
+
+    private func refreshBindingLimitations() {
+        guard manager != nil else { return }
+        resetKeyState()
+        let config = ConfigurationManager.shared
+        let priTypeToggleEnabled = !config.capsLockInputSourceSwitchEnabled
+        lastPriTypeToggleEnabled = priTypeToggleEnabled
+        ToggleMonitorStatusStore.shared.updateLimitations(
+            Self.bindingLimitations(
+                toggleBinding: config.toggleKeyBinding,
+                hanjaBinding: config.hanjaKeyBinding,
+                priTypeToggleEnabled: priTypeToggleEnabled
+            ),
+            for: .iokit
+        )
+    }
+
+    private func resetKeyState() {
+        togglePressState.reset()
+        hanjaKeyIsDown = false
     }
 }

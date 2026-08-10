@@ -1,0 +1,188 @@
+import CoreGraphics
+import Testing
+@testable import PriTypeCore
+
+@Suite("Toggle monitoring ownership")
+struct ToggleMonitoringOwnershipTests {
+    @Test("Only one backend can own monitoring and handoff is idempotent")
+    func exclusiveOwnershipAndHandoff() {
+        let store = ToggleMonitorStatusStore()
+
+        #expect(store.reserveStart(.eventTap))
+        #expect(!store.reserveStart(.iokit))
+
+        store.markRunning(.eventTap)
+        #expect(store.status == .running(backend: .eventTap, limitations: []))
+        store.markUnavailable(.iokit, issue: .iokitOpenFailed(-1))
+        store.markStopped(.iokit)
+        #expect(store.status == .running(backend: .eventTap, limitations: []))
+
+        #expect(store.beginEventTapHandoff())
+        #expect(!store.beginEventTapHandoff())
+        #expect(store.status == .transitioning(from: .eventTap, to: .iokit))
+
+        #expect(store.reserveStart(.iokit))
+        store.markRunning(.iokit)
+        #expect(store.status == .running(backend: .iokit, limitations: []))
+        #expect(!store.reserveStart(.eventTap))
+    }
+
+    @Test("A failed backend start exposes its reason")
+    func failedStartStatus() {
+        let store = ToggleMonitorStatusStore()
+
+        #expect(store.reserveStart(.iokit))
+        store.failStart(.iokit, issue: .iokitOpenFailed(-1))
+
+        #expect(store.status == .unavailable(.iokitOpenFailed(-1)))
+    }
+}
+
+@Suite("CGEventTap failure handoff")
+struct TapDisableTrackerTests {
+    @Test("The third disable requests exactly one permanent handoff")
+    func thirdDisableHandsOffOnce() {
+        var tracker = TapDisableTracker(maximumRetryCount: 3, resetInterval: 60)
+
+        #expect(tracker.recordDisable(at: 0) == .reenable(attempt: 1))
+        #expect(tracker.recordDisable(at: 1) == .reenable(attempt: 2))
+        #expect(tracker.recordDisable(at: 2) == .handoff)
+        #expect(tracker.recordDisable(at: 3) == .ignore)
+        #expect(tracker.disableCount == 3)
+    }
+
+    @Test("A stable interval resets the retry count")
+    func stableIntervalResetsCount() {
+        var tracker = TapDisableTracker(maximumRetryCount: 3, resetInterval: 60)
+
+        #expect(tracker.recordDisable(at: 0) == .reenable(attempt: 1))
+        #expect(tracker.recordDisable(at: 61) == .reenable(attempt: 1))
+        #expect(tracker.disableCount == 1)
+    }
+}
+
+@Suite("Suppressed key pairs")
+struct SuppressedKeyPairTests {
+    @Test("The event tap observes key-up for suppressed pairs")
+    func eventTapIncludesKeyUp() {
+        let keyUpMask = CGEventMask(1) << CGEventType.keyUp.rawValue
+        #expect(RightCommandSuppressor.monitoredEventMask & keyUpMask != 0)
+    }
+
+    @Test("A regular binding triggers once and consumes repeat and key-up")
+    func regularBindingPair() {
+        var state = RegularKeyPressState()
+
+        #expect(state.keyDown(keyCode: 105, isRepeat: false, matchesBinding: true) == .triggerAndSuppress)
+        #expect(state.keyDown(keyCode: 105, isRepeat: true, matchesBinding: true) == .suppress)
+        #expect(state.keyUp(keyCode: 105) == .suppress)
+        #expect(state.keyUp(keyCode: 105) == .passThrough)
+    }
+
+    @Test("A repeat first observed mid-hold never triggers")
+    func repeatWithoutInitialDown() {
+        var state = RegularKeyPressState()
+
+        #expect(state.keyDown(keyCode: 49, isRepeat: true, matchesBinding: true) == .suppress)
+        #expect(state.keyUp(keyCode: 49) == .suppress)
+    }
+
+    @Test("Unbound down and up pass through")
+    func unboundPairPassesThrough() {
+        var state = RegularKeyPressState()
+
+        #expect(state.keyDown(keyCode: 0, isRepeat: false, matchesBinding: false) == .passThrough)
+        #expect(state.keyUp(keyCode: 0) == .passThrough)
+    }
+
+    @Test("IOKit repeat cannot erase a chorded modifier state")
+    func iokitRepeatPreservesChordedState() {
+        var state = ReleaseTogglePressState()
+
+        #expect(state.handle(usage: 0xE7, pressed: true, toggleUsage: 0xE7) == .pressed)
+        #expect(state.handle(usage: 0xE3, pressed: true, toggleUsage: 0xE7) == .chorded)
+        #expect(state.handle(usage: 0xE7, pressed: true, toggleUsage: 0xE7) == .repeatIgnored)
+        #expect(state.handle(usage: 0xE7, pressed: false, toggleUsage: 0xE7) == .released(shouldToggle: false))
+
+        #expect(state.handle(usage: 0xE7, pressed: true, toggleUsage: 0xE7) == .pressed)
+        #expect(state.handle(usage: 0xE7, pressed: false, toggleUsage: 0xE7) == .released(shouldToggle: true))
+    }
+
+    @Test("Changing a fallback binding clears an in-flight press")
+    func iokitBindingChangeResetsPress() {
+        var state = ReleaseTogglePressState()
+
+        #expect(state.handle(usage: 0xE7, pressed: true, toggleUsage: 0xE7) == .pressed)
+        state.reset()
+        #expect(state.handle(usage: 0xE7, pressed: false, toggleUsage: 0xE7) == .none)
+    }
+
+    @Test("Opposite-side modifiers retain independent keyCode state")
+    func oppositeSideModifierState() {
+        var state = ModifierKeyPressState()
+
+        #expect(state.observe(keyCode: 54, aggregateMaskIsSet: true) == .down)
+        state.suppressUntilRelease(keyCode: 54)
+        #expect(state.observe(keyCode: 55, aggregateMaskIsSet: true) == .down)
+        #expect(state.hasPressedSibling(of: 54, sharingKeyCodes: [54, 55]))
+
+        // Releasing Right Command while Left Command remains down still uses
+        // the exact right-side keyCode instead of the aggregate Command flag.
+        #expect(state.observe(keyCode: 54, aggregateMaskIsSet: true) == .up)
+        let consumedRelease = state.consumeSuppressedRelease(keyCode: 54)
+        #expect(consumedRelease)
+        #expect(!state.hasPressedSibling(of: 55, sharingKeyCodes: [54, 55]))
+    }
+}
+
+@Suite("IOKit fallback capabilities")
+struct IOKitFallbackCapabilityTests {
+    @Test("Modifier-only bindings are supported without limitations")
+    func modifierBindingsSupported() {
+        let limitations = IOKitManager.bindingLimitations(
+            toggleBinding: .defaultToggle,
+            hanjaBinding: .defaultHanja,
+            priTypeToggleEnabled: true
+        )
+
+        #expect(limitations.isEmpty)
+    }
+
+    @Test("Regular and combo bindings are exposed as unsupported")
+    func regularBindingsUnsupported() {
+        let controlSpace = KeyBinding(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue,
+            displayName: "Control + Space"
+        )
+        let f13 = KeyBinding(keyCode: 105, modifiers: 0, displayName: "F13")
+
+        let limitations = IOKitManager.bindingLimitations(
+            toggleBinding: controlSpace,
+            hanjaBinding: f13,
+            priTypeToggleEnabled: true
+        )
+
+        #expect(limitations == [
+            .unsupportedIOKitToggleBinding("Control + Space"),
+            .unsupportedIOKitHanjaBinding("F13")
+        ])
+    }
+
+    @Test("Native Caps Lock mode does not report the unused custom toggle")
+    func nativeCapsLockSkipsToggleLimitation() {
+        let controlSpace = KeyBinding(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue,
+            displayName: "Control + Space"
+        )
+
+        let limitations = IOKitManager.bindingLimitations(
+            toggleBinding: controlSpace,
+            hanjaBinding: .defaultHanja,
+            priTypeToggleEnabled: false
+        )
+
+        #expect(limitations.isEmpty)
+    }
+}

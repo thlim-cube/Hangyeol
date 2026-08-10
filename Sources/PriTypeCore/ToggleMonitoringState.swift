@@ -1,0 +1,326 @@
+import Foundation
+
+/// 전환키 감시를 실제로 소유한 시스템 backend입니다.
+enum ToggleMonitorBackend: String, Equatable, Sendable {
+    case eventTap
+    case iokit
+}
+
+/// 전환키 감시가 완전하게 동작하지 못하는 이유입니다.
+enum ToggleMonitorIssue: Equatable, Sendable {
+    case accessibilityPermissionRequired
+    case unsupportedIOKitToggleBinding(String)
+    case unsupportedIOKitHanjaBinding(String)
+    case iokitOpenFailed(Int32)
+}
+
+/// 설정 화면과 상태 표시가 사용할 수 있는 전환키 감시 상태입니다.
+enum ToggleMonitorStatus: Equatable, Sendable {
+    case stopped
+    case starting(ToggleMonitorBackend)
+    case running(backend: ToggleMonitorBackend, limitations: [ToggleMonitorIssue])
+    case transitioning(from: ToggleMonitorBackend, to: ToggleMonitorBackend)
+    case unavailable(ToggleMonitorIssue)
+}
+
+extension Notification.Name {
+    /// `ToggleMonitorStatusStore.status`가 바뀔 때 게시됩니다.
+    static let toggleMonitorStatusChanged = Notification.Name("PriTypeToggleMonitorStatusChanged")
+}
+
+/// CGEventTap과 IOKit이 동시에 활성화되지 않도록 시작 권한과 현재 상태를 관리합니다.
+final class ToggleMonitorStatusStore: @unchecked Sendable {
+    static let shared = ToggleMonitorStatusStore()
+
+    private let lock = NSLock()
+    private var storedStatus: ToggleMonitorStatus = .stopped
+
+    var status: ToggleMonitorStatus {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedStatus
+    }
+
+    init() {}
+
+    /// backend 시작을 예약합니다. 다른 backend가 시작 중이거나 실행 중이면 거부합니다.
+    @discardableResult
+    func reserveStart(_ backend: ToggleMonitorBackend) -> Bool {
+        let nextStatus: ToggleMonitorStatus?
+
+        lock.lock()
+        switch storedStatus {
+        case .stopped, .unavailable:
+            nextStatus = .starting(backend)
+        case .transitioning(from: .eventTap, to: .iokit) where backend == .iokit:
+            nextStatus = .starting(.iokit)
+        case .starting, .running, .transitioning:
+            nextStatus = nil
+        }
+        if let nextStatus {
+            storedStatus = nextStatus
+        }
+        lock.unlock()
+
+        if let nextStatus {
+            publish(nextStatus)
+            return true
+        }
+        return false
+    }
+
+    func markRunning(_ backend: ToggleMonitorBackend, limitations: [ToggleMonitorIssue] = []) {
+        let nextStatus = ToggleMonitorStatus.running(backend: backend, limitations: limitations)
+
+        lock.lock()
+        guard case .starting(let reservedBackend) = storedStatus,
+              reservedBackend == backend else {
+            lock.unlock()
+            return
+        }
+        storedStatus = nextStatus
+        lock.unlock()
+        publish(nextStatus)
+    }
+
+    /// event tap 자원이 해제된 뒤 IOKit 인계를 한 번만 시작합니다.
+    @discardableResult
+    func beginEventTapHandoff() -> Bool {
+        let nextStatus = ToggleMonitorStatus.transitioning(from: .eventTap, to: .iokit)
+
+        lock.lock()
+        switch storedStatus {
+        case .starting(.eventTap), .running(backend: .eventTap, limitations: _):
+            storedStatus = nextStatus
+            lock.unlock()
+            publish(nextStatus)
+            return true
+        case .stopped, .starting(.iokit), .running(backend: .iokit, limitations: _),
+             .transitioning, .unavailable:
+            lock.unlock()
+            return false
+        }
+    }
+
+    func failStart(_ backend: ToggleMonitorBackend, issue: ToggleMonitorIssue) {
+        markUnavailable(backend, issue: issue)
+    }
+
+    func markUnavailable(_ backend: ToggleMonitorBackend, issue: ToggleMonitorIssue) {
+        let nextStatus = ToggleMonitorStatus.unavailable(issue)
+
+        lock.lock()
+        let ownsStatus: Bool
+        switch storedStatus {
+        case .starting(let startingBackend):
+            ownsStatus = startingBackend == backend
+        case .running(backend: let runningBackend, limitations: _):
+            ownsStatus = runningBackend == backend
+        default:
+            ownsStatus = false
+        }
+        guard ownsStatus else {
+            lock.unlock()
+            return
+        }
+        storedStatus = nextStatus
+        lock.unlock()
+        publish(nextStatus)
+    }
+
+    func updateLimitations(_ limitations: [ToggleMonitorIssue], for backend: ToggleMonitorBackend) {
+        let nextStatus = ToggleMonitorStatus.running(backend: backend, limitations: limitations)
+
+        lock.lock()
+        guard case .running(backend: let runningBackend, limitations: _) = storedStatus,
+              runningBackend == backend,
+              storedStatus != nextStatus else {
+            lock.unlock()
+            return
+        }
+        storedStatus = nextStatus
+        lock.unlock()
+        publish(nextStatus)
+    }
+
+    func markStopped(_ backend: ToggleMonitorBackend) {
+        lock.lock()
+        let shouldStop: Bool
+        switch storedStatus {
+        case .starting(let startingBackend):
+            shouldStop = startingBackend == backend
+        case .running(backend: let runningBackend, limitations: _):
+            shouldStop = runningBackend == backend
+        default:
+            shouldStop = false
+        }
+        if shouldStop {
+            storedStatus = .stopped
+        }
+        lock.unlock()
+
+        if shouldStop {
+            publish(.stopped)
+        }
+    }
+
+    private func publish(_ status: ToggleMonitorStatus) {
+        NotificationCenter.default.post(
+            name: .toggleMonitorStatusChanged,
+            object: self,
+            userInfo: ["status": status]
+        )
+    }
+}
+
+enum TapDisableAction: Equatable {
+    case reenable(attempt: Int)
+    case handoff
+    case ignore
+}
+
+/// 시간 간격을 포함한 tap disable 누적과 단 한 번의 인계를 결정합니다.
+struct TapDisableTracker {
+    let maximumRetryCount: Int
+    let resetInterval: TimeInterval
+
+    private(set) var disableCount = 0
+    private var lastDisableTime: TimeInterval?
+    private var handedOff = false
+
+    init(maximumRetryCount: Int = 3, resetInterval: TimeInterval = 60) {
+        self.maximumRetryCount = maximumRetryCount
+        self.resetInterval = resetInterval
+    }
+
+    mutating func recordDisable(at time: TimeInterval) -> TapDisableAction {
+        guard !handedOff else { return .ignore }
+
+        if let lastDisableTime, time - lastDisableTime > resetInterval {
+            disableCount = 0
+        }
+        lastDisableTime = time
+        disableCount += 1
+
+        guard disableCount >= maximumRetryCount else {
+            return .reenable(attempt: disableCount)
+        }
+
+        handedOff = true
+        return .handoff
+    }
+
+    mutating func reset() {
+        disableCount = 0
+        lastDisableTime = nil
+        handedOff = false
+    }
+}
+
+enum SuppressedKeyAction: Equatable {
+    case passThrough
+    case suppress
+    case triggerAndSuppress
+}
+
+/// regular/combo 바인딩의 최초 down, repeat, up을 하나의 소비 쌍으로 묶습니다.
+struct RegularKeyPressState {
+    private var suppressedKeyCodes: Set<Int64> = []
+
+    mutating func keyDown(keyCode: Int64, isRepeat: Bool, matchesBinding: Bool) -> SuppressedKeyAction {
+        if suppressedKeyCodes.contains(keyCode) {
+            return .suppress
+        }
+        guard matchesBinding else { return .passThrough }
+
+        suppressedKeyCodes.insert(keyCode)
+        return isRepeat ? .suppress : .triggerAndSuppress
+    }
+
+    mutating func keyUp(keyCode: Int64) -> SuppressedKeyAction {
+        guard suppressedKeyCodes.remove(keyCode) != nil else { return .passThrough }
+        return .suppress
+    }
+
+    mutating func reset() {
+        suppressedKeyCodes.removeAll()
+    }
+}
+
+enum ReleaseToggleAction: Equatable {
+    case none
+    case pressed
+    case repeatIgnored
+    case chorded
+    case released(shouldToggle: Bool)
+}
+
+/// IOKit fallback의 modifier-only 키를 release에서 한 번만 전환합니다.
+struct ReleaseTogglePressState {
+    private(set) var isDown = false
+    private var usedWithOtherKey = false
+
+    mutating func handle(usage: UInt32, pressed: Bool, toggleUsage: UInt32) -> ReleaseToggleAction {
+        if usage == toggleUsage {
+            if pressed {
+                guard !isDown else { return .repeatIgnored }
+                isDown = true
+                usedWithOtherKey = false
+                return .pressed
+            }
+
+            guard isDown else { return .none }
+            let shouldToggle = !usedWithOtherKey
+            reset()
+            return .released(shouldToggle: shouldToggle)
+        }
+
+        guard isDown, pressed else { return .none }
+        usedWithOtherKey = true
+        return .chorded
+    }
+
+    mutating func reset() {
+        isDown = false
+        usedWithOtherKey = false
+    }
+}
+
+enum ModifierKeyTransition: Equatable {
+    case down
+    case up
+    case unknown
+}
+
+/// aggregate flags만 제공되는 `flagsChanged`에서 실제 side keyCode 순서를 보존합니다.
+struct ModifierKeyPressState {
+    private(set) var pressedKeyCodes: Set<Int64> = []
+    private var suppressedKeyCodes: Set<Int64> = []
+
+    mutating func observe(keyCode: Int64, aggregateMaskIsSet: Bool) -> ModifierKeyTransition {
+        if pressedKeyCodes.remove(keyCode) != nil {
+            return .up
+        }
+        guard aggregateMaskIsSet else { return .unknown }
+
+        pressedKeyCodes.insert(keyCode)
+        return .down
+    }
+
+    mutating func suppressUntilRelease(keyCode: Int64) {
+        suppressedKeyCodes.insert(keyCode)
+    }
+
+    mutating func consumeSuppressedRelease(keyCode: Int64) -> Bool {
+        suppressedKeyCodes.remove(keyCode) != nil
+    }
+
+    func hasPressedSibling(of keyCode: Int64, sharingKeyCodes: Set<Int64>) -> Bool {
+        !pressedKeyCodes.intersection(sharingKeyCodes.subtracting([keyCode])).isEmpty
+    }
+
+    mutating func reset() {
+        pressedKeyCodes.removeAll()
+        suppressedKeyCodes.removeAll()
+    }
+}

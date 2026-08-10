@@ -81,6 +81,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         RightCommandSuppressor.shared.onHanjaLookup = {
             PriTypeInputController.sharedController?.triggerHanjaLookup()
         }
+
+        IOKitManager.shared.onRightCommandToggle = {
+            InputModeCoordinator.shared.requestToggle(source: .iokitFallback)
+        }
+        IOKitManager.shared.onRightOptionHanja = {
+            PriTypeInputController.sharedController?.triggerHanjaLookup()
+        }
+
+        // Install the handoff before starting the tap. The suppressor tears the
+        // tap down first and invokes this callback at most once.
+        RightCommandSuppressor.shared.onTapFailed = {
+            DebugLogger.log("CGEventTap stopped repeatedly — activating IOKit fallback")
+            let started = IOKitManager.shared.start()
+            DebugLogger.log("IOKit fallback start = \(started)")
+        }
         
         // Track if CGEventTap started successfully
         let eventTapStarted = RightCommandSuppressor.shared.start()
@@ -88,27 +103,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         // IOKit backup: Only start and activate actual toggle if CGEventTap failed
         if eventTapStarted {
             DebugLogger.log("Primary: CGEventTap started successfully")
-            // Register fallback: if CGEventTap dies repeatedly, switch to IOKit
-            RightCommandSuppressor.shared.onTapFailed = {
-                DebugLogger.log("CGEventTap failed repeatedly — activating IOKit fallback")
-                IOKitManager.shared.onRightCommandToggle = {
-                    InputModeCoordinator.shared.requestToggle(source: .iokitFallback)
-                }
-                IOKitManager.shared.onRightOptionHanja = {
-                    PriTypeInputController.sharedController?.triggerHanjaLookup()
-                }
-                IOKitManager.shared.start()
-            }
         } else {
             DebugLogger.log("Primary: CGEventTap FAILED - IOKit taking over as primary")
-            // IOKit takes over as primary toggle handler
-            IOKitManager.shared.onRightCommandToggle = {
-                InputModeCoordinator.shared.requestToggle(source: .iokitFallback)
-            }
-            IOKitManager.shared.onRightOptionHanja = {
-                PriTypeInputController.sharedController?.triggerHanjaLookup()
-            }
-            IOKitManager.shared.start()
+            let started = IOKitManager.shared.start()
+            DebugLogger.log("Primary: IOKit fallback start = \(started)")
         }
         
         DebugLogger.log("Toggle key monitoring initialized")

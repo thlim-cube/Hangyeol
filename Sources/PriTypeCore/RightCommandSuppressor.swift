@@ -28,9 +28,14 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     
     // Singleton - accessed from CGEventTap callback context
     public static let shared = RightCommandSuppressor()
+
+    static let monitoredEventMask = (CGEventMask(1) << CGEventType.flagsChanged.rawValue)
+        | (CGEventMask(1) << CGEventType.keyDown.rawValue)
+        | (CGEventMask(1) << CGEventType.keyUp.rawValue)
     
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var eventTapRunLoop: CFRunLoop?
     
     /// Whether the event tap is currently running
     public var isRunning: Bool { eventTap != nil }
@@ -41,23 +46,18 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     /// Callback for Hanja lookup
     public var onHanjaLookup: (@Sendable () -> Void)?
     
-    /// Track toggle modifier state
-    private var toggleModifierIsDown = false
-    
-    /// Track hanja modifier state
-    private var hanjaModifierIsDown = false
+    /// Track the exact side/keyCode and suppressed down/up pairs.
+    private var modifierKeyState = ModifierKeyPressState()
+    private var regularKeyState = RegularKeyPressState()
+    private var suppressedToggleModifierKeyCode: Int64?
+    private var suppressedHanjaModifierKeyCode: Int64?
     
     /// Debounce timer for Hanja trigger to prevent double-fire
     private var lastHanjaTriggerTime: DispatchTime = .init(uptimeNanoseconds: 0)
 
-    /// Track Control state for Control+Space
-    private var controlIsDown = false
-    
     /// Track CGEventTap disable events for auto-recovery
-    private var tapDisableCount = 0
-    private var lastTapDisableTime: CFAbsoluteTime = 0
-    private let maxTapDisableRetries = 3
-    private let tapDisableResetInterval: CFAbsoluteTime = 60  // Reset counter after 60s of stability
+    private var tapDisableTracker = TapDisableTracker()
+    private var permanentlyHandedOff = false
     
     /// Callback for when CGEventTap permanently fails and IOKit should take over
     public var onTapFailed: (@Sendable () -> Void)?
@@ -80,21 +80,31 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             DebugLogger.log("RightCommandSuppressor: Already running")
             return true
         }
-        
-        guard IOKitManager.hasAccessibilityPermission() else {
-            DebugLogger.log("RightCommandSuppressor: No Accessibility permission")
+
+        guard !permanentlyHandedOff else {
+            DebugLogger.log("RightCommandSuppressor: Start blocked after permanent IOKit handoff")
+            return false
+        }
+
+        guard ToggleMonitorStatusStore.shared.reserveStart(.eventTap) else {
+            DebugLogger.log("RightCommandSuppressor: Start blocked because another backend owns monitoring")
             return false
         }
         
-        // Monitor flagsChanged AND keyDown events
-        let eventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
+        guard IOKitManager.hasAccessibilityPermission() else {
+            DebugLogger.log("RightCommandSuppressor: No Accessibility permission")
+            ToggleMonitorStatusStore.shared.failStart(.eventTap, issue: .accessibilityPermissionRequired)
+            return false
+        }
         
+        // Observe keyUp too, so every suppressed regular/combo down has a
+        // matching suppressed release and the host never receives an orphan up.
         // Create event tap
         eventTap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
-            eventsOfInterest: CGEventMask(eventMask),
+            eventsOfInterest: Self.monitoredEventMask,
             callback: { proxy, type, event, refcon in
                 guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
                 let suppressor = Unmanaged<RightCommandSuppressor>.fromOpaque(refcon).takeUnretainedValue()
@@ -105,13 +115,28 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         
         guard let eventTap = eventTap else {
             DebugLogger.log("RightCommandSuppressor: Failed to create event tap")
+            permanentlyHandedOff = true
+            _ = ToggleMonitorStatusStore.shared.beginEventTapHandoff()
             return false
         }
         
         // Add to run loop
-        runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0) else {
+            DebugLogger.log("RightCommandSuppressor: Failed to create run-loop source")
+            permanentlyHandedOff = true
+            tearDownEventTap()
+            _ = ToggleMonitorStatusStore.shared.beginEventTapHandoff()
+            return false
+        }
+        let currentRunLoop: CFRunLoop = CFRunLoopGetCurrent()
+        runLoopSource = source
+        eventTapRunLoop = currentRunLoop
+        CFRunLoopAddSource(currentRunLoop, source, .commonModes)
         CGEvent.tapEnable(tap: eventTap, enable: true)
+
+        resetKeyState()
+        tapDisableTracker.reset()
+        ToggleMonitorStatusStore.shared.markRunning(.eventTap)
         
         let config = ConfigurationManager.shared
         DebugLogger.log("RightCommandSuppressor: Started (toggle=\(config.toggleKeyBinding.displayName), hanja=\(config.hanjaKeyBinding.displayName))")
@@ -120,45 +145,41 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     
     /// Stop monitoring
     public func stop() {
-        if let runLoopSource = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
-        }
-        if let eventTap = eventTap {
-            CGEvent.tapEnable(tap: eventTap, enable: false)
-        }
-        eventTap = nil
-        runLoopSource = nil
+        tearDownEventTap()
+        permanentlyHandedOff = false
+        tapDisableTracker.reset()
+        resetKeyState()
+        ToggleMonitorStatusStore.shared.markStopped(.eventTap)
         DebugLogger.log("RightCommandSuppressor: Stopped")
     }
     
     // MARK: - Event Handling
     
     private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        // Re-enable tap if disabled by system
+        // Re-enable transient failures, but permanently tear down the tap
+        // before notifying the IOKit fallback after the third failure.
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            let now = CFAbsoluteTimeGetCurrent()
-            
-            // Reset counter if stable for 60+ seconds
-            if now - lastTapDisableTime > tapDisableResetInterval {
-                tapDisableCount = 0
-            }
-            lastTapDisableTime = now
-            tapDisableCount += 1
-            
-            if tapDisableCount >= maxTapDisableRetries {
-                // CGEventTap is repeatedly failing — switch to IOKit backup
-                DebugLogger.log("RightCommandSuppressor: Tap disabled \(tapDisableCount) times, switching to IOKit fallback")
+            switch tapDisableTracker.recordDisable(at: ProcessInfo.processInfo.systemUptime) {
+            case .handoff:
+                DebugLogger.log("RightCommandSuppressor: Tap disabled repeatedly, handing off to IOKit")
+                permanentlyHandedOff = true
+                tearDownEventTap()
+                resetKeyState()
+
+                guard ToggleMonitorStatusStore.shared.beginEventTapHandoff() else {
+                    return Unmanaged.passUnretained(event)
+                }
                 let callback = onTapFailed
                 DispatchQueue.main.async {
                     callback?()
                 }
-                // Still try to re-enable in case IOKit also needs it
-            } else {
-                DebugLogger.log("RightCommandSuppressor: Tap disabled (\(tapDisableCount)/\(maxTapDisableRetries)), re-enabling")
-            }
-            
-            if let tap = eventTap {
-                CGEvent.tapEnable(tap: tap, enable: true)
+            case .reenable(let attempt):
+                DebugLogger.log("RightCommandSuppressor: Tap disabled (\(attempt)/\(tapDisableTracker.maximumRetryCount)), re-enabling")
+                if let tap = eventTap {
+                    CGEvent.tapEnable(tap: tap, enable: true)
+                }
+            case .ignore:
+                break
             }
             return Unmanaged.passUnretained(event)
         }
@@ -168,135 +189,170 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         let toggleBinding = config.toggleKeyBinding
         let hanjaBinding = config.hanjaKeyBinding
         let priTypeToggleEnabled = !config.capsLockInputSourceSwitchEnabled
-        if !priTypeToggleEnabled {
-            toggleModifierIsDown = false
+
+        if type == .keyUp, regularKeyState.keyUp(keyCode: keyCode) == .suppress {
+            DebugLogger.log("RightCommandSuppressor: Suppressed regular key UP")
+            return nil
         }
-        
-        // Key recording mode — capture the next key press for settings UI
-        if isRecordingKey {
-            if type == .flagsChanged {
-                let flags = event.flags
-                // Only fire on key DOWN (when a new modifier appears).
-                // Caps Lock is special: its flag is the toggled lock state, so
-                // record the keyCode itself even when the flag is transitioning off.
-                let isModifierDown = flags.rawValue & 0xFFFF0000 != 0 || keyCode == 57
-                if isModifierDown {
+
+        if type == .flagsChanged {
+            // Caps Lock is a lock-state edge rather than a down/up pair. Keep
+            // the existing TIS ownership behavior and avoid polluting the
+            // physical modifier pressed set with its latched state.
+            if keyCode == 57 {
+                if isRecordingKey {
                     let recordCallback = onKeyRecorded
                     DispatchQueue.main.async {
-                        recordCallback?(keyCode, 0)  // modifier-only binding
+                        recordCallback?(keyCode, 0)
                     }
-                    return nil  // Suppress
+                    return nil
                 }
-            } else if type == .keyDown {
+                return Unmanaged.passUnretained(event)
+            }
+
+            let modifierMask = Self.modifierMask(for: keyCode)
+            let maskIsSet = modifierMask.rawValue != 0 && event.flags.contains(modifierMask)
+            let transition = modifierKeyState.observe(keyCode: keyCode, aggregateMaskIsSet: maskIsSet)
+
+            if transition == .up, modifierKeyState.consumeSuppressedRelease(keyCode: keyCode) {
+                if suppressedToggleModifierKeyCode == keyCode {
+                    suppressedToggleModifierKeyCode = nil
+                    DebugLogger.log("RightCommandSuppressor: Toggle modifier UP")
+                }
+                if suppressedHanjaModifierKeyCode == keyCode {
+                    suppressedHanjaModifierKeyCode = nil
+                    DebugLogger.log("RightCommandSuppressor: Hanja modifier UP")
+                }
+                return nil
+            }
+
+            // Key recording mode — capture only a physical down transition.
+            if isRecordingKey, transition == .down {
+                modifierKeyState.suppressUntilRelease(keyCode: keyCode)
+                let recordCallback = onKeyRecorded
+                DispatchQueue.main.async {
+                    recordCallback?(keyCode, 0)
+                }
+                return nil
+            }
+
+            if transition == .down,
+               priTypeToggleEnabled,
+               toggleBinding.isModifierKey,
+               toggleBinding.isModifierOnly,
+               keyCode == toggleBinding.keyCode {
+                suppressedToggleModifierKeyCode = keyCode
+                modifierKeyState.suppressUntilRelease(keyCode: keyCode)
+                DebugLogger.log("RightCommandSuppressor: Toggle modifier DOWN (\(toggleBinding.displayName))")
+                triggerToggle()
+                return nil
+            }
+
+            if transition == .down,
+               hanjaBinding.isModifierKey,
+               hanjaBinding.isModifierOnly,
+               keyCode == hanjaBinding.keyCode,
+               keyCode != toggleBinding.keyCode {
+                suppressedHanjaModifierKeyCode = keyCode
+                modifierKeyState.suppressUntilRelease(keyCode: keyCode)
+
+                let now = DispatchTime.now()
+                let elapsed = now.uptimeNanoseconds - lastHanjaTriggerTime.uptimeNanoseconds
+                let elapsedMs = elapsed / 1_000_000
+                if elapsedMs < 500 {
+                    DebugLogger.log("RightCommandSuppressor: Hanja modifier DEBOUNCED (\(elapsedMs)ms)")
+                    return nil
+                }
+                lastHanjaTriggerTime = now
+
+                DebugLogger.log("RightCommandSuppressor: Hanja modifier DOWN (\(hanjaBinding.displayName))")
+                triggerHanjaLookup()
+                return nil
+            }
+
+            return Unmanaged.passUnretained(event)
+        }
+
+        if isRecordingKey {
+            if type == .keyDown {
+                let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+                let action = regularKeyState.keyDown(
+                    keyCode: keyCode,
+                    isRepeat: isRepeat,
+                    matchesBinding: true
+                )
+                guard action == .triggerAndSuppress else { return nil }
+
                 let modifiers = event.flags.rawValue & 0xFFFF0000  // Keep only modifier flags
                 let recordCallback = onKeyRecorded
                 DispatchQueue.main.async {
                     recordCallback?(keyCode, modifiers)
                 }
-                return nil  // Suppress
+                return nil
             }
             return Unmanaged.passUnretained(event)
         }
-        
-        // Handle flagsChanged (modifier keys)
-        if type == .flagsChanged {
-            let flags = event.flags
-            
-            // Track Control key state (for Control+Space combo)
-            controlIsDown = flags.contains(.maskControl)
 
-            if keyCode == 57 {
-                return Unmanaged.passUnretained(event)
-            }
-            
-            // Dynamic toggle key — modifier key, single-key binding
-            if priTypeToggleEnabled && toggleBinding.isModifierKey && toggleBinding.isModifierOnly && keyCode == toggleBinding.keyCode {
-                let modifierMask = Self.modifierMask(for: keyCode)
-                let isPressed = flags.contains(modifierMask)
-                
-                if isPressed && !toggleModifierIsDown {
-                    // Toggle modifier pressed - toggle immediately!
-                    toggleModifierIsDown = true
-                    DebugLogger.log("RightCommandSuppressor: Toggle key DOWN (\(toggleBinding.displayName)) - TOGGLE (instant)")
-                    triggerToggle()
-                    return nil  // Suppress the modifier event
-                } else if !isPressed && toggleModifierIsDown {
-                    // Toggle modifier released
-                    toggleModifierIsDown = false
-                    DebugLogger.log("RightCommandSuppressor: Toggle key UP (\(toggleBinding.displayName))")
-                    return nil  // Suppress release
-                }
-            }
-            
-            // Dynamic hanja key — modifier key, single-key binding (only if different from toggle key)
-            if hanjaBinding.isModifierKey && hanjaBinding.isModifierOnly && keyCode == hanjaBinding.keyCode && keyCode != toggleBinding.keyCode {
-                let modifierMask = Self.modifierMask(for: keyCode)
-                let isPressed = flags.contains(modifierMask)
-                
-                if isPressed && !hanjaModifierIsDown {
-                    hanjaModifierIsDown = true
-                    
-                    // Debounce: ignore if last trigger was within 500ms
-                    let now = DispatchTime.now()
-                    let elapsed = now.uptimeNanoseconds - lastHanjaTriggerTime.uptimeNanoseconds
-                    let elapsedMs = elapsed / 1_000_000
-                    if elapsedMs < 500 {
-                        DebugLogger.log("RightCommandSuppressor: Hanja key DEBOUNCED (\(elapsedMs)ms)")
-                        return nil
-                    }
-                    lastHanjaTriggerTime = now
-                    
-                    DebugLogger.log("RightCommandSuppressor: Hanja key DOWN (\(hanjaBinding.displayName)) - HANJA")
-                    triggerHanjaLookup()
-                    return nil  // Suppress
-                } else if !isPressed && hanjaModifierIsDown {
-                    hanjaModifierIsDown = false
-                    DebugLogger.log("RightCommandSuppressor: Hanja key UP (\(hanjaBinding.displayName))")
-                    return nil  // Suppress release
-                }
-            }
-            
-            return Unmanaged.passUnretained(event)
-        }
-        
-        // Handle keyDown
         if type == .keyDown {
-            // Regular key (non-modifier) as toggle — single key or combo
-            if priTypeToggleEnabled && keyCode == toggleBinding.keyCode && !toggleBinding.isModifierKey {
-                if toggleBinding.isModifierOnly {
-                    // Single regular key as toggle (e.g., F13, Caps Lock via keyDown)
-                    DebugLogger.log("RightCommandSuppressor: Regular key toggle (\(toggleBinding.displayName)) - TOGGLE")
-                    triggerToggle()
-                    return nil
-                } else {
-                    // Combo toggle (e.g., Control+Space, Option+G)
-                    let requiredFlags = CGEventFlags(rawValue: toggleBinding.modifiers)
-                    if Self.hasRequiredModifiers(flags: event.flags, required: requiredFlags) {
-                        DebugLogger.log("RightCommandSuppressor: Combo toggle (\(toggleBinding.displayName)) - TOGGLE triggered")
-                        triggerToggle()
-                        return nil
-                    }
-                }
+            let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            let toggleMatches = priTypeToggleEnabled
+                && keyCode == toggleBinding.keyCode
+                && !toggleBinding.isModifierKey
+                && (toggleBinding.isModifierOnly || Self.hasRequiredModifiers(
+                    flags: event.flags,
+                    required: CGEventFlags(rawValue: toggleBinding.modifiers)
+                ))
+
+            switch regularKeyState.keyDown(
+                keyCode: keyCode,
+                isRepeat: isRepeat,
+                matchesBinding: toggleMatches
+            ) {
+            case .triggerAndSuppress:
+                DebugLogger.log("RightCommandSuppressor: Regular/combo toggle DOWN (\(toggleBinding.displayName))")
+                triggerToggle()
+                return nil
+            case .suppress:
+                return nil
+            case .passThrough:
+                break
             }
-            
-            // Regular key (non-modifier) as hanja — single key or combo
-            if keyCode == hanjaBinding.keyCode && !hanjaBinding.isModifierKey && keyCode != toggleBinding.keyCode {
-                if hanjaBinding.isModifierOnly || Self.hasRequiredModifiers(flags: event.flags, required: CGEventFlags(rawValue: hanjaBinding.modifiers)) {
-                    DebugLogger.log("RightCommandSuppressor: Regular key hanja (\(hanjaBinding.displayName)) - HANJA")
-                    triggerHanjaLookup()
-                    return nil
-                }
+
+            let hanjaMatches = keyCode == hanjaBinding.keyCode
+                && !hanjaBinding.isModifierKey
+                && keyCode != toggleBinding.keyCode
+                && (hanjaBinding.isModifierOnly || Self.hasRequiredModifiers(
+                    flags: event.flags,
+                    required: CGEventFlags(rawValue: hanjaBinding.modifiers)
+                ))
+
+            switch regularKeyState.keyDown(
+                keyCode: keyCode,
+                isRepeat: isRepeat,
+                matchesBinding: hanjaMatches
+            ) {
+            case .triggerAndSuppress:
+                DebugLogger.log("RightCommandSuppressor: Regular/combo Hanja DOWN (\(hanjaBinding.displayName))")
+                triggerHanjaLookup()
+                return nil
+            case .suppress:
+                return nil
+            case .passThrough:
+                break
             }
-            
-            // When toggle modifier is held, strip its modifier from key events
-            // This makes keys act as regular character input, not shortcuts
-            if priTypeToggleEnabled && toggleModifierIsDown && toggleBinding.isModifierKey {
-                let modifierMask = Self.modifierMask(for: toggleBinding.keyCode)
+        }
+
+        // When the suppressed toggle modifier is held, strip only its modifier
+        // family unless the opposite-side modifier in that family is also down.
+        if type == .keyDown || type == .keyUp,
+           let toggleKeyCode = suppressedToggleModifierKeyCode {
+            let modifierMask = Self.modifierMask(for: toggleKeyCode)
+            let siblingKeyCodes = Self.modifierFamilyKeyCodes(for: toggleKeyCode)
+            if !modifierKeyState.hasPressedSibling(of: toggleKeyCode, sharingKeyCodes: siblingKeyCodes) {
                 var newFlags = event.flags
                 newFlags.remove(modifierMask)
                 event.flags = newFlags
-                DebugLogger.log("RightCommandSuppressor: Key with toggle modifier - stripped modifier (normal input)")
-                return Unmanaged.passUnretained(event)
+                DebugLogger.log("RightCommandSuppressor: Stripped suppressed toggle modifier")
             }
         }
         
@@ -316,10 +372,41 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         default:     return CGEventFlags(rawValue: 0)
         }
     }
+
+    private static func modifierFamilyKeyCodes(for keyCode: Int64) -> Set<Int64> {
+        switch keyCode {
+        case 54, 55: return [54, 55]
+        case 61, 58: return [61, 58]
+        case 62, 59: return [62, 59]
+        case 56, 60: return [56, 60]
+        case 57: return [57]
+        default: return []
+        }
+    }
     
     /// Check if event flags contain required modifier flags
     private static func hasRequiredModifiers(flags: CGEventFlags, required: CGEventFlags) -> Bool {
         return flags.intersection(required) == required
+    }
+
+    private func tearDownEventTap() {
+        if let eventTap {
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+            CFMachPortInvalidate(eventTap)
+        }
+        if let runLoopSource, let eventTapRunLoop {
+            CFRunLoopRemoveSource(eventTapRunLoop, runLoopSource, .commonModes)
+        }
+        eventTap = nil
+        runLoopSource = nil
+        eventTapRunLoop = nil
+    }
+
+    private func resetKeyState() {
+        modifierKeyState.reset()
+        regularKeyState.reset()
+        suppressedToggleModifierKeyCode = nil
+        suppressedHanjaModifierKeyCode = nil
     }
 
     private func triggerToggle() {
