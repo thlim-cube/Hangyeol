@@ -163,6 +163,7 @@ struct SettingsView: View {
             hanjaKeyBinding = ConfigurationManager.shared.hanjaKeyBinding
             autoUpdateCheckEnabled = ConfigurationManager.shared.autoUpdateCheckEnabled
             experimentalDirectInsertion = ConfigurationManager.shared.experimentalDirectInsertion
+            refreshKeyBindingConflictIndicator()
             refreshCapsLockSwitchState()
             checkAccessibility()
         }
@@ -628,10 +629,17 @@ struct SettingsView: View {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             withAnimation(.easeInOut(duration: 0.2)) {
-                hasKeyConflict = false
-                showKeyConflictRestored = false
+                refreshKeyBindingConflictIndicator()
             }
         }
+    }
+
+    private func refreshKeyBindingConflictIndicator() {
+        hasKeyConflict = ShortcutBindingRouter.conflicts(
+            toggleKeyBinding,
+            hanjaKeyBinding
+        )
+        showKeyConflictRestored = false
     }
 
     private func clearKeyConflict() {
