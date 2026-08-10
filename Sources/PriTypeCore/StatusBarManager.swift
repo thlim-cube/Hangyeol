@@ -50,7 +50,7 @@ struct InputModePresentationState: Equatable {
 ///
 /// This is deliberately a small presentation contract. The monitor remains the
 /// owner of its lifecycle; the status bar renders the central monitor status.
-public enum InputMonitorBackend: Sendable, Equatable {
+enum InputMonitorBackend: Sendable, Equatable {
     case starting
     case waitingForAccessibility
     case cgEventTap
@@ -411,20 +411,6 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, PendingInputMo
         refreshInputHealth()
     }
 
-    /// Report which keyboard monitor owns custom toggle detection. No key or
-    /// text payload is accepted, so the health UI cannot expose typed content.
-    public func setMonitorBackend(_ backend: InputMonitorBackend) {
-        Task { @MainActor [weak self] in
-            guard let self,
-                  self.monitorBackend != backend || !self.monitorLimitations.isEmpty else {
-                return
-            }
-            self.monitorBackend = backend
-            self.monitorLimitations = []
-            self.refreshInputHealth()
-        }
-    }
-    
     // MARK: - Cleanup
     
     @MainActor

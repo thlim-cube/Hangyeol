@@ -13,8 +13,8 @@ private final class MonitorStatusRecorder {
 
 @Suite("Status Bar Health")
 struct StatusBarHealthTests {
-    @Test("Launch initializes the status bar exactly once")
-    func launchInitializesStatusBarExactlyOnce() throws {
+    @Test("Launch initializes status once without a presentation side channel")
+    func launchInitializesStatusBarFromAuthoritativeSources() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -24,8 +24,10 @@ struct StatusBarHealthTests {
             encoding: .utf8
         )
         let setupCalls = source.components(separatedBy: "StatusBarManager.shared.setup()").count - 1
+        let manualBackendWrites = source.components(separatedBy: ".setMonitorBackend(").count - 1
 
         #expect(setupCalls == 1)
+        #expect(manualBackendWrites == 0)
     }
 
     @Test("Missing permission or monitor marks health as needing attention")
@@ -139,5 +141,26 @@ struct StatusBarHealthTests {
 
         #expect(recorder.statuses.count == countBeforeStaleNotification + 1)
         #expect(recorder.statuses.last == runningStatus)
+    }
+
+    @Test("Accessibility waiting survives menu resynchronization from the store")
+    @MainActor
+    func accessibilityWaitingSurvivesMenuResynchronization() throws {
+        let store = ToggleMonitorStatusStore()
+        let recorder = MonitorStatusRecorder()
+        let observer = addToggleMonitorStatusObserver(store: store, receive: recorder.record)
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        #expect(store.reserveStart(.eventTap))
+        store.failStart(.eventTap, issue: .accessibilityPermissionRequired)
+
+        let observedStatus = try #require(recorder.statuses.last)
+        let observedPresentation = InputMonitorPresentation(status: observedStatus)
+        // `menuWillOpen` reads the authoritative store snapshot again.
+        let menuPresentation = InputMonitorPresentation(status: store.status)
+
+        #expect(observedStatus == .unavailable(.accessibilityPermissionRequired))
+        #expect(observedPresentation.backend == .waitingForAccessibility)
+        #expect(menuPresentation == observedPresentation)
     }
 }

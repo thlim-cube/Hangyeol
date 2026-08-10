@@ -88,7 +88,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     private func setupIOKit() {
         // Check/request Accessibility permission
         if !IOKitManager.hasAccessibilityPermission() {
-            StatusBarManager.shared.setMonitorBackend(.waitingForAccessibility)
+            // Let the monitor owner publish the permission failure through the same
+            // authoritative store observed by the status UI.
+            _ = RightCommandSuppressor.shared.start()
             DebugLogger.log("Requesting Accessibility permission...")
             IOKitManager.requestAccessibilityPermission()
             
