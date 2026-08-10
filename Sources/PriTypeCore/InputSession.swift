@@ -109,13 +109,17 @@ final class InputSession: @unchecked Sendable {
         adapter = TextDeliveryPolicy.makeAdapter(for: client, context: context)
     }
 
-    /// Whether a session-ending event still has PriType-owned composition state to
-    /// reconcile. A direct-insertion adapter can own marked text even after the
-    /// libhangul engine is empty, so callers must not gate finalize on the engine
-    /// alone.
-    var needsCompositionFinalization: Bool {
-        composer.hasActiveComposition
-            || (adapter as? DirectInsertionAdapter)?.usesMarkedTextFallback == true
+    /// Mouse clicks inside a live marked composition keep composing. A marked-text
+    /// fallback left behind after the engine emptied has nothing left to keep, so any
+    /// click must reconcile it through `finalize`.
+    var mouseCompositionState: MouseCompositionState {
+        if composer.hasActiveComposition {
+            return .active
+        }
+        if (adapter as? DirectInsertionAdapter)?.usesMarkedTextFallback == true {
+            return .staleMarkedFallback
+        }
+        return .inactive
     }
 
     // MARK: Duplicate keyDown suppression

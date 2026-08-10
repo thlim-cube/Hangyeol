@@ -441,7 +441,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
               MouseCompositionPolicy.shouldFinalize(
                   characterIndex: index,
                   markedRange: client.markedRange(),
-                  needsFinalization: session.needsCompositionFinalization
+                  state: session.mouseCompositionState
               ) else {
             return false
         }
