@@ -256,11 +256,125 @@ struct HanjaCandidateLifecycleTests {
         #expect(presenter.dismissCount == 2)
     }
 
+    @Test("A click dismisses a candidate after lookup committed the composition")
+    func clickDismissesCandidateAfterCompositionCommit() throws {
+        let presenter = MockHanjaCandidatePresenter()
+        let client = FakeIMKTextInput()
+        let composer = makeComposer(presenter: presenter)
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: composer
+        )
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: session.adapter
+        )
+        #expect(composer.hasActiveComposition)
+
+        composer.triggerHanjaLookup()
+        let staleSelection = try #require(presenter.selectionCallbacks.first)
+        #expect(presenter.isVisible)
+        #expect(!composer.hasActiveComposition)
+        #expect(session.mouseCompositionState == .inactive)
+
+        let didFinalize = session.reconcileMouseDown(
+            characterIndex: 0,
+            markedRange: client.markedRange()
+        )
+
+        #expect(!didFinalize)
+        #expect(!presenter.isVisible)
+        #expect(composer.localTextBuffer.isEmpty)
+
+        composer.localTextBuffer = "안전"
+        staleSelection(HanjaEntry(hangul: "가", hanja: "可", meaning: "synthetic test"))
+        #expect(composer.localTextBuffer == "안전")
+        #expect(client.document == "가")
+    }
+
+    @Test("A click inside live marked text keeps composition but clears click context")
+    func clickInsideMarkedTextKeepsComposition() {
+        let presenter = MockHanjaCandidatePresenter()
+        let client = FakeIMKTextInput()
+        let composer = makeComposer(presenter: presenter)
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: composer
+        )
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        composer.localTextBuffer = "가"
+        let markedRange = client.markedRange()
+
+        let didFinalize = session.reconcileMouseDown(
+            characterIndex: markedRange.location,
+            markedRange: markedRange
+        )
+
+        #expect(!didFinalize)
+        #expect(composer.hasActiveComposition)
+        #expect(client.markedText == "ㄱ")
+        #expect(composer.localTextBuffer.isEmpty)
+    }
+
+    @Test("A reactivated session refreshes context before Hanja identity is used")
+    func reactivatedSessionRefreshesContext() {
+        let presenter = MockHanjaCandidatePresenter()
+        let client = FakeIMKTextInput()
+        let composer = makeComposer(presenter: presenter)
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: "synthetic.stale", isLightweight: true),
+            composer: composer
+        )
+        session.markContextStale()
+        var analyzeCount = 0
+
+        let refreshed = session.refreshContextIfNeeded { client in
+            analyzeCount += 1
+            return context(bundleId: client.bundleIdentifier(), isLightweight: false)
+        }
+        let refreshedAgain = session.refreshContextIfNeeded { _ in
+            analyzeCount += 1
+            return context(bundleId: "synthetic.unexpected")
+        }
+
+        #expect(refreshed)
+        #expect(!refreshedAgain)
+        #expect(analyzeCount == 1)
+        #expect(!session.contextNeedsRefresh)
+        #expect(session.context.bundleId == client.bundleID)
+        #expect(!session.context.isLightweight)
+    }
+
     private func makeComposer(presenter: MockHanjaCandidatePresenter) -> HangulComposer {
         HangulComposer(
             statusBar: MockStatusBar(),
             configuration: MockConfiguration(),
             candidateWindow: presenter
+        )
+    }
+
+    private func context(
+        bundleId: String,
+        isLightweight: Bool = false
+    ) -> ClientContext {
+        ClientContext(
+            bundleId: bundleId,
+            hasTextInputCapability: true,
+            isLikelyDesktopArea: false,
+            isLightweight: isLightweight,
+            documentAccessSafe: true
         )
     }
 

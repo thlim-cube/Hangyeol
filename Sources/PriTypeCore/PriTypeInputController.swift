@@ -140,8 +140,9 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     ///   field can only be told apart by coordinates at keystroke time).
     private func ensureSession(for client: IMKTextInput) -> InputSession {
         if let session, session.matches(client) {
-            if session.contextNeedsRefresh {
-                session.refreshContext(ClientContextDetector.analyze(client: client))
+            if session.refreshContextIfNeeded(using: { client in
+                ClientContextDetector.analyze(client: client)
+            }) {
                 session.armFocusLossFinalizer()
             } else if session.context.isLightweight && session.context.isFinder {
                 session.refreshContext(ClientContextDetector.analyze(client: client))
@@ -453,19 +454,14 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         keepTracking?.pointee = false
         guard let client = sender as? IMKTextInput,
               let session,
-              session.matches(client),
-              MouseCompositionPolicy.shouldFinalize(
-                  characterIndex: index,
-                  markedRange: client.markedRange(),
-                  state: session.mouseCompositionState
-              ) else {
+              session.matches(client) else {
             return false
         }
 
-        session.finalize(reason: .mouseCommit)
-        session.composer.dismissHanjaCandidates()
-        CursorRectResolver.invalidateCache()
-        session.composer.clearLocalBuffer()
+        session.reconcileMouseDown(
+            characterIndex: index,
+            markedRange: client.markedRange()
+        )
         return false // The host still owns caret movement and selection.
     }
 
@@ -586,7 +582,20 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     /// composer is no longer process-global, so an inactive client cannot supply
     /// stale preedit or local-buffer state.
     public func triggerHanjaLookup() {
-        session?.composer.triggerHanjaLookup()
+        #if DEBUG
+        assert(Thread.isMainThread, "External Hanja lookup must run on main thread")
+        #endif
+        guard let currentSession = session else { return }
+        let activeSession = ensureSession(for: currentSession.client)
+        guard !shouldPassThroughSecureInput(
+            client: activeSession.client,
+            context: activeSession.context
+        ) else {
+            activeSession.composer.dismissHanjaCandidates()
+            activeSession.discardForSecureInput()
+            return
+        }
+        activeSession.composer.triggerHanjaLookup()
     }
 
     // MARK: - Input Method Menu

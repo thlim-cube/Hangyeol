@@ -96,6 +96,19 @@ final class InputSession: @unchecked Sendable {
         contextNeedsRefresh = true
     }
 
+    /// Refresh a reactivated session before any operation that depends on the current
+    /// field's identity or delivery policy. Key input and external Hanja shortcuts use
+    /// the same gate so a shortcut arriving before the first keyDown cannot capture a
+    /// snapshot-less candidate interaction.
+    @discardableResult
+    func refreshContextIfNeeded(
+        using analyze: (IMKTextInput) -> ClientContext
+    ) -> Bool {
+        guard contextNeedsRefresh else { return false }
+        refreshContext(analyze(client))
+        return true
+    }
+
     /// Rebuild the adapter if the delivery policy no longer matches it (e.g. the
     /// experimental direct-insertion flag flipped mid-session). Cheap — two enum
     /// compares on the hot path.
@@ -120,6 +133,29 @@ final class InputSession: @unchecked Sendable {
             return .staleMarkedFallback
         }
         return .inactive
+    }
+
+    /// Reconcile every click owned by this session, regardless of whether there is
+    /// still engine composition to finalize. Opening a Hanja panel commits preedit,
+    /// which makes `mouseCompositionState` inactive while the panel, selection
+    /// callback, cursor cache, and local context are still live. Those interaction
+    /// artifacts therefore must not be guarded by the composition-only policy.
+    ///
+    /// A click inside a live marked range still keeps the composition itself intact;
+    /// only the click-scoped Hanja/context state is invalidated.
+    @discardableResult
+    func reconcileMouseDown(characterIndex: Int, markedRange: NSRange) -> Bool {
+        let shouldFinalize = MouseCompositionPolicy.shouldFinalize(
+            characterIndex: characterIndex,
+            markedRange: markedRange,
+            state: mouseCompositionState
+        )
+        let didFinalize = shouldFinalize && finalize(reason: .mouseCommit)
+
+        composer.dismissHanjaCandidates()
+        CursorRectResolver.invalidateCache()
+        composer.clearLocalBuffer()
+        return didFinalize
     }
 
     // MARK: Duplicate keyDown suppression
