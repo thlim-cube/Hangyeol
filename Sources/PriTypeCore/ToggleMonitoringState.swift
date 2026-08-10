@@ -251,6 +251,18 @@ final class HanjaShortcutSessionStateStore: @unchecked Sendable {
             storedState = state
         }
     }
+
+    /// Publish only for the process-active controller. Identity is checked in the
+    /// same operation used by every controller lifecycle path, so a late callback
+    /// cannot accidentally bypass an ad-hoc caller-side guard.
+    func update<Owner: AnyObject>(
+        _ state: HanjaShortcutSessionState,
+        from owner: Owner,
+        activeOwner: Owner?
+    ) {
+        guard let activeOwner, owner === activeOwner else { return }
+        update(state)
+    }
 }
 
 /// Modifier-only 한자키에는 입력 문자가 없으므로 기존 전역 단축키 계약을 유지합니다.

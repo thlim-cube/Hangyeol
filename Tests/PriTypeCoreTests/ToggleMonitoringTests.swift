@@ -187,6 +187,19 @@ struct SuppressedKeyPairTests {
         #expect(store.state == .unknown)
     }
 
+    @Test("A late inactive owner cannot overwrite the active Hanja shortcut state")
+    func inactiveOwnerCannotPublishHanjaShortcutState() {
+        let store = HanjaShortcutSessionStateStore(initialState: .nonsecure)
+        let staleOwner = NSObject()
+        let activeOwner = NSObject()
+
+        store.update(.unknown, from: staleOwner, activeOwner: activeOwner)
+        #expect(store.state == .nonsecure)
+
+        store.update(.secure, from: activeOwner, activeOwner: activeOwner)
+        #expect(store.state == .secure)
+    }
+
     @Test("IOKit repeat cannot erase a chorded modifier state")
     func iokitRepeatPreservesChordedState() {
         var state = ReleaseTogglePressState()

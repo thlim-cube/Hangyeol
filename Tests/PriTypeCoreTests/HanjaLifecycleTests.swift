@@ -225,6 +225,7 @@ struct HanjaCandidateLifecycleTests {
             context: context(bundleId: client.bundleID),
             composer: composer
         )
+        _ = session.prepareForNonSecureClientWrites()
         let shortcut = TestEventFactory.keyEvent(
             char: "x",
             keyCode: 7,
@@ -304,6 +305,7 @@ struct HanjaCandidateLifecycleTests {
             context: context(bundleId: client.bundleID),
             composer: composer
         )
+        _ = session.prepareForNonSecureClientWrites()
 
         _ = composer.handle(
             TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
@@ -346,6 +348,7 @@ struct HanjaCandidateLifecycleTests {
             context: context(bundleId: client.bundleID),
             composer: composer
         )
+        _ = session.prepareForNonSecureClientWrites()
 
         _ = composer.handle(
             TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
@@ -363,6 +366,52 @@ struct HanjaCandidateLifecycleTests {
         #expect(composer.hasActiveComposition)
         #expect(client.markedText == "ㄱ")
         #expect(composer.localTextBuffer.isEmpty)
+        #expect(!session.contextNeedsRefresh)
+
+        #expect(session.finalize(reason: .appDeactivate))
+        #expect(client.document == "ㄱ")
+        #expect(client.insertCalls.count == 1)
+    }
+
+    @Test("A candidate-consumed Tab and its duplicate keep the active session")
+    func candidateConsumedTabKeepsSession() {
+        let presenter = MockHanjaCandidatePresenter()
+        presenter.consumedKeyCodes = [KeyCode.tab]
+        let client = FakeIMKTextInput()
+        client.document = "가"
+        client.selectedRangeValue = NSRange(location: 1, length: 0)
+        let composer = makeComposer(presenter: presenter)
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID),
+            composer: composer
+        )
+        _ = session.prepareForNonSecureClientWrites()
+        let shortcut = TestEventFactory.keyEvent(
+            char: "x",
+            keyCode: 7,
+            modifiers: .command
+        )!
+        _ = composer.handle(shortcut, delegate: session.adapter)
+        composer.triggerHanjaLookup()
+        #expect(presenter.isVisible)
+
+        let tabSnapshot = KeyDownSnapshot(timestamp: 100, keyCode: KeyCode.tab)
+        #expect(session.registerKeyDown(tabSnapshot) == .process)
+        let handled = composer.handle(
+            TestEventFactory.keyEvent(char: "\t", keyCode: KeyCode.tab)!,
+            delegate: session.adapter
+        )
+        session.observeHostNavigationKeyDown(
+            keyCode: KeyCode.tab,
+            passedToHost: !handled
+        )
+
+        #expect(handled)
+        #expect(!session.contextNeedsRefresh)
+        #expect(session.registerKeyDown(tabSnapshot) == .consumeDuplicate)
+        #expect(!session.contextNeedsRefresh)
+        #expect(presenter.isVisible)
     }
 
     @Test("A reactivated session refreshes context before Hanja identity is used")
@@ -428,6 +477,7 @@ struct HanjaCandidateLifecycleTests {
 
 private final class MockHanjaCandidatePresenter: HanjaCandidatePresenting, @unchecked Sendable {
     var isVisible = false
+    var consumedKeyCodes: Set<UInt16> = []
     private(set) var dismissCount = 0
     private(set) var selectionCallbacks: [@Sendable (HanjaEntry) -> Void] = []
 
@@ -447,6 +497,6 @@ private final class MockHanjaCandidatePresenter: HanjaCandidatePresenting, @unch
     }
 
     func handleKey(_ event: NSEvent) -> Bool {
-        false
+        consumedKeyCodes.contains(event.keyCode)
     }
 }

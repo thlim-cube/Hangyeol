@@ -36,6 +36,7 @@ struct SecureToggleTests {
             ),
             composer: composer
         )
+        _ = session.prepareForNonSecureClientWrites()
 
         _ = composer.handle(
             TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
@@ -67,8 +68,7 @@ struct SecureToggleTests {
                     bundleId: refreshedContext.bundleId,
                     hasTextInputCapability: refreshedContext.hasTextInputCapability,
                     hasInvalidSelection: true,
-                    hasGlobalSecureInput: false,
-                    hasMarkedTextSupport: false
+                    hasGlobalSecureInput: false
                 ))
             },
             syncRomanKeyboardLayout: { _, mode in
@@ -133,6 +133,7 @@ struct SecureToggleTests {
             ),
             composer: composer
         )
+        _ = session.prepareForNonSecureClientWrites()
         _ = composer.handle(
             TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
             delegate: session.adapter

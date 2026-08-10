@@ -248,6 +248,7 @@ struct InputModeOwnershipTests {
             ),
             composer: composer
         )
+        _ = session.prepareForNonSecureClientWrites()
 
         _ = composer.handle(
             TestEventFactory.keyEvent(char: "r", keyCode: 15)!,

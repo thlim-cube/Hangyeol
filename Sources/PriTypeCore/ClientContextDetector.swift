@@ -5,15 +5,14 @@ import InputMethodKit
 
 /// Pure policy for deciding whether a secure-input-looking client should bypass IMK composition.
 ///
-/// Password fields can still expose partial IMK capabilities. Avoid Accessibility
-/// probing on the keystroke hot path; prefer raw passthrough whenever the client
-/// selection is unavailable or macOS Secure Event Input is active.
+/// Avoid Accessibility probing on the keystroke hot path. System/global secure
+/// signals pass through directly; with the global signal off, an invalid selection
+/// is fail-closed only when the cached context also lacks text-input capability.
 struct SecureInputSignals: Sendable {
     let bundleId: String
     let hasTextInputCapability: Bool
     let hasInvalidSelection: Bool
     let hasGlobalSecureInput: Bool
-    let hasMarkedTextSupport: Bool
 }
 
 struct SecureInputPolicy: Sendable {
@@ -28,23 +27,21 @@ struct SecureInputPolicy: Sendable {
             return true
         }
 
-        guard signals.hasInvalidSelection || signals.hasGlobalSecureInput else {
-            return false
-        }
-
-        if signals.hasInvalidSelection && !signals.hasTextInputCapability {
-            return true
-        }
-
-        if !signals.hasMarkedTextSupport || !signals.hasTextInputCapability {
-            return true
-        }
-
-        if signals.hasInvalidSelection {
-            return true
-        }
-
         return signals.hasGlobalSecureInput
+            || (!signals.hasTextInputCapability && signals.hasInvalidSelection)
+    }
+
+    /// `selectedRange()` is client IPC on the keystroke hot path. Its result affects
+    /// the fail-closed conjunction only when neither a system/global secure signal
+    /// nor a cached text-input capability result has already decided the outcome.
+    static func requiresSelectionProbe(
+        bundleId: String,
+        hasTextInputCapability: Bool,
+        hasGlobalSecureInput: Bool
+    ) -> Bool {
+        !isSystemSecureClient(bundleId)
+            && !hasGlobalSecureInput
+            && !hasTextInputCapability
     }
 }
 

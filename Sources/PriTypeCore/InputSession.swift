@@ -64,16 +64,20 @@ final class InputSession: @unchecked Sendable {
     // property of the host's event delivery, not of how we render composition.
     private var keyEventDeduplicator = KeyEventDeduplicator()
 
+    /// Set only when the original Tab in the current delivery turn was passed to
+    /// the host. A Hanja candidate panel can consume Tab for paging; its duplicate
+    /// must not be mistaken for field navigation.
+    private var originalTabPassedToHost = false
+
     /// Increments whenever a re-analysis may refer to a different field. InputMethodKit
     /// can reuse one client object across fields, so object identity alone cannot prove
     /// that a later marked range still belongs to PriType's previous preedit.
     private var contextGeneration: UInt64 = 0
 
-    /// The most recent generation that explicitly passed the nonsecure gate. The
-    /// initial generation is trusted for direct session tests and for a fully analyzed
-    /// client created synchronously inside `handle`; activation sessions are marked
-    /// stale before they can receive composition.
-    private var lastNonSecureGeneration: UInt64? = 0
+    /// The most recent generation that explicitly passed the nonsecure gate. A new
+    /// session remains unclassified until the controller authorizes it at an input
+    /// boundary; lifecycle callbacks can never grant this permission themselves.
+    private var lastNonSecureGeneration: UInt64?
 
     /// Generation that owned marked text when a write-free discard became necessary.
     /// A later field refresh changes `contextGeneration`, making cleanup fail closed.
@@ -87,10 +91,21 @@ final class InputSession: @unchecked Sendable {
     private var deferredRomanKeyboardLayoutTrace: ToggleLatencyTrace?
     #endif
 
-    init(client: IMKTextInput, context: ClientContext, composer: HangulComposer) {
+    /// Invalidates the event-tap Hanja snapshot through the owning controller. The
+    /// controller verifies process-wide ownership before publishing, so a late
+    /// lifecycle callback from an older session cannot overwrite the active state.
+    private let invalidateHanjaShortcutSessionState: () -> Void
+
+    init(
+        client: IMKTextInput,
+        context: ClientContext,
+        composer: HangulComposer,
+        invalidateHanjaShortcutSessionState: @escaping () -> Void = {}
+    ) {
         self.client = client
         self.context = context
         self.composer = composer
+        self.invalidateHanjaShortcutSessionState = invalidateHanjaShortcutSessionState
         self.adapter = TextDeliveryPolicy.makeAdapter(for: client, context: context)
     }
 
@@ -113,10 +128,7 @@ final class InputSession: @unchecked Sendable {
         _ newContext: ClientContext,
         fieldIdentityMayHaveChanged: Bool = false
     ) {
-        // Do not expose the previous field's nonsecure classification while the
-        // current field is being replaced. The controller republishes the result
-        // only after its main-thread secure gate completes.
-        HanjaShortcutSessionStateStore.shared.update(.unknown)
+        invalidateHanjaShortcutSessionState()
         let oldBundleId = context.bundleId
         context = newContext
         if fieldIdentityMayHaveChanged {
@@ -129,7 +141,7 @@ final class InputSession: @unchecked Sendable {
     }
 
     func markContextStale() {
-        HanjaShortcutSessionStateStore.shared.update(.unknown)
+        invalidateHanjaShortcutSessionState()
         contextNeedsRefresh = true
     }
 
@@ -205,17 +217,42 @@ final class InputSession: @unchecked Sendable {
     /// only the click-scoped Hanja/context state is invalidated.
     @discardableResult
     func reconcileMouseDown(characterIndex: Int, markedRange: NSRange) -> Bool {
+        let state = mouseCompositionState
         let shouldFinalize = MouseCompositionPolicy.shouldFinalize(
             characterIndex: characterIndex,
             markedRange: markedRange,
-            state: mouseCompositionState
+            state: state
         )
         let didFinalize = shouldFinalize && finalize(reason: .mouseCommit)
+
+        // A click inside PriType's live marked range is proof that focus stayed in
+        // the same field. Every other click can move focus while reusing the client.
+        if state != .active || shouldFinalize {
+            markContextStale()
+        }
 
         composer.dismissHanjaCandidates()
         CursorRectResolver.invalidateCache()
         composer.clearLocalBuffer()
         return didFinalize
+    }
+
+    /// Finish IMK's host-driven commit boundary after `finalize` has had its early
+    /// chance to commit into the old field. The next field can reuse this client, so
+    /// both context and external-shortcut classification become untrusted.
+    func finishHostCommitBoundary() {
+        composer.dismissHanjaCandidates()
+        CursorRectResolver.invalidateCache()
+        composer.clearLocalBuffer()
+        markContextStale()
+    }
+
+    /// Tab and Shift-Tab are host-owned focus navigation. IMK does not guarantee a
+    /// deactivate or mouse callback before the next field reuses the same client.
+    func observeHostNavigationKeyDown(keyCode: UInt16, passedToHost: Bool) {
+        guard keyCode == KeyCode.tab, passedToHost else { return }
+        originalTabPassedToHost = true
+        markContextStale()
     }
 
     // MARK: Duplicate keyDown suppression
@@ -225,10 +262,24 @@ final class InputSession: @unchecked Sendable {
     /// the original event returned false for host default handling.
     func registerKeyDown(_ snapshot: KeyDownSnapshot) -> KeyDownRoute {
         let route = keyEventDeduplicator.route(snapshot)
+        if route == .process {
+            originalTabPassedToHost = false
+        } else if originalTabPassedToHost {
+            // `handle` refreshes stale context before duplicate detection. A Tab
+            // re-delivery can therefore restore the old field's classification
+            // before the host applies its focus move. Reassert the navigation
+            // boundary so the next real key classifies the field that received it.
+            observeHostNavigationKeyDown(keyCode: snapshot.keyCode, passedToHost: true)
+        }
         if route == .process, !snapshot.isARepeat {
             let generation = keyEventDeduplicator.deliveryTurnGeneration
             DispatchQueue.main.async { [weak self] in
-                self?.keyEventDeduplicator.endDeliveryTurn(generation: generation)
+                guard let self,
+                      self.keyEventDeduplicator.deliveryTurnGeneration == generation else {
+                    return
+                }
+                self.keyEventDeduplicator.endDeliveryTurn(generation: generation)
+                self.originalTabPassedToHost = false
             }
         }
         return route
@@ -257,7 +308,7 @@ final class InputSession: @unchecked Sendable {
             }
             // Event-tap shortcuts run outside IMK. Invalidate the content-free
             // shortcut snapshot before this session stops being authoritative.
-            HanjaShortcutSessionStateStore.shared.update(.unknown)
+            self.invalidateHanjaShortcutSessionState()
             self.finalize(reason: .appDeactivate)
         }
     }
@@ -275,8 +326,11 @@ final class InputSession: @unchecked Sendable {
     /// Retire this session before another IMK controller becomes process-active.
     /// This runs at the new controller's activation boundary, which is earlier than
     /// the old controller's potentially late `deactivateServer` callback.
-    func retireForControllerHandoff() {
+    func retireForControllerHandoff(fieldIdentityMayHaveChanged: Bool) {
         composer.dismissHanjaCandidates()
+        if fieldIdentityMayHaveChanged {
+            markContextStale()
+        }
         finalize(reason: .sessionReplacement)
         disarmFocusLossFinalizer()
         markContextStale()

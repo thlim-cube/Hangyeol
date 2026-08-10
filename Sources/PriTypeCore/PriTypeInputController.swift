@@ -108,7 +108,14 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         }
         CursorRectResolver.invalidateCache()
 
-        let newSession = InputSession(client: client, context: context, composer: makeComposer())
+        let newSession = InputSession(
+            client: client,
+            context: context,
+            composer: makeComposer(),
+            invalidateHanjaShortcutSessionState: { [weak self] in
+                self?.publishHanjaShortcutSessionState(.unknown)
+            }
+        )
         newSession.composer.updateKeyboardLayout(id: ConfigurationManager.shared.keyboardId)
         session = newSession
         newSession.armFocusLossFinalizer()
@@ -119,14 +126,17 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     /// controller can arrive before the old controller's `deactivateServer`, so claim
     /// process-wide ownership only after retiring the previous controller while its
     /// host still accepts the composition commit.
-    private func claimProcessActiveController() {
+    private func claimProcessActiveController(incomingClient: IMKTextInput?) {
         Self.activeControllerRegistry.claim(self) { previous in
-            previous.retireForControllerHandoff()
+            previous.publishHanjaShortcutSessionState(.unknown)
+            previous.retireForControllerHandoff(incomingClient: incomingClient)
         }
+        publishHanjaShortcutSessionState(.unknown)
     }
 
-    private func retireForControllerHandoff() {
-        session?.retireForControllerHandoff()
+    private func retireForControllerHandoff(incomingClient: IMKTextInput?) {
+        let mayReuseField = incomingClient.map { session?.matches($0) == true } ?? true
+        session?.retireForControllerHandoff(fieldIdentityMayHaveChanged: mayReuseField)
         NotificationCenter.default.removeObserver(self, name: .keyboardLayoutChanged, object: nil)
         NotificationCenter.default.removeObserver(self, name: .romanKeyboardLayoutPreferenceChanged, object: nil)
         CursorRectResolver.invalidateCache()
@@ -139,8 +149,11 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         #if DEBUG
         assert(Thread.isMainThread, "Hanja shortcut session state must be published on main thread")
         #endif
-        guard Self.sharedController === self else { return }
-        HanjaShortcutSessionStateStore.shared.update(state)
+        HanjaShortcutSessionStateStore.shared.update(
+            state,
+            from: self,
+            activeOwner: Self.sharedController
+        )
     }
 
     /// Return the session for `client`, creating or refreshing it as needed.
@@ -408,12 +421,11 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         #if DEBUG
         assert(Thread.isMainThread, "IMK activateServer must run on main thread")
         #endif
-        // Invalidate before controller handoff or client probing. A regular Hanja
-        // binding pressed in this window must reach the host until the current field
-        // has passed the main-thread secure gate.
-        HanjaShortcutSessionStateStore.shared.update(.unknown)
+        // The currently active owner invalidates its snapshot before IMK probing or
+        // handoff. Once the claim completes, this controller republishes unknown.
+        Self.sharedController?.publishHanjaShortcutSessionState(.unknown)
         super.activateServer(sender)
-        claimProcessActiveController()
+        claimProcessActiveController(incomingClient: sender as? IMKTextInput)
         session?.composer.dismissHanjaCandidates()
         CursorRectResolver.invalidateCache()
         // NOTE: Focus changes never reset the shared InputModeStore. Korean/English
@@ -480,8 +492,8 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // ignore insertText. If the observer already committed, this is a no-op.
         let senderClient = sender as? IMKTextInput
         let deactivatesCurrentSession = senderClient.map { session?.matches($0) == true } ?? true
-        if deactivatesCurrentSession, Self.sharedController === self {
-            HanjaShortcutSessionStateStore.shared.update(.unknown)
+        if deactivatesCurrentSession {
+            publishHanjaShortcutSessionState(.unknown)
         }
         finalizeActiveComposition(sender: sender, reason: .deactivateServer)
         // NOTE: Do NOT clear localTextBuffer here.
@@ -555,9 +567,6 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             characterIndex: index,
             markedRange: client.markedRange()
         )
-        // A click can move focus between an ordinary and a password field while
-        // reusing the same IMK client. Re-prove the context at the next input boundary.
-        session.markContextStale()
         return false // The host still owns caret movement and selection.
     }
 
@@ -613,8 +622,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
         // 4. DYNAMIC CHECK: Secure Input (password fields) — raw pass-through.
         if shouldPassThroughSecureInput(client: client, context: session.context) {
-            session.discardForSecureInput()
-            return false
+            return Self.routeSecureKeyDown(in: session, keyCode: event.keyCode)
         }
 
         // A previous Secure Input pass-through may have left PriType-owned marked
@@ -638,34 +646,54 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // settings); make sure the adapter still matches before composing into it.
         session.ensureAdapterMatchesPolicy()
 
-        // 6. Compose.
-        return composer.handle(event, delegate: session.adapter)
+        // 6. Compose, then invalidate field identity for host-owned focus navigation.
+        let handled = composer.handle(event, delegate: session.adapter)
+        session.observeHostNavigationKeyDown(
+            keyCode: event.keyCode,
+            passedToHost: !handled
+        )
+        return handled
+    }
+
+    /// Secure fields receive the raw key. Tab still belongs to the host's field
+    /// navigation, so invalidate same-client context before the next key boundary.
+    static func routeSecureKeyDown(in session: InputSession, keyCode: UInt16) -> Bool {
+        session.discardForSecureInput()
+        session.observeHostNavigationKeyDown(keyCode: keyCode, passedToHost: true)
+        return false
     }
 
     private func shouldPassThroughSecureInput(client: IMKTextInput, context: ClientContext) -> Bool {
         let bundleId = context.bundleId
-        let isSecureInput: Bool
+        let isSystemSecureClient = SecureInputPolicy.isSystemSecureClient(bundleId)
+        let hasGlobalSecureInput = !isSystemSecureClient && IsSecureEventInputEnabled()
+        let requiresSelectionProbe = SecureInputPolicy.requiresSelectionProbe(
+            bundleId: bundleId,
+            hasTextInputCapability: context.hasTextInputCapability,
+            hasGlobalSecureInput: hasGlobalSecureInput
+        )
+        let hasInvalidSelection = requiresSelectionProbe
+            && client.selectedRange().location == NSNotFound
+        let signals = SecureInputSignals(
+            bundleId: bundleId,
+            hasTextInputCapability: context.hasTextInputCapability,
+            hasInvalidSelection: hasInvalidSelection,
+            hasGlobalSecureInput: hasGlobalSecureInput
+        )
+        let isSecureInput = SecureInputPolicy.shouldPassThrough(signals)
 
-        if SecureInputPolicy.isSystemSecureClient(bundleId) {
-            DebugLogger.event("input.secure_passthrough", metadata: [
-                .state("reason", "system_client")
-            ])
-            isSecureInput = true
-        } else if IsSecureEventInputEnabled() {
-            DebugLogger.event("input.secure_passthrough", metadata: [
-                .state("reason", "global_secure_input")
-            ])
-            isSecureInput = true
-        } else if context.hasTextInputCapability {
-            isSecureInput = false
-        } else {
-            let selectionRange = client.selectedRange()
-            isSecureInput = selectionRange.location == NSNotFound
-            if isSecureInput {
-                DebugLogger.event("input.secure_passthrough", metadata: [
-                    .state("reason", "invalid_selection")
-                ])
+        if isSecureInput {
+            let reason: StaticString
+            if isSystemSecureClient {
+                reason = "system_client"
+            } else if hasGlobalSecureInput {
+                reason = "global_secure_input"
+            } else {
+                reason = "invalid_selection"
             }
+            DebugLogger.event("input.secure_passthrough", metadata: [
+                .state("reason", reason)
+            ])
         }
 
         publishHanjaShortcutSessionState(isSecureInput ? .secure : .nonsecure)
@@ -677,12 +705,27 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         #if DEBUG
         assert(Thread.isMainThread, "IMK commitComposition must run on main thread")
         #endif
-        if finalizeActiveComposition(sender: sender, reason: .mouseCommit) {
-            session?.composer.dismissHanjaCandidates()
-            CursorRectResolver.invalidateCache()
-            session?.composer.localTextBuffer = "" // Click invalidates this session's local context.
-        }
+        _ = Self.routeHostCommitComposition(in: session, sender: sender)
         super.commitComposition(sender)
+    }
+
+    /// A host commit belongs only to the matching session. Once routed, field
+    /// identity becomes stale even when there was no active composition to finalize.
+    @discardableResult
+    static func routeHostCommitComposition(in session: InputSession?, sender: Any?) -> Bool {
+        guard let session else { return false }
+        if let senderClient = sender as? IMKTextInput,
+           !session.matches(senderClient) {
+            DebugLogger.event("composition.finalize_ignored", metadata: [
+                .state("reason", CompositionFinalizeReason.mouseCommit.diagnosticLabel),
+                .state("cause", "stale_client")
+            ])
+            return false
+        }
+
+        _ = session.finalize(reason: .mouseCommit)
+        session.finishHostCommitBoundary()
+        return true
     }
 
     /// Route an external Hanja shortcut to the active session's composer. The

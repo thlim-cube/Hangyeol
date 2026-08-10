@@ -71,8 +71,7 @@ struct ClientContextTests {
             bundleId: "com.example.messenger",
             hasTextInputCapability: true,
             hasInvalidSelection: false,
-            hasGlobalSecureInput: true,
-            hasMarkedTextSupport: true
+            hasGlobalSecureInput: true
         )))
     }
 
@@ -82,25 +81,46 @@ struct ClientContextTests {
             bundleId: "com.example.PasswordPanel",
             hasTextInputCapability: false,
             hasInvalidSelection: true,
-            hasGlobalSecureInput: false,
-            hasMarkedTextSupport: false
+            hasGlobalSecureInput: false
         )))
 
-        #expect(SecureInputPolicy.shouldPassThrough(SecureInputSignals(
+        #expect(!SecureInputPolicy.shouldPassThrough(SecureInputSignals(
             bundleId: "com.example.messenger",
             hasTextInputCapability: true,
             hasInvalidSelection: true,
-            hasGlobalSecureInput: false,
-            hasMarkedTextSupport: true
+            hasGlobalSecureInput: false
         )))
 
-        #expect(SecureInputPolicy.shouldPassThrough(SecureInputSignals(
+        #expect(!SecureInputPolicy.shouldPassThrough(SecureInputSignals(
             bundleId: "com.google.Chrome",
             hasTextInputCapability: true,
             hasInvalidSelection: true,
-            hasGlobalSecureInput: false,
-            hasMarkedTextSupport: true
+            hasGlobalSecureInput: false
         )))
+    }
+
+    @Test("Selection is probed only for the unresolved no-capability case")
+    func secureInputPolicySelectionProbeBoundary() {
+        #expect(SecureInputPolicy.requiresSelectionProbe(
+            bundleId: "com.example.PasswordPanel",
+            hasTextInputCapability: false,
+            hasGlobalSecureInput: false
+        ))
+        #expect(!SecureInputPolicy.requiresSelectionProbe(
+            bundleId: "com.example.messenger",
+            hasTextInputCapability: true,
+            hasGlobalSecureInput: false
+        ))
+        #expect(!SecureInputPolicy.requiresSelectionProbe(
+            bundleId: "com.example.PasswordPanel",
+            hasTextInputCapability: false,
+            hasGlobalSecureInput: true
+        ))
+        #expect(!SecureInputPolicy.requiresSelectionProbe(
+            bundleId: "com.apple.SecurityAgent",
+            hasTextInputCapability: false,
+            hasGlobalSecureInput: false
+        ))
     }
 
     @Test("Secure input policy always passes through system secure clients")
@@ -109,8 +129,7 @@ struct ClientContextTests {
             bundleId: "com.apple.SecurityAgent",
             hasTextInputCapability: true,
             hasInvalidSelection: false,
-            hasGlobalSecureInput: false,
-            hasMarkedTextSupport: true
+            hasGlobalSecureInput: false
         )))
     }
 

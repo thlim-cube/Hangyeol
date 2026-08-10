@@ -6,11 +6,12 @@ import Testing
 struct InputSessionFinalizeTests {
     private func context(
         bundleId: String,
+        hasTextInputCapability: Bool = true,
         documentAccessSafe: Bool
     ) -> ClientContext {
         ClientContext(
             bundleId: bundleId,
-            hasTextInputCapability: true,
+            hasTextInputCapability: hasTextInputCapability,
             isLikelyDesktopArea: false,
             documentAccessSafe: documentAccessSafe
         )
@@ -26,6 +27,7 @@ struct InputSessionFinalizeTests {
             context: context(bundleId: client.bundleID, documentAccessSafe: true),
             composer: composer
         )
+        _ = session.prepareForNonSecureClientWrites()
         return (session, composer, client)
     }
 
@@ -38,6 +40,7 @@ struct InputSessionFinalizeTests {
             context: context(bundleId: client.bundleID, documentAccessSafe: true),
             composer: composer
         )
+        _ = session.prepareForNonSecureClientWrites()
         return (session, composer, client)
     }
 
@@ -49,6 +52,138 @@ struct InputSessionFinalizeTests {
         )
         result.0.markContextStale()
         return result
+    }
+
+    @Test("An unclassified session cannot write during lifecycle finalize")
+    func unclassifiedSessionFinalizeDoesNotWrite() {
+        let client = FakeIMKTextInput()
+        let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: "com.apple.TextEdit", documentAccessSafe: true),
+            composer: composer
+        )
+        let renderOnlyDelegate = MockComposerDelegate()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: renderOnlyDelegate
+        )
+        #expect(composer.hasActiveComposition)
+
+        #expect(session.finalize(reason: .appDeactivate))
+        #expect(!composer.hasActiveComposition)
+        #expect(client.insertCalls.isEmpty)
+        #expect(client.markCalls.isEmpty)
+    }
+
+    @Test("A host commit boundary invalidates shortcut state without a client write")
+    func hostCommitBoundaryInvalidatesShortcutState() {
+        let client = FakeIMKTextInput()
+        let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
+        let shortcutState = HanjaShortcutSessionStateStore(initialState: .nonsecure)
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: "com.apple.TextEdit", documentAccessSafe: true),
+            composer: composer,
+            invalidateHanjaShortcutSessionState: {
+                shortcutState.update(.unknown)
+            }
+        )
+        _ = session.prepareForNonSecureClientWrites()
+
+        let staleClient = FakeIMKTextInput()
+        #expect(!PriTypeInputController.routeHostCommitComposition(
+            in: session,
+            sender: staleClient
+        ))
+        #expect(!session.contextNeedsRefresh)
+        #expect(shortcutState.state == .nonsecure)
+
+        #expect(PriTypeInputController.routeHostCommitComposition(
+            in: session,
+            sender: client
+        ))
+
+        #expect(session.contextNeedsRefresh)
+        #expect(shortcutState.state == .unknown)
+        #expect(!HanjaShortcutSuppressionPolicy.allowsSuppression(
+            binding: KeyBinding(keyCode: 102, modifiers: 0, displayName: "F15"),
+            sessionState: shortcutState.state
+        ))
+        #expect(client.insertCalls.isEmpty)
+        #expect(client.markCalls.isEmpty)
+    }
+
+    @Test("Tab navigation makes the reused client context untrusted")
+    func tabNavigationInvalidatesContext() {
+        let client = FakeIMKTextInput()
+        let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
+        let shortcutState = HanjaShortcutSessionStateStore(initialState: .nonsecure)
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: "com.apple.TextEdit", documentAccessSafe: true),
+            composer: composer,
+            invalidateHanjaShortcutSessionState: {
+                shortcutState.update(.unknown)
+            }
+        )
+        _ = session.prepareForNonSecureClientWrites()
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+
+        let tab = KeyDownSnapshot(timestamp: 100, keyCode: KeyCode.tab)
+        #expect(session.registerKeyDown(tab) == .process)
+        let handled = composer.handle(
+            TestEventFactory.keyEvent(char: "\t", keyCode: KeyCode.tab)!,
+            delegate: session.adapter
+        )
+        session.observeHostNavigationKeyDown(
+            keyCode: KeyCode.tab,
+            passedToHost: !handled
+        )
+        let writeCountAtNavigation = client.insertCalls.count
+
+        #expect(!handled)
+        #expect(session.contextNeedsRefresh)
+        #expect(shortcutState.state == .unknown)
+        #expect(client.document == "ㄱ")
+
+        // IMK can re-enter `handle` before the host applies its focus move. The
+        // controller refreshes first, so this deliberately restores the old normal
+        // field context before duplicate detection consumes the second Tab.
+        #expect(session.refreshContextIfNeeded { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+        #expect(!session.contextNeedsRefresh)
+        #expect(session.registerKeyDown(tab) == .consumeDuplicate)
+        #expect(session.contextNeedsRefresh)
+        #expect(shortcutState.state == .unknown)
+
+        // Once the host has moved focus, the next real key must classify the reused
+        // client again and route the password-like field without any extra write.
+        client.selectedRangeValue = NSRange(location: NSNotFound, length: 0)
+        #expect(session.refreshContextForInputBoundary { _ in
+            self.context(
+                bundleId: client.bundleID,
+                hasTextInputCapability: false,
+                documentAccessSafe: false
+            )
+        })
+        #expect(SecureInputPolicy.shouldPassThrough(SecureInputSignals(
+            bundleId: session.context.bundleId,
+            hasTextInputCapability: session.context.hasTextInputCapability,
+            hasInvalidSelection: true,
+            hasGlobalSecureInput: false
+        )))
+        #expect(!PriTypeInputController.routeSecureKeyDown(
+            in: session,
+            keyCode: 15
+        ))
+        #expect(!session.finalize(reason: .appDeactivate))
+        #expect(client.insertCalls.count == writeCountAtNavigation)
     }
 
     @Test("Direct insertion marked fallback commits through the marked path")
@@ -139,18 +274,21 @@ struct InputSessionFinalizeTests {
         #expect(client.insertCalls.count == 1)
     }
 
-    @Test("A refreshed field never receives deferred marked-text cleanup")
-    func refreshedFieldAbandonsDeferredMarkedCleanup() {
+    @Test("A field reached by Secure Tab never receives deferred marked-text cleanup")
+    func secureTabFieldAbandonsDeferredMarkedCleanup() {
         let (session, composer, client) = makeDirectFallbackSession()
 
         _ = composer.handle(
             TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
             delegate: session.adapter
         )
-        session.discardForSecureInput()
+        #expect(!PriTypeInputController.routeSecureKeyDown(
+            in: session,
+            keyCode: KeyCode.tab
+        ))
         #expect(client.insertCalls.isEmpty)
 
-        session.markContextStale()
+        #expect(session.contextNeedsRefresh)
         #expect(session.refreshContextIfNeeded { _ in
             self.context(bundleId: client.bundleID, documentAccessSafe: false)
         })
@@ -193,7 +331,7 @@ struct InputSessionFinalizeTests {
         )
         session.discardForSecureInput()
 
-        session.retireForControllerHandoff()
+        session.retireForControllerHandoff(fieldIdentityMayHaveChanged: false)
         #expect(!session.finalize(reason: .deactivateServer))
 
         #expect(!composer.hasActiveComposition)
@@ -212,11 +350,15 @@ struct InputSessionFinalizeTests {
         #expect(client.insertCalls.isEmpty)
     }
 
-    @Test("A stale password-context controller handoff discards without client writes")
-    func staleContextControllerHandoffDoesNotWrite() {
-        let (session, composer, client) = makeStaleDirectFallbackSession()
+    @Test("A same-client controller handoff revokes writes before retiring")
+    func sameClientControllerHandoffDoesNotWrite() {
+        let (session, composer, client) = makeDirectFallbackSession()
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
 
-        session.retireForControllerHandoff()
+        session.retireForControllerHandoff(fieldIdentityMayHaveChanged: true)
 
         #expect(!composer.hasActiveComposition)
         #expect(client.markedText == "ㄱ")
@@ -260,6 +402,7 @@ struct InputSessionFinalizeTests {
             context: context(bundleId: client.bundleID, documentAccessSafe: true),
             composer: composer
         )
+        _ = session.prepareForNonSecureClientWrites()
 
         _ = composer.handle(TestEventFactory.keyEvent(char: "r", keyCode: 15)!, delegate: session.adapter)
         #expect(session.adapter.deliveryMode == .markedText)
@@ -324,8 +467,7 @@ struct InputSessionFinalizeTests {
             bundleId: session.context.bundleId,
             hasTextInputCapability: session.context.hasTextInputCapability,
             hasInvalidSelection: true,
-            hasGlobalSecureInput: false,
-            hasMarkedTextSupport: false
+            hasGlobalSecureInput: false
         )))
         #expect(session.adapter.deliveryMode == .directInsertion)
         #expect(composer.hasActiveComposition)
@@ -339,8 +481,8 @@ struct InputSessionFinalizeTests {
         #expect(client.insertCalls.isEmpty)
     }
 
-    @Test("Controller handoff retires the old session before late deactivation")
-    func controllerHandoffRetiresSession() {
+    @Test("A different-client handoff commits the old field before late deactivation")
+    func differentClientHandoffCommitsBeforeLateDeactivation() {
         let client = FakeIMKTextInput()
         client.bundleID = "com.apple.TextEdit"
         let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
@@ -349,12 +491,13 @@ struct InputSessionFinalizeTests {
             context: context(bundleId: client.bundleID, documentAccessSafe: true),
             composer: composer
         )
+        _ = session.prepareForNonSecureClientWrites()
 
         _ = composer.handle(TestEventFactory.keyEvent(char: "r", keyCode: 15)!, delegate: session.adapter)
         _ = composer.handle(TestEventFactory.keyEvent(char: "k", keyCode: 40)!, delegate: session.adapter)
         #expect(client.markedText == "가")
 
-        session.retireForControllerHandoff()
+        session.retireForControllerHandoff(fieldIdentityMayHaveChanged: false)
 
         #expect(session.contextNeedsRefresh)
         #expect(!composer.hasActiveComposition)
