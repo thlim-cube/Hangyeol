@@ -768,6 +768,22 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         )
     }
 
+    /// PriType registers one IMK mode and owns Korean/English state internally.
+    /// A keyboard override can still make IMK report an input-mode property change;
+    /// forwarding that tag to `IMKInputController` asks its generic composition path
+    /// to update marked text even though PriType supplies no `composedString`.
+    static func shouldForwardStateChangeToIMK(tag: Int) -> Bool {
+        tag != Int(kTextServiceInputModePropertyTag)
+    }
+
+    override public func setValue(_ value: Any!, forTag tag: Int, client sender: Any!) {
+        guard Self.shouldForwardStateChangeToIMK(tag: tag) else {
+            DebugLogger.event("input.mode_property_ignored")
+            return
+        }
+        super.setValue(value, forTag: tag, client: sender)
+    }
+
     override public func mouseDown(
         onCharacterIndex index: Int,
         coordinate point: NSPoint,

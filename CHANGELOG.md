@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.2] - 2026-08-13
+
+### Fixed
+- 단일 IMK 입력 모드 callback이 일반 조합 갱신 경로로 전달되어 전환 직후 marked text가 흔들릴 수 있던 문제를 차단했습니다.
+- 우측 Command 한/영 전환이 좌우 Command를 함께 누르는 Codex 화면 캡처 단축키를 가로막지 않도록, modifier-only 전환키는 단독 release에서만 전환하고 전체 키 쌍을 원래 앱에 전달합니다.
+
 ## [2.8.1] - 2026-08-12
 
 ### Fixed

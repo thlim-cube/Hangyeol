@@ -338,9 +338,34 @@ struct SuppressedKeyPairTests {
         #expect(state.handle(usage: 0xE3, pressed: true, toggleUsage: 0xE7) == .chorded)
         #expect(state.handle(usage: 0xE7, pressed: true, toggleUsage: 0xE7) == .repeatIgnored)
         #expect(state.handle(usage: 0xE7, pressed: false, toggleUsage: 0xE7) == .released(shouldToggle: false))
+        #expect(state.handle(usage: 0xE3, pressed: false, toggleUsage: 0xE7) == .none)
 
         #expect(state.handle(usage: 0xE7, pressed: true, toggleUsage: 0xE7) == .pressed)
         #expect(state.handle(usage: 0xE7, pressed: false, toggleUsage: 0xE7) == .released(shouldToggle: true))
+
+        #expect(state.handle(usage: 0xE3, pressed: true, toggleUsage: 0xE7) == .none)
+        #expect(state.handle(usage: 0xE7, pressed: true, toggleUsage: 0xE7) == .pressed)
+        #expect(state.handle(usage: 0xE7, pressed: false, toggleUsage: 0xE7) == .released(shouldToggle: false))
+        #expect(state.handle(usage: 0xE3, pressed: false, toggleUsage: 0xE7) == .none)
+    }
+
+    @Test("A modifier-only toggle leaves a two-Command screenshot chord to the host")
+    func modifierTogglePreservesTwoCommandChord() {
+        var state = EventTapModifierToggleState()
+
+        #expect(state.handle(keyCode: 54, pressed: true, toggleKeyCode: 54) == .passThrough)
+        #expect(state.handle(keyCode: 55, pressed: true, toggleKeyCode: 54) == .passThrough)
+        #expect(state.handle(keyCode: 55, pressed: false, toggleKeyCode: 54) == .passThrough)
+        #expect(state.handle(keyCode: 54, pressed: false, toggleKeyCode: 54) == .passThrough)
+
+        #expect(state.handle(keyCode: 54, pressed: true, toggleKeyCode: 54) == .passThrough)
+        #expect(state.handle(keyCode: 54, pressed: false, toggleKeyCode: 54) == .toggleAndPassThrough)
+
+        // The screenshot chord must also win when Left Command is pressed first.
+        #expect(state.handle(keyCode: 55, pressed: true, toggleKeyCode: 54) == .passThrough)
+        #expect(state.handle(keyCode: 54, pressed: true, toggleKeyCode: 54) == .passThrough)
+        #expect(state.handle(keyCode: 54, pressed: false, toggleKeyCode: 54) == .passThrough)
+        #expect(state.handle(keyCode: 55, pressed: false, toggleKeyCode: 54) == .passThrough)
     }
 
     @Test("Changing a fallback binding clears an in-flight press")

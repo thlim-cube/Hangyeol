@@ -21,8 +21,9 @@ import ApplicationServices
 /// If CGEventTap creation fails (e.g., permission issues), `IOKitManager` takes over.
 ///
 /// ## Key Features
-/// - **Instant toggle**: Switches on key press, not release
-/// - **Modifier stripping**: When toggle modifier is held, removes its modifier from other keys
+/// - **Chord-safe modifier toggle**: Modifier-only keys toggle on standalone release
+///   while their complete down/up sequence remains visible to host shortcuts
+/// - **Pair-safe suppression**: Suppressed bindings never leak an orphan down/up edge
 /// - **Dynamic binding**: Supports any key via KeyBinding struct
 public final class RightCommandSuppressor: @unchecked Sendable {
     
@@ -48,8 +49,8 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     
     /// Track the exact side/keyCode and suppressed down/up pairs.
     private var modifierKeyState = ModifierKeyPressState()
+    private var modifierToggleState = EventTapModifierToggleState()
     private var regularKeyState = RegularKeyPressState()
-    private var suppressedToggleModifierKeyCode: Int64?
     private var suppressedHanjaModifierKeyCode: Int64?
     
     /// Track CGEventTap disable events for auto-recovery
@@ -219,6 +220,27 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         let toggleBinding = config.toggleKeyBinding
         let hanjaBinding = config.hanjaKeyBinding
         let priTypeToggleEnabled = !config.capsLockInputSourceSwitchEnabled
+        let usesPassThroughModifierToggle = !isRecordingKey
+            && priTypeToggleEnabled
+            && toggleBinding.isModifierOnly
+            && ShortcutBindingRouter.routeModifierKey(
+                keyCode: toggleBinding.keyCode,
+                toggleBinding: toggleBinding,
+                hanjaBinding: hanjaBinding,
+                priTypeToggleEnabled: priTypeToggleEnabled
+            ) == .toggle
+        if !usesPassThroughModifierToggle {
+            modifierToggleState.reset()
+        }
+
+        if usesPassThroughModifierToggle,
+           (type == .keyDown || type == .keyUp) {
+            _ = modifierToggleState.handle(
+                keyCode: keyCode,
+                pressed: type == .keyDown,
+                toggleKeyCode: toggleBinding.keyCode
+            )
+        }
 
         if type == .keyUp, regularKeyState.keyUp(keyCode: keyCode) == .suppress {
             DebugLogger.event("input.suppressed_key_up")
@@ -251,18 +273,19 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 keyCode: keyCode,
                 eventFlags: event.flags
             )
+            let modifierToggleAction = usesPassThroughModifierToggle
+                ? modifierToggleState.handle(
+                    keyCode: keyCode,
+                    pressed: physicalKeyIsDown,
+                    toggleKeyCode: toggleBinding.keyCode
+                )
+                : .passThrough
             let transition = modifierKeyState.observe(
                 keyCode: keyCode,
                 physicalKeyIsDown: physicalKeyIsDown
             )
 
             if transition == .up, modifierKeyState.consumeSuppressedRelease(keyCode: keyCode) {
-                if suppressedToggleModifierKeyCode == keyCode {
-                    suppressedToggleModifierKeyCode = nil
-                    DebugLogger.event("toggle.physical_up", metadata: [
-                        .state("backend", "event_tap")
-                    ])
-                }
                 if suppressedHanjaModifierKeyCode == keyCode {
                     suppressedHanjaModifierKeyCode = nil
                     DebugLogger.event("hanja.physical_up", metadata: [
@@ -289,14 +312,11 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 priTypeToggleEnabled: priTypeToggleEnabled
             ) : nil
 
-            if route == .toggle {
-                suppressedToggleModifierKeyCode = keyCode
-                modifierKeyState.suppressUntilRelease(keyCode: keyCode)
+            if modifierToggleAction == .toggleAndPassThrough {
                 DebugLogger.event("toggle.requested", metadata: [
                     .state("backend", "event_tap")
                 ])
                 triggerToggle()
-                return nil
             }
 
             if route == .hanja,
@@ -480,12 +500,13 @@ public final class RightCommandSuppressor: @unchecked Sendable {
 
     private func resetKeyState() {
         modifierKeyState.reset()
+        modifierToggleState.reset()
         regularKeyState.reset()
-        suppressedToggleModifierKeyCode = nil
         suppressedHanjaModifierKeyCode = nil
     }
 
     private func resynchronizeKeyState() {
+        modifierToggleState.reset()
         Self.resynchronizeKeyState(
             modifierState: &modifierKeyState,
             regularState: &regularKeyState,
@@ -500,10 +521,6 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             }
         )
 
-        if let keyCode = suppressedToggleModifierKeyCode,
-           !modifierKeyState.isSuppressed(keyCode: keyCode) {
-            suppressedToggleModifierKeyCode = nil
-        }
         if let keyCode = suppressedHanjaModifierKeyCode,
            !modifierKeyState.isSuppressed(keyCode: keyCode) {
             suppressedHanjaModifierKeyCode = nil

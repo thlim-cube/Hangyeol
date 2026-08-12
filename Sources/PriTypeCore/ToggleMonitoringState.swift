@@ -436,34 +436,83 @@ enum ReleaseToggleAction: Equatable {
     case released(shouldToggle: Bool)
 }
 
+enum EventTapModifierToggleAction: Equatable {
+    case passThrough
+    case toggleAndPassThrough
+}
+
+/// Modifier-only toggle keys must remain visible to host-level chords such as
+/// Codex's Left Command + Right Command screenshot shortcut. A standalone press
+/// toggles on release; any chord remains an ordinary host key sequence.
+struct EventTapModifierToggleState {
+    private var pressState = ReleaseTogglePressState()
+    private var configuredToggleKeyCode: Int64?
+
+    mutating func handle(
+        keyCode: Int64,
+        pressed: Bool,
+        toggleKeyCode: Int64
+    ) -> EventTapModifierToggleAction {
+        if configuredToggleKeyCode != toggleKeyCode {
+            reset()
+            configuredToggleKeyCode = toggleKeyCode
+        }
+
+        let action = pressState.handle(
+            usage: UInt32(keyCode),
+            pressed: pressed,
+            toggleUsage: UInt32(toggleKeyCode)
+        )
+        return action == .released(shouldToggle: true)
+            ? .toggleAndPassThrough
+            : .passThrough
+    }
+
+    mutating func reset() {
+        pressState.reset()
+        configuredToggleKeyCode = nil
+    }
+}
+
 /// IOKit fallback의 modifier-only 키를 release에서 한 번만 전환합니다.
 struct ReleaseTogglePressState {
     private(set) var isDown = false
     private var usedWithOtherKey = false
+    private var pressedUsages: Set<UInt32> = []
 
     mutating func handle(usage: UInt32, pressed: Bool, toggleUsage: UInt32) -> ReleaseToggleAction {
         if usage == toggleUsage {
             if pressed {
                 guard !isDown else { return .repeatIgnored }
+                pressedUsages.insert(usage)
                 isDown = true
-                usedWithOtherKey = false
+                usedWithOtherKey = pressedUsages.contains { $0 != toggleUsage }
                 return .pressed
             }
 
             guard isDown else { return .none }
+            pressedUsages.remove(usage)
             let shouldToggle = !usedWithOtherKey
-            reset()
+            isDown = false
+            usedWithOtherKey = false
             return .released(shouldToggle: shouldToggle)
         }
 
-        guard isDown, pressed else { return .none }
-        usedWithOtherKey = true
-        return .chorded
+        if pressed {
+            let isNewPress = pressedUsages.insert(usage).inserted
+            guard isDown, isNewPress else { return .none }
+            usedWithOtherKey = true
+            return .chorded
+        }
+
+        pressedUsages.remove(usage)
+        return .none
     }
 
     mutating func reset() {
         isDown = false
         usedWithOtherKey = false
+        pressedUsages.removeAll()
     }
 }
 

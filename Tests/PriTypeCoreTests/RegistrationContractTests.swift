@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Carbon.HIToolbox
 @testable import PriTypeCore
 
 /// Guards the IMK input-source registration in the source-tree `Info.plist`.
@@ -95,5 +96,13 @@ struct RegistrationContractTests {
         #expect(korean?["TISIconIsTemplate"] as? Bool == true)
         #expect(korean?["tsInputModeMenuIconFileKey"] as? String == "input-ko.tiff")
         #expect(korean?["tsInputModePaletteIconFileKey"] as? String == "input-ko.tiff")
+    }
+
+    @Test("Single-mode callbacks do not enter IMK's composition update path")
+    func inputModePropertyCallbackIsConsumedByPriType() {
+        #expect(!PriTypeInputController.shouldForwardStateChangeToIMK(
+            tag: Int(kTextServiceInputModePropertyTag)
+        ))
+        #expect(PriTypeInputController.shouldForwardStateChangeToIMK(tag: Int.max))
     }
 }
