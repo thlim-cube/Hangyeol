@@ -680,11 +680,17 @@ final class InputSession: @unchecked Sendable {
 
         let expectedMarkedText = composer.activePreeditForDisplay
         let markedRange = client.markedRange()
-        if Self.confirmedMarkedTextMatch(
+        let markedTextMatch = Self.confirmedMarkedTextMatch(
             in: client,
             range: markedRange,
             expectedText: expectedMarkedText
-        ) == false {
+        )
+        if markedTextMatch == false,
+           !Self.allowsLaggingMarkedTextCommit(
+               reason: reason,
+               range: markedRange,
+               expectedText: expectedMarkedText
+           ) {
             discardCompositionWithoutClientWrite(rebuildAdapter: false)
             DebugLogger.event("composition.discarded", metadata: [
                 .state("reason", reason.diagnosticLabel),
@@ -709,6 +715,22 @@ final class InputSession: @unchecked Sendable {
         )
         (adapter as? DirectInsertionAdapter)?.resetPreeditTracking()
         return true
+    }
+
+    /// AppKit can briefly expose the previous same-length marked snapshot when a
+    /// custom toggle immediately follows the final jamo. The toggle path has already
+    /// refreshed the field, passed the Secure Input gate, and authorized this
+    /// generation, so a structurally identical marked range can use the canonical
+    /// commit without waiting for document readback to catch up. Other lifecycle
+    /// finalizers and structurally different ranges remain fail-closed.
+    private static func allowsLaggingMarkedTextCommit(
+        reason: CompositionFinalizeReason,
+        range: NSRange,
+        expectedText: String
+    ) -> Bool {
+        reason == .modeTransition
+            && isReasonableMarkedRange(range)
+            && range.length == expectedText.utf16.count
     }
 
     /// Confirm that the current generation passed the nonsecure gate, then clear

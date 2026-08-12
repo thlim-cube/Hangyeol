@@ -174,6 +174,69 @@ struct SecureToggleTests {
         #expect(statusBar.currentMode == .english)
     }
 
+    @Test("Korean to English keeps the last syllable when marked readback lags")
+    func koreanToEnglishPreservesLastSyllableAcrossLaggingReadback() {
+        let (session, composer, client, _) = makeNonsecureSession()
+        for event in [
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!
+        ] {
+            _ = composer.handle(event, delegate: session.adapter)
+        }
+        #expect(composer.activePreeditForDisplay == "가")
+
+        // AppKit can briefly return the previous same-length marked snapshot when
+        // the toggle follows the final jamo immediately.
+        client.markedText = "ㄱ"
+
+        #expect(PriTypeInputController.routeExternalModeTransition(
+            in: session,
+            source: .customKey,
+            trace: .begin(source: .customKey),
+            analyzeContext: { _ in session.context },
+            shouldPassThroughSecureInput: { _, _ in false },
+            syncRomanKeyboardLayout: { _, _ in }
+        ))
+        #expect(composer.inputMode == .english)
+
+        let handled = composer.handle(
+            TestEventFactory.keyEvent(char: "c", keyCode: 8)!,
+            delegate: session.adapter
+        )
+        #expect(!handled)
+        client.insertText("c", replacementRange: NSRange(location: NSNotFound, length: NSNotFound))
+
+        #expect(client.document == "가c")
+    }
+
+    @Test("Korean to English does not commit a structurally unrelated marked range")
+    func koreanToEnglishRejectsStructurallyUnrelatedMarkedRange() {
+        let (session, composer, client, _) = makeNonsecureSession()
+        for event in [
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!
+        ] {
+            _ = composer.handle(event, delegate: session.adapter)
+        }
+
+        client.markedText = "나다"
+        client.markedRangeValue = NSRange(location: 0, length: 2)
+
+        #expect(PriTypeInputController.routeExternalModeTransition(
+            in: session,
+            source: .customKey,
+            trace: .begin(source: .customKey),
+            analyzeContext: { _ in session.context },
+            shouldPassThroughSecureInput: { _, _ in false },
+            syncRomanKeyboardLayout: { _, _ in }
+        ))
+
+        #expect(client.insertCalls.isEmpty)
+        #expect(client.markedText == "나다")
+        #expect(!composer.hasActiveComposition)
+        #expect(composer.inputMode == .english)
+    }
+
     @Test("Context-analysis reentry aborts the stale outer toggle")
     func contextAnalysisReentryAbortsToggle() {
         let (session, composer, _, _) = makeNonsecureSession()

@@ -1,7 +1,7 @@
 #!/bin/bash
-# postinstall for PriTypeV2.pkg
+# postinstall for PriType.pkg
 
-APP_PATH="/Library/Input Methods/PriTypeV2.app"
+APP_PATH="/Library/Input Methods/PriType.app"
 
 # 1. Remove quarantine attribute (prevents Gatekeeper blocking after update)
 xattr -cr "$APP_PATH" 2>/dev/null || true
@@ -12,6 +12,7 @@ killall TextInputMenuAgent 2>/dev/null || true
 killall TextInputSwitcher 2>/dev/null || true
 killall keyboardservicesd 2>/dev/null || true
 killall imklaunchagent 2>/dev/null || true
+killall PriType 2>/dev/null || true
 killall PriTypeV2 2>/dev/null || true
 
 # 3. Determine if this is a fresh install or an update before migration.
@@ -25,7 +26,7 @@ if [ -n "$CURRENT_USER" ]; then
     fi
 fi
 
-# 4. Launch the new PriTypeV2 process
+# 4. Launch the new PriType process
 #    macOS InputMethodKit will auto-relaunch if it was previously registered,
 #    but we explicitly launch it to cover first-install, input-source migration,
 #    and re-enable edge cases without relying on optional system scripting runtimes.

@@ -3,7 +3,7 @@ set -e
 export COPYFILE_DISABLE=1
 
 # Define variables
-APP_NAME="PriTypeV2"
+APP_NAME="PriType"
 BUILD_DIR=".build/release"
 LEGACY_PAYLOAD_DIR="Packaging/Payload"
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/pritype-release-payload.XXXXXX")
@@ -13,8 +13,8 @@ APP_BUNDLE="${APP_NAME}.app"
 CONTENTS_DIR="${PAYLOAD_DIR}/${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
-PKG_OUTPUT="PriTypeV2_Release.pkg"
-COMPONENT_PLIST="PriTypeV2_components.plist"
+PKG_OUTPUT="PriType_Release.pkg"
+COMPONENT_PLIST="PriType_components.plist"
 KEYCHAIN_PROFILE="${KEYCHAIN_PROFILE:-PriTypeNotary}"
 
 cleanup() {

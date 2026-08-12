@@ -124,8 +124,14 @@ func addToggleMonitorStatusObserver(
 
 // MARK: - StatusBarManager
 
-/// Manages a status bar item to show current input mode (한/A) and redacted
-/// input-health metadata.
+struct StatusBarIndicatorPresentation: Equatable {
+    let title: String
+    let symbolName: String
+
+    static let appMenu = StatusBarIndicatorPresentation(title: "", symbolName: "keyboard")
+}
+
+/// Manages the PriType status menu and redacted input-health metadata.
 ///
 /// This class handles all UI updates on the main thread for thread safety.
 public final class StatusBarManager: NSObject, StatusBarUpdating, PendingInputModePresenting, NSMenuDelegate, @unchecked Sendable {
@@ -159,7 +165,7 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, PendingInputMo
     public func setup() {
         guard statusItem == nil else { return }
 
-        // variableLength hugs the glyph like the system input-source indicator.
+        // Keep the PriType app menu visually distinct from macOS's input-source indicator.
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem?.autosaveName = "PriTypeInputModeIndicator"
         statusItem?.isVisible = true
@@ -174,17 +180,18 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, PendingInputMo
         DebugLogger.log("StatusBarManager: Created status item with menu")
     }
 
-    /// Render the menu-bar indicator natively: a PLAIN title (so the system applies
-    /// menu-bar vibrancy — white on a dark bar, and an inverted highlight while the menu
-    /// is open) in the system font. The Korean label is "한", matching macOS's own 2-Set
-    /// Korean indicator; English mirrors ABC's "A".
+    /// Use an app-specific icon because macOS already renders the active input mode.
     @MainActor
     private func applyMode(_ mode: InputMode, to button: NSStatusBarButton) {
         let isKorean = (mode == .korean)
-        button.image = nil
-        button.imagePosition = .noImage
-        button.font = NSFont.systemFont(ofSize: 15, weight: .regular)
-        button.title = isKorean ? "한" : "A"
+        let presentation = StatusBarIndicatorPresentation.appMenu
+        button.image = NSImage(
+            systemSymbolName: presentation.symbolName,
+            accessibilityDescription: nil
+        )
+        button.image?.isTemplate = true
+        button.imagePosition = .imageOnly
+        button.title = presentation.title
         button.toolTip = isKorean ? "한국어" : "English"
         button.setAccessibilityLabel(isKorean ? "한국어 입력" : "영문 입력")
     }

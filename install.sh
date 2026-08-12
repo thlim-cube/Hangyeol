@@ -2,7 +2,7 @@
 set -e
 
 # Define variables
-APP_NAME="PriTypeV2"
+APP_NAME="PriType"
 BUILD_DIR=".build/release"
 INSTALL_DIR="$HOME/Library/Input Methods"
 APP_BUNDLE="${APP_NAME}.app"
@@ -18,7 +18,7 @@ mkdir -p "$MACOS_DIR"
 mkdir -p "$RESOURCES_DIR"
 
 echo "Copying executable..."
-cp "$BUILD_DIR/PriType" "$MACOS_DIR/PriTypeV2"
+cp "$BUILD_DIR/PriType" "$MACOS_DIR/$APP_NAME"
 
 echo "Copying Info.plist..."
 cp Info.plist "$CONTENTS_DIR/"
@@ -69,8 +69,8 @@ fi
 
 echo "Installing to $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
+rm -rf "$INSTALL_DIR/PriTypeV2.app"
 rm -rf "$INSTALL_DIR/PriType.app"
-rm -rf "$INSTALL_DIR/$APP_BUNDLE"
 mv "$APP_BUNDLE" "$INSTALL_DIR/"
 
 echo "Installation complete!"

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.1] - 2026-08-12
+
+### Fixed
+- 한글 조합 직후 영어로 전환하면 AppKit의 marked-text readback 지연 때문에 마지막 한글 음절이 사라지던 문제를 해결했습니다.
+- 일부 외장 키보드와 HID modifier 재매핑 환경에서 전역 키 상태 조회가 실제 `flagsChanged` 이벤트와 어긋나 우측 Command 한/영 전환이 무시되던 문제를 해결했습니다.
+- macOS 입력 소스 표시와 PriType 상태 메뉴가 모두 `한`으로 보여 중복 설치처럼 보이던 문제를 해결하고, PriType 상태 메뉴를 고유한 키보드 아이콘으로 구분했습니다.
+- 앱 번들·실행 파일·설치 파일 이름을 `PriType`으로 통일하고, 설치 시 기존 `PriTypeV2.app`을 제거하도록 정리했습니다.
+
 ## [2.8.0] - 2026-08-11
 
 ### 입력 정확도

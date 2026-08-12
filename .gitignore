@@ -8,6 +8,7 @@ icon_*.png
 candidate_icon.png
 *.zip
 PriTypeV2.app/
+PriType.app/
 
 # Build artifacts
 *.pkg
@@ -21,6 +22,7 @@ Packaging/Payload/
 # Temporary files
 /test*.swift
 PriTypeV2_components.plist
+PriType_components.plist
 
 # Log & crash files (may contain local paths)
 *.log

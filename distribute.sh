@@ -2,7 +2,7 @@
 set -e
 
 # Configuration
-APP_NAME="PriTypeV2"
+APP_NAME="PriType"
 APP_BUNDLE="${APP_NAME}.app"
 ZIP_NAME="${APP_NAME}.zip"
 SIGNING_IDENTITY="Developer ID Application: Chanwoo Park (M4U438VG59)"
@@ -12,12 +12,12 @@ TEAM_ID="M4U438VG59" # Extracted from cert
 # KEYCHAIN_PROFILE="PriTypeNotary" 
 
 echo "==== 1. Clean & Build ===="
-./install.sh # This builds and copies to ./Resources/PriTypeV2.app locally first? No, install.sh installs to ~/Library...
+./install.sh # This builds and installs PriType locally first.
 # Let's extract build logic or just use swift build
 swift build -c release -Xswiftc -DNDEBUG
 mkdir -p build_dist/Contents/MacOS
 mkdir -p build_dist/Contents/Resources
-cp .build/release/PriType build_dist/Contents/MacOS/PriTypeV2
+cp .build/release/PriType build_dist/Contents/MacOS/PriType
 cp Info.plist build_dist/Contents/
 cp -R Resources/* build_dist/Contents/Resources/ || true
 cp "AppIcon.icns" build_dist/Contents/Resources/ 2>/dev/null || true

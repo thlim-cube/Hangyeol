@@ -33,7 +33,7 @@ PriType은 Swift와 InputMethodKit으로 만든 macOS용 한글 입력기입니�
   macOS Caps Lock 입력 소스 전환을 쓰지 않는 경우, 우측 Command 등 원하는 키를 PriType 한/영 전환키로 지정할 수 있습니다. Caps Lock 전환이 켜져 있으면 PriType 전환키는 자동으로 비활성화됩니다.
 
 - **현재 모드와 입력 상태 표시**
-  메뉴 막대의 `한`/`A` 표시는 평소에는 PriType 내부 모드를 보여 줍니다. macOS 입력 소스 소유권 정합화가 대기 중이면 실제 모드를 바꾸기 전에 다음 비보안 입력의 예상 모드인 `한`을 먼저 표시합니다. 메뉴를 열면 현재 감시 backend, 손쉬운 사용 권한, IOKit fallback 제한과 시스템 Secure Input 상태를 확인할 수 있습니다. 입력 문자열이나 문서 내용은 수집하지 않습니다.
+  메뉴 막대에는 macOS 입력 소스의 `한`/`A` 표시와 구분되는 PriType 키보드 아이콘이 표시됩니다. 아이콘 메뉴를 열면 PriType 내부 모드와 예상 모드, 현재 감시 backend, 손쉬운 사용 권한, IOKit fallback 제한, 시스템 Secure Input 상태를 확인할 수 있습니다. 입력 문자열이나 문서 내용은 수집하지 않습니다.
 
 - **macOS 설정 연동**
   스페이스 두 번으로 마침표 입력 등은 macOS 텍스트 입력 설정을 따릅니다. 영어 모드는 기본적으로 앱에 그대로 맡기며, 치환이 동작하지 않는 앱에서는 설정의 영어 편의 기능 대체 처리를 명시적으로 켤 수 있습니다.
@@ -43,12 +43,12 @@ PriType은 Swift와 InputMethodKit으로 만든 macOS용 한글 입력기입니�
 
 ## 설치
 
-1. [최신 릴리즈](https://github.com/Meapri/PriType-Swift/releases/latest)에서 `PriTypeV2_Release.pkg`를 다운로드합니다.
+1. [최신 릴리즈](https://github.com/Meapri/PriType-Swift/releases/latest)에서 `PriType_Release.pkg`를 다운로드합니다.
 2. PKG를 실행해 설치합니다.
 3. `시스템 설정 > 키보드 > 텍스트 입력 > 입력 소스`에서 PriType `한글` 입력 소스를 추가합니다.
 4. PriType 내부의 한/영 모드는 사용자 지정 전환키로 즉시 전환됩니다.
 
-PriType 앱 번들은 기본적으로 `/Library/Input Methods/PriTypeV2.app`에 설치됩니다.
+PriType 앱 번들은 기본적으로 `/Library/Input Methods/PriType.app`에 설치됩니다. 기존 `/Library/Input Methods/PriTypeV2.app`은 설치 과정에서 제거됩니다.
 
 ## 한/영 전환 설정
 
@@ -57,7 +57,7 @@ PriType 앱 번들은 기본적으로 `/Library/Input Methods/PriTypeV2.app`에 
 macOS 설정에서 `Caps Lock 키로 ABC 입력 소스 전환`을 켜면, Caps Lock 전환은 macOS가 직접 관리합니다.
 
 이 모드에서는 PriType 설정의 별도 한/영 전환키가 비활성화됩니다. 전환 경로가 둘로 갈라지지 않도록 macOS 입력 소스 전환을 단일 기준으로 사용합니다.
-ABC에서 PriType로 돌아오면 다음 비보안 입력에서 PriType 내부 모드를 한국어로 맞춥니다. Secure Input 필드에서는 이 정합화를 실행하지 않아 실제 내부 모드와 client 문서를 유지하고, 메뉴 막대에는 다음 비보안 입력의 예상 `한`만 표시합니다.
+ABC에서 PriType로 돌아오면 다음 비보안 입력에서 PriType 내부 모드를 한국어로 맞춥니다. Secure Input 필드에서는 이 정합화를 실행하지 않아 실제 내부 모드와 client 문서를 유지하고, PriType 메뉴에는 다음 비보안 입력의 예상 모드만 표시합니다.
 
 ### 우측 Command 등으로 전환
 

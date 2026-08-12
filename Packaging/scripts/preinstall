@@ -1,8 +1,9 @@
 #!/bin/bash
-# preinstall for PriTypeV2.pkg
+# preinstall for PriType.pkg
 
-# 1. Kill existing PriTypeV2 process first (before deleting)
+# 1. Kill existing PriType processes first (before deleting)
 #    macOS IMK will auto-relaunch it after postinstall finishes.
+killall PriType 2>/dev/null || true
 killall PriTypeV2 2>/dev/null || true
 
 # 2. Small delay to ensure the process has fully terminated

@@ -412,6 +412,29 @@ struct SuppressedKeyPairTests {
         #expect(state.pressedKeyCodes == [55])
     }
 
+    @Test("flagsChanged uses its side flag when the global key state is stale")
+    func modifierEventSideFlagOverridesStaleGlobalState() {
+        let rightCommandDown = CGEventFlags(rawValue:
+            CGEventFlags.maskCommand.rawValue | UInt64(NX_DEVICERCMDKEYMASK)
+        )
+        let leftCommandStillDown = CGEventFlags(rawValue:
+            CGEventFlags.maskCommand.rawValue | UInt64(NX_DEVICELCMDKEYMASK)
+        )
+
+        #expect(RightCommandSuppressor.modifierKeyIsDown(
+            keyCode: 54,
+            eventFlags: rightCommandDown
+        ))
+        #expect(!RightCommandSuppressor.modifierKeyIsDown(
+            keyCode: 54,
+            eventFlags: leftCommandStillDown
+        ))
+        #expect(RightCommandSuppressor.modifierKeyIsDown(
+            keyCode: 55,
+            eventFlags: leftCommandStillDown
+        ))
+    }
+
     @Test("A suppressed modifier never leaves its host-visible sibling family on")
     func suppressedModifierKeepsHostVisibleSiblingPairCoherent() {
         var state = ModifierKeyPressState()

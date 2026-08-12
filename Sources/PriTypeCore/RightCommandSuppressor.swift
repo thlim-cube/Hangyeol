@@ -247,7 +247,10 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 return Unmanaged.passUnretained(event)
             }
 
-            let physicalKeyIsDown = Self.modifierKeyIsPhysicallyDown(keyCode)
+            let physicalKeyIsDown = Self.modifierKeyIsDown(
+                keyCode: keyCode,
+                eventFlags: event.flags
+            )
             let transition = modifierKeyState.observe(
                 keyCode: keyCode,
                 physicalKeyIsDown: physicalKeyIsDown
@@ -439,6 +442,14 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     }
 
     static let trackedModifierKeyCodes: Set<Int64> = [54, 55, 61, 58, 62, 59, 56, 60]
+
+    /// A `flagsChanged` event already carries the side-specific modifier state.
+    /// Reading `CGEventSource.keyState` again inside the callback is unreliable for
+    /// some external keyboards and HID remaps, where it can still report the old state.
+    static func modifierKeyIsDown(keyCode: Int64, eventFlags: CGEventFlags) -> Bool {
+        guard let sideFlag = modifierFlagBitsByKeyCode[keyCode] else { return false }
+        return eventFlags.rawValue & sideFlag != 0
+    }
 
     static func physicallyPressedModifierKeyCodes(
         keyState: (Int64) -> Bool

@@ -3,7 +3,7 @@ set -e
 export COPYFILE_DISABLE=1
 
 # Define variables
-APP_NAME="PriTypeV2"
+APP_NAME="PriType"
 BUILD_DIR=".build/debug"
 LEGACY_PAYLOAD_DIR="Packaging/Payload"
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/pritype-debug-payload.XXXXXX")
@@ -13,8 +13,8 @@ APP_BUNDLE="${APP_NAME}.app"
 CONTENTS_DIR="${PAYLOAD_DIR}/${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
-PKG_OUTPUT="PriTypeV2_Debug.pkg"
-COMPONENT_PLIST="PriTypeV2_components.plist"
+PKG_OUTPUT="PriType_Debug.pkg"
+COMPONENT_PLIST="PriType_components.plist"
 APP_SIGN="Developer ID Application: Chanwoo Park (M4U438VG59)"
 PKG_SIGN="Developer ID Installer: Chanwoo Park (M4U438VG59)"
 KEYCHAIN_PROFILE="PriTypeNotary"
