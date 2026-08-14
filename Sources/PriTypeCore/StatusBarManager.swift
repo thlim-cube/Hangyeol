@@ -125,10 +125,9 @@ func addToggleMonitorStatusObserver(
 // MARK: - StatusBarManager
 
 struct StatusBarIndicatorPresentation: Equatable {
-    let title: String
-    let symbolName: String
+    let isVisible: Bool
 
-    static let appMenu = StatusBarIndicatorPresentation(title: "", symbolName: "keyboard")
+    static let appMenu = StatusBarIndicatorPresentation(isVisible: false)
 }
 
 /// Manages the PriType status menu and redacted input-health metadata.
@@ -164,8 +163,8 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, PendingInputMo
     @MainActor
     public func setup() {
         guard statusItem == nil else { return }
+        guard StatusBarIndicatorPresentation.appMenu.isVisible else { return }
 
-        // Keep the PriType app menu visually distinct from macOS's input-source indicator.
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem?.autosaveName = "PriTypeInputModeIndicator"
         statusItem?.isVisible = true
@@ -184,14 +183,13 @@ public final class StatusBarManager: NSObject, StatusBarUpdating, PendingInputMo
     @MainActor
     private func applyMode(_ mode: InputMode, to button: NSStatusBarButton) {
         let isKorean = (mode == .korean)
-        let presentation = StatusBarIndicatorPresentation.appMenu
         button.image = NSImage(
-            systemSymbolName: presentation.symbolName,
+            systemSymbolName: "keyboard",
             accessibilityDescription: nil
         )
         button.image?.isTemplate = true
         button.imagePosition = .imageOnly
-        button.title = presentation.title
+        button.title = ""
         button.toolTip = isKorean ? "한국어" : "English"
         button.setAccessibilityLabel(isKorean ? "한국어 입력" : "영문 입력")
     }

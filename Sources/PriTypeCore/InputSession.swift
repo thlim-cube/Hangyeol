@@ -260,6 +260,7 @@ final class InputSession: @unchecked Sendable {
               context.isLikelyDesktopArea == newContext.isLikelyDesktopArea,
               context.isLightweight == newContext.isLightweight,
               context.documentAccessSafe == newContext.documentAccessSafe,
+              context.usesBlinkNativeTextClient == newContext.usesBlinkNativeTextClient,
               adapter.deliveryMode == .markedText,
               TextDeliveryPolicy.mode(for: newContext) == .markedText,
               lastNonSecureGeneration == contextGeneration,

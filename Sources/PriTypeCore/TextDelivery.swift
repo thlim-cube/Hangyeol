@@ -26,6 +26,14 @@ enum TextDeliveryPolicy {
         if context.shouldUseImmediateMode {
             return .immediate
         }
+        if ClientCompatibilityPolicy.compositionRenderer(bundleId: context.bundleId) == .blink,
+           context.usesBlinkNativeTextClient,
+           ClientCompatibilityPolicy.supportsBlinkNativeDirectInsertion(
+               bundleId: context.bundleId
+           ),
+           context.documentAccessSafe {
+            return .directInsertion
+        }
         if (ConfigurationManager.shared.experimentalDirectInsertion ||
             ClientCompatibilityPolicy.prefersDirectInsertionForComposition(bundleId: context.bundleId)),
            context.documentAccessSafe,
@@ -50,11 +58,9 @@ enum TextDeliveryPolicy {
     }
 }
 
-// MARK: - PreeditUnderline
+// MARK: - MarkedTextPayload
 
-/// Marked-text attributes chosen to make the composition underline invisible
-/// WHERE THE OS STILL HONORS IME ATTRIBUTES (the underline is pure decoration;
-/// the marked range and commit semantics are untouched either way).
+/// Host-compatible payload for canonical marked-text composition.
 ///
 /// ⚠️ TRANSPORT REALITY on macOS 26 (measured 2026-06 with an NSTextInputClient
 /// probe on the live IMK path, enumerating every payload we can send): underline
@@ -70,40 +76,24 @@ enum TextDeliveryPolicy {
 /// underline). The only underline-free composition is to not use marked text at
 /// all — `DirectInsertionAdapter` via `experimentalDirectInsertion`.
 ///
-/// On older macOS the attributes pass through, and there no single set hides the
-/// underline in every renderer — verified against the engine sources (Chromium
-/// `render_widget_host_view_cocoa.mm` + `styleable_marker_painter.cc`, WebKit
-/// `WebViewImpl.mm` + `TextBoxPainter.cpp`):
-///
-///                          AppKit      WebKit(Safari)   Blink(Chromium/Electron)
-///   style 0                hidden      VISIBLE¹         VISIBLE (thin black)
-///   style 1 + .clear       hidden      hidden²          VISIBLE (text color)³
-///   style 1 + alpha 1/255  hidden      VISIBLE¹         hidden (painted at 0.4%)
-///
-/// ¹ WebKit/Blink check only the attribute's PRESENCE; the 0 value is ignored, and a
-///   non-clear color is repainted in the system accent color by modern WebKit.
-/// ² WebKit special-cases exactly `NSColor.clear` at extraction, and an alpha-0 color
-///   is also skipped at paint (`Color::isVisible()`), so clear is doubly safe there.
-/// ³ Blink substitutes the TEXT color for a fully transparent underline
-///   (`StyleableMarker::UseTextColor`) — clear makes the underline VISIBLE there;
-///   alpha 1/255 fails the exact-transparent compare and paints imperceptibly.
-///
-/// Omitting the attribute entirely is worse everywhere it matters: AppKit applies
-/// its default marked-text style (underline) and WebKit falls back to an opaque
-/// yellow composition highlight. Hence: always send the attribute, engine-tuned.
-enum PreeditUnderline {
-    static func attributes(forBundleId bundleId: String) -> [NSAttributedString.Key: Any] {
+/// On macOS 26, Chrome and Electron hosts can trap inside AppKit's
+/// `_forceAttributedString` for attributed marked payloads (`CFEqual` receives a
+/// null argument). Chromium web-content clients accept NSString directly. Native
+/// Blink-host fields such as Chrome's omnibox use direct insertion instead and do
+/// not enter this payload path.
+enum MarkedTextPayload {
+    static func value(_ text: String, forBundleId bundleId: String) -> Any {
         switch ClientCompatibilityPolicy.compositionRenderer(bundleId: bundleId) {
         case .blink:
-            return [
-                .underlineStyle: NSUnderlineStyle.single.rawValue,
-                .underlineColor: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 1.0 / 255.0)
-            ]
+            return text as NSString
         case .system:
-            return [
-                .underlineStyle: 0,
-                .underlineColor: NSColor.clear
-            ]
+            return NSAttributedString(
+                string: text,
+                attributes: [
+                    .underlineStyle: 0,
+                    .underlineColor: NSColor.clear
+                ]
+            )
         }
     }
 }
@@ -119,10 +109,6 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
     /// Host bundle id, for engine-tuned preedit styling.
     let bundleId: String
 
-    /// Engine-tuned attributes for the composition preedit (effective only on
-    /// macOS versions that honor IME attributes — see `PreeditUnderline`).
-    let preeditAttributes: [NSAttributedString.Key: Any]
-
     /// The delivery mode this adapter implements. Used by `InputSession` to detect
     /// when the resolved policy no longer matches the live adapter (e.g. the
     /// experimental flag flipped mid-session) and the adapter must be rebuilt.
@@ -131,7 +117,6 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
     init(client: IMKTextInput, bundleId: String) {
         self.client = client
         self.bundleId = bundleId
-        self.preeditAttributes = PreeditUnderline.attributes(forBundleId: bundleId)
     }
 
     func setClientWriteValidator(_ validator: @escaping () -> Bool) {
@@ -192,20 +177,21 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
 
 // MARK: - MarkedTextAdapter
 
-/// Standard adapter with invisible-underline marked text for composition display
+/// Standard adapter for canonical marked-text composition display.
 final class MarkedTextAdapter: BaseClientAdapter {
     override func setMarkedText(_ text: String) {
         guard canWriteToClient() else { return }
         // Canonical marked-text protocol, matching Apple's own input methods:
         // set the marked text directly with replacementRange = NSNotFound (an
-        // empty string clears the composition). No visible underline on composing
-        // Hangul (engine-tuned attributes — see `PreeditUnderline`). The previous
-        // non-canonical path (clearing via insertText("") over an explicit marked
+        // empty string clears the composition). Blink web content receives a plain
+        // NSString to avoid macOS 26's unstable attributed-string path; Blink-native
+        // fields use DirectInsertionAdapter. Native/WebKit hosts retain clear-
+        // underline attributes. The previous non-canonical path
+        // (clearing via insertText("") over an explicit marked
         // range) left native hosts like KakaoTalk in an inconsistent composition
         // state — a stranded/underlined preedit that never committed on focus loss.
-        let attributed = NSAttributedString(string: text, attributes: preeditAttributes)
         client.setMarkedText(
-            attributed,
+            MarkedTextPayload.value(text, forBundleId: bundleId),
             selectionRange: NSRange(location: text.utf16.count, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
         )
@@ -278,9 +264,8 @@ final class DirectInsertionAdapter: BaseClientAdapter {
     private func renderMarkedFallback(_ text: String) -> Bool {
         guard canWriteToClient() else { return false }
         markedTextFallbackContent = text
-        let attributed = NSAttributedString(string: text, attributes: preeditAttributes)
         client.setMarkedText(
-            attributed,
+            MarkedTextPayload.value(text, forBundleId: bundleId),
             selectionRange: NSRange(location: text.utf16.count, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
         )

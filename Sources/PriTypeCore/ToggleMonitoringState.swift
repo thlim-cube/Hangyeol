@@ -428,12 +428,12 @@ struct RegularKeyPressState {
     }
 }
 
-enum ReleaseToggleAction: Equatable {
+enum ImmediateTogglePressAction: Equatable {
     case none
-    case pressed
+    case toggle
     case repeatIgnored
     case chorded
-    case released(shouldToggle: Bool)
+    case released
 }
 
 enum EventTapModifierToggleAction: Equatable {
@@ -441,21 +441,41 @@ enum EventTapModifierToggleAction: Equatable {
     case toggleAndPassThrough
 }
 
-/// Modifier-only toggle keys must remain visible to host-level chords such as
-/// Codex's Left Command + Right Command screenshot shortcut. A standalone press
-/// toggles on release; any chord remains an ordinary host key sequence.
+enum EventTapToggleInputKind: Equatable {
+    case modifier
+    case regular
+}
+
+/// Modifier-only toggle keys remain visible to host-level chords such as Codex's
+/// Left Command + Right Command screenshot shortcut. A standalone down toggles
+/// immediately; if the opposite Command joins, a second toggle rolls the speculative
+/// change back while the complete chord continues to the host.
 struct EventTapModifierToggleState {
-    private var pressState = ReleaseTogglePressState()
+    private static let leftCommandKeyCode: Int64 = 55
+
+    private var pressState = ImmediateTogglePressState()
     private var configuredToggleKeyCode: Int64?
+
+    var activeStandaloneToggleKeyCode: Int64? {
+        guard pressState.isStandalonePress else { return nil }
+        return configuredToggleKeyCode
+    }
 
     mutating func handle(
         keyCode: Int64,
         pressed: Bool,
-        toggleKeyCode: Int64
+        toggleKeyCode: Int64,
+        inputKind: EventTapToggleInputKind
     ) -> EventTapModifierToggleAction {
         if configuredToggleKeyCode != toggleKeyCode {
             reset()
             configuredToggleKeyCode = toggleKeyCode
+        }
+
+        guard inputKind == .modifier else { return .passThrough }
+        guard keyCode == toggleKeyCode
+                || Self.isScreenshotChordPartner(keyCode, for: toggleKeyCode) else {
+            return .passThrough
         }
 
         let action = pressState.handle(
@@ -463,7 +483,7 @@ struct EventTapModifierToggleState {
             pressed: pressed,
             toggleUsage: UInt32(toggleKeyCode)
         )
-        return action == .released(shouldToggle: true)
+        return action == .toggle
             ? .toggleAndPassThrough
             : .passThrough
     }
@@ -472,15 +492,90 @@ struct EventTapModifierToggleState {
         pressState.reset()
         configuredToggleKeyCode = nil
     }
+
+    private static func isScreenshotChordPartner(_ keyCode: Int64, for toggleKeyCode: Int64) -> Bool {
+        (toggleKeyCode == KeyCode.rightCommand && keyCode == leftCommandKeyCode)
+            || (toggleKeyCode == leftCommandKeyCode && keyCode == KeyCode.rightCommand)
+    }
 }
 
-/// IOKit fallback의 modifier-only 키를 release에서 한 번만 전환합니다.
+/// Modifier-only toggle press with immediate response and reversible chord handling.
+struct ImmediateTogglePressState {
+    private(set) var isDown = false
+    private var usedWithOtherKey = false
+    private var toggleWasApplied = false
+    private var pressedUsages: Set<UInt32> = []
+
+    var isStandalonePress: Bool {
+        isDown && !usedWithOtherKey
+    }
+
+    mutating func handle(usage: UInt32, pressed: Bool, toggleUsage: UInt32) -> ImmediateTogglePressAction {
+        if usage == toggleUsage {
+            if pressed {
+                guard !isDown else { return .repeatIgnored }
+                pressedUsages.insert(usage)
+                isDown = true
+                usedWithOtherKey = pressedUsages.contains { $0 != toggleUsage }
+                toggleWasApplied = !usedWithOtherKey
+                return toggleWasApplied ? .toggle : .chorded
+            }
+
+            guard isDown else { return .none }
+            pressedUsages.remove(usage)
+            isDown = false
+            usedWithOtherKey = false
+            toggleWasApplied = false
+            return .released
+        }
+
+        if pressed {
+            let isNewPress = pressedUsages.insert(usage).inserted
+            guard isDown, isNewPress else { return .none }
+            usedWithOtherKey = true
+            if toggleWasApplied {
+                toggleWasApplied = false
+                return .toggle
+            }
+            return .chorded
+        }
+
+        pressedUsages.remove(usage)
+        return .none
+    }
+
+    mutating func reset() {
+        isDown = false
+        usedWithOtherKey = false
+        toggleWasApplied = false
+        pressedUsages.removeAll()
+    }
+}
+
+enum ReleaseToggleAction: Equatable {
+    case none
+    case pressed
+    case repeatIgnored
+    case chorded
+    case released(shouldToggle: Bool)
+}
+
+/// IOKit fallback cannot sanitize host events, so it retains release-time behavior.
+/// Only the opposite Command blocks the toggle; typing keys and Shift remain overlap-safe.
 struct ReleaseTogglePressState {
+    private static let leftCommandUsage: UInt32 = 0xE3
+    private static let rightCommandUsage: UInt32 = 0xE7
+
     private(set) var isDown = false
     private var usedWithOtherKey = false
     private var pressedUsages: Set<UInt32> = []
 
     mutating func handle(usage: UInt32, pressed: Bool, toggleUsage: UInt32) -> ReleaseToggleAction {
+        guard usage == toggleUsage
+                || Self.isScreenshotChordPartner(usage, for: toggleUsage) else {
+            return .none
+        }
+
         if usage == toggleUsage {
             if pressed {
                 guard !isDown else { return .repeatIgnored }
@@ -513,6 +608,11 @@ struct ReleaseTogglePressState {
         isDown = false
         usedWithOtherKey = false
         pressedUsages.removeAll()
+    }
+
+    private static func isScreenshotChordPartner(_ usage: UInt32, for toggleUsage: UInt32) -> Bool {
+        (toggleUsage == rightCommandUsage && usage == leftCommandUsage)
+            || (toggleUsage == leftCommandUsage && usage == rightCommandUsage)
     }
 }
 

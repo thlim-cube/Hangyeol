@@ -11,11 +11,13 @@ final class FakeIMKTextInput: NSObject, IMKTextInput {
     var bundleID = "com.example.synthetic"
     var insertCalls: [(String, NSRange)] = []
     var markCalls: [String] = []
+    var markedPayloadWasAttributed: [Bool] = []
     var firstRectValue = NSRect.zero
     var onInsertText: (() -> Void)?
     var onAttributedSubstring: (() -> Void)?
     var onSelectedRange: (() -> Void)?
     var attributedSubstringUnavailable = false
+    var validAttributesValue: [Any] = []
 
     private func plainString(_ value: Any?) -> String {
         if let attributed = value as? NSAttributedString { return attributed.string }
@@ -47,6 +49,7 @@ final class FakeIMKTextInput: NSObject, IMKTextInput {
     func setMarkedText(_ string: Any!, selectionRange: NSRange, replacementRange: NSRange) {
         let text = plainString(string)
         markCalls.append(text)
+        markedPayloadWasAttributed.append(string is NSAttributedString)
         markedText = text
         if text.isEmpty {
             markedRangeValue = NSRange(location: NSNotFound, length: 0)
@@ -93,7 +96,7 @@ final class FakeIMKTextInput: NSObject, IMKTextInput {
         forCharacterIndex index: Int,
         lineHeightRectangle lineRect: UnsafeMutablePointer<NSRect>!
     ) -> [AnyHashable: Any]! { [:] }
-    func validAttributesForMarkedText() -> [Any]! { [] }
+    func validAttributesForMarkedText() -> [Any]! { validAttributesValue }
     func overrideKeyboard(withKeyboardNamed keyboardUniqueName: String!) {}
     func selectMode(_ modeIdentifier: String!) {}
     func supportsUnicode() -> Bool { true }

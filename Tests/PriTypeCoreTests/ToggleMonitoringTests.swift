@@ -349,23 +349,91 @@ struct SuppressedKeyPairTests {
         #expect(state.handle(usage: 0xE3, pressed: false, toggleUsage: 0xE7) == .none)
     }
 
+    @Test("Shift and Backspace do not block an IOKit modifier toggle")
+    func iokitToggleSurvivesTypingModifiers() {
+        var state = ReleaseTogglePressState()
+
+        #expect(state.handle(usage: 0xE1, pressed: true, toggleUsage: 0xE7) == .none)
+        #expect(state.handle(usage: 0x2A, pressed: true, toggleUsage: 0xE7) == .none)
+        #expect(state.handle(usage: 0xE7, pressed: true, toggleUsage: 0xE7) == .pressed)
+        #expect(state.handle(usage: 0xE7, pressed: false, toggleUsage: 0xE7) == .released(shouldToggle: true))
+        #expect(state.handle(usage: 0x2A, pressed: false, toggleUsage: 0xE7) == .none)
+        #expect(state.handle(usage: 0xE1, pressed: false, toggleUsage: 0xE7) == .none)
+    }
+
     @Test("A modifier-only toggle leaves a two-Command screenshot chord to the host")
     func modifierTogglePreservesTwoCommandChord() {
         var state = EventTapModifierToggleState()
 
-        #expect(state.handle(keyCode: 54, pressed: true, toggleKeyCode: 54) == .passThrough)
-        #expect(state.handle(keyCode: 55, pressed: true, toggleKeyCode: 54) == .passThrough)
-        #expect(state.handle(keyCode: 55, pressed: false, toggleKeyCode: 54) == .passThrough)
-        #expect(state.handle(keyCode: 54, pressed: false, toggleKeyCode: 54) == .passThrough)
+        #expect(state.handle(keyCode: 54, pressed: true, toggleKeyCode: 54, inputKind: .modifier) == .toggleAndPassThrough)
+        #expect(state.handle(keyCode: 55, pressed: true, toggleKeyCode: 54, inputKind: .modifier) == .toggleAndPassThrough)
+        #expect(state.handle(keyCode: 55, pressed: false, toggleKeyCode: 54, inputKind: .modifier) == .passThrough)
+        #expect(state.handle(keyCode: 54, pressed: false, toggleKeyCode: 54, inputKind: .modifier) == .passThrough)
 
-        #expect(state.handle(keyCode: 54, pressed: true, toggleKeyCode: 54) == .passThrough)
-        #expect(state.handle(keyCode: 54, pressed: false, toggleKeyCode: 54) == .toggleAndPassThrough)
+        #expect(state.handle(keyCode: 54, pressed: true, toggleKeyCode: 54, inputKind: .modifier) == .toggleAndPassThrough)
+        #expect(state.handle(keyCode: 54, pressed: false, toggleKeyCode: 54, inputKind: .modifier) == .passThrough)
 
         // The screenshot chord must also win when Left Command is pressed first.
-        #expect(state.handle(keyCode: 55, pressed: true, toggleKeyCode: 54) == .passThrough)
-        #expect(state.handle(keyCode: 54, pressed: true, toggleKeyCode: 54) == .passThrough)
-        #expect(state.handle(keyCode: 54, pressed: false, toggleKeyCode: 54) == .passThrough)
-        #expect(state.handle(keyCode: 55, pressed: false, toggleKeyCode: 54) == .passThrough)
+        #expect(state.handle(keyCode: 55, pressed: true, toggleKeyCode: 54, inputKind: .modifier) == .passThrough)
+        #expect(state.handle(keyCode: 54, pressed: true, toggleKeyCode: 54, inputKind: .modifier) == .passThrough)
+        #expect(state.handle(keyCode: 54, pressed: false, toggleKeyCode: 54, inputKind: .modifier) == .passThrough)
+        #expect(state.handle(keyCode: 55, pressed: false, toggleKeyCode: 54, inputKind: .modifier) == .passThrough)
+    }
+
+    @Test("Shift held before or after the toggle does not cancel the transition")
+    func modifierToggleSurvivesShiftOverlap() {
+        var state = EventTapModifierToggleState()
+
+        #expect(state.handle(keyCode: 56, pressed: true, toggleKeyCode: 54, inputKind: .modifier) == .passThrough)
+        #expect(state.handle(keyCode: 54, pressed: true, toggleKeyCode: 54, inputKind: .modifier) == .toggleAndPassThrough)
+        #expect(state.activeStandaloneToggleKeyCode == 54)
+        #expect(state.handle(keyCode: 56, pressed: false, toggleKeyCode: 54, inputKind: .modifier) == .passThrough)
+        #expect(state.handle(keyCode: 54, pressed: false, toggleKeyCode: 54, inputKind: .modifier) == .passThrough)
+
+        #expect(state.handle(keyCode: 54, pressed: true, toggleKeyCode: 54, inputKind: .modifier) == .toggleAndPassThrough)
+        #expect(state.handle(keyCode: 56, pressed: true, toggleKeyCode: 54, inputKind: .modifier) == .passThrough)
+        #expect(state.activeStandaloneToggleKeyCode == 54)
+
+        var visibleKeyCodes: Set<Int64> = [54, 56]
+        if let hiddenKeyCode = state.activeStandaloneToggleKeyCode {
+            visibleKeyCodes.remove(hiddenKeyCode)
+        }
+        let flags = RightCommandSuppressor.hostVisibleModifierFlags(
+            [.maskCommand, .maskShift],
+            pressedKeyCodes: visibleKeyCodes
+        )
+        #expect(!flags.contains(.maskCommand))
+        #expect(flags.contains(.maskShift))
+    }
+
+    @Test("Typing overlap keeps a modifier-only toggle and hides Command from the typed key")
+    func modifierToggleSurvivesTypingOverlap() {
+        var state = EventTapModifierToggleState()
+
+        #expect(state.handle(keyCode: Int64(KeyCode.backspace), pressed: true, toggleKeyCode: 54, inputKind: .regular) == .passThrough)
+        #expect(state.handle(keyCode: 54, pressed: true, toggleKeyCode: 54, inputKind: .modifier) == .toggleAndPassThrough)
+        #expect(state.handle(keyCode: 54, pressed: false, toggleKeyCode: 54, inputKind: .modifier) == .passThrough)
+        #expect(state.handle(keyCode: Int64(KeyCode.backspace), pressed: false, toggleKeyCode: 54, inputKind: .regular) == .passThrough)
+
+        #expect(state.handle(keyCode: 54, pressed: true, toggleKeyCode: 54, inputKind: .modifier) == .toggleAndPassThrough)
+        #expect(state.activeStandaloneToggleKeyCode == 54)
+
+        #expect(state.handle(keyCode: Int64(KeyCode.backspace), pressed: true, toggleKeyCode: 54, inputKind: .regular) == .passThrough)
+        #expect(state.handle(keyCode: Int64(KeyCode.backspace), pressed: false, toggleKeyCode: 54, inputKind: .regular) == .passThrough)
+        #expect(state.activeStandaloneToggleKeyCode == 54)
+
+        var visibleKeyCodes: Set<Int64> = [54]
+        if let hiddenKeyCode = state.activeStandaloneToggleKeyCode {
+            visibleKeyCodes.remove(hiddenKeyCode)
+        }
+        let flags = RightCommandSuppressor.hostVisibleModifierFlags(
+            [.maskCommand],
+            pressedKeyCodes: visibleKeyCodes
+        )
+        #expect(!flags.contains(.maskCommand))
+
+        #expect(state.handle(keyCode: 54, pressed: false, toggleKeyCode: 54, inputKind: .modifier) == .passThrough)
+        #expect(state.activeStandaloneToggleKeyCode == nil)
     }
 
     @Test("Changing a fallback binding clears an in-flight press")
@@ -404,7 +472,7 @@ struct SuppressedKeyPairTests {
 
         #expect(pressState.handle(usage: 0xE7, pressed: true, toggleUsage: 0xE7) == .pressed)
         traceLifecycle.begin()
-        #expect(pressState.handle(usage: 0x04, pressed: true, toggleUsage: 0xE7) == .chorded)
+        #expect(pressState.handle(usage: 0xE3, pressed: true, toggleUsage: 0xE7) == .chorded)
         traceLifecycle.cancel()
         #expect(!traceLifecycle.hasPendingTrace)
         guard case .none = traceLifecycle.finish() else {

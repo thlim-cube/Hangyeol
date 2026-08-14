@@ -15,9 +15,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     func applicationDidFinishLaunching(_ notification: Notification) {
         DebugLogger.log("AppDelegate: applicationDidFinishLaunching")
 
-        // The single registered input source cannot expose PriType's internal
-        // Korean/English mode through the macOS input-source icon. Create the
-        // authoritative 한/A indicator once at process launch instead.
+        // StatusBarManager keeps mode presentation state for existing callers, but
+        // its separate menu-bar item is hidden to avoid duplicating macOS input UI.
         StatusBarManager.shared.setup()
 
         // System Settings writes TISRomanSwitchState outside this process.

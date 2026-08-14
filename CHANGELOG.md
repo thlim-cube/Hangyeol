@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.4] - 2026-08-14
+
+### Fixed
+- Chrome 등 Chromium 브라우저에서 웹 콘텐츠와 주소 표시줄 같은 native text field의 전달 경로를 분리하되, Slack·Codex·VS Code 같은 Electron 편집기는 직접 삽입으로 오분류되지 않도록 해 커서 위치 오류와 입력 중단을 막았습니다.
+- Shift·Backspace를 누른 채 한/영 전환키를 사용해도 즉시 전환되도록 하고, 좌우 Command 동시 입력의 Codex 화면 캡처 동작은 유지했습니다.
+- macOS 입력 소스 표시와 겹치던 PriType의 별도 메뉴 막대 키보드 아이콘을 숨겼습니다.
+
 ## [2.8.2] - 2026-08-13
 
 ### Fixed

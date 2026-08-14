@@ -13,12 +13,11 @@ private final class MonitorStatusRecorder {
 
 @Suite("Status Bar Health")
 struct StatusBarHealthTests {
-    @Test("PriType status item does not duplicate the macOS input-mode glyph")
-    func statusItemUsesAppSpecificIcon() {
+    @Test("PriType keeps its separate menu-bar item hidden")
+    func statusItemRemainsHidden() {
         let presentation = StatusBarIndicatorPresentation.appMenu
 
-        #expect(presentation.title.isEmpty)
-        #expect(presentation.symbolName == "keyboard")
+        #expect(!presentation.isVisible)
     }
 
     @Test("Missing permission or monitor marks health as needing attention")

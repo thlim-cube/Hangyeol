@@ -71,18 +71,26 @@ public struct ClientContext: Sendable {
     /// the experimental direct-insertion path is denied. Probed once at activation.
     public let documentAccessSafe: Bool
 
+    /// Whether a Blink host is exposing one of its native AppKit text fields.
+    /// Web content accepts plain NSString marked text, while native fields (notably
+    /// Chrome's omnibox) need real-text delivery on macOS 26 to avoid AppKit's
+    /// attributed-marked-text crash.
+    public let usesBlinkNativeTextClient: Bool
+
     public init(
         bundleId: String,
         hasTextInputCapability: Bool,
         isLikelyDesktopArea: Bool,
         isLightweight: Bool = false,
-        documentAccessSafe: Bool = false
+        documentAccessSafe: Bool = false,
+        usesBlinkNativeTextClient: Bool = false
     ) {
         self.bundleId = bundleId
         self.hasTextInputCapability = hasTextInputCapability
         self.isLikelyDesktopArea = isLikelyDesktopArea
         self.isLightweight = isLightweight
         self.documentAccessSafe = documentAccessSafe
+        self.usesBlinkNativeTextClient = usesBlinkNativeTextClient
     }
     
     // MARK: - Derived Properties
@@ -104,6 +112,8 @@ public struct ClientContext: Sendable {
 // MARK: - ClientCompatibilityPolicy
 
 public enum ClientCompatibilityPolicy {
+    private static let blinkReplacementRangeAttributeName =
+        "NSTextInputReplacementRangeAttributeName"
     private static let goodNotesBundleId = "com.goodnotesapp.x"
     private static let hermesBundleIds: Set<String> = [
         "com.nousresearch.hermes",
@@ -169,16 +179,9 @@ public enum ClientCompatibilityPolicy {
             || lower.contains("chromium")
     }
 
-    /// Hosts whose text fields are rendered by Blink (Chromium/Electron/CEF).
-    /// ENGINE classification, not per-app behavior: it decides only which form of
-    /// "invisible underline" attributes the preedit uses (see `PreeditUnderline`),
-    /// because Blink is the one renderer that repaints a fully transparent
-    /// composition-underline color in the TEXT color (Blink
-    /// `StyleableMarker::UseTextColor`), so `NSColor.clear` cannot hide it there.
-    /// Misclassification is benign: a Blink host left as `.system` just keeps a
-    /// thin text-colored underline (the pre-existing behavior), and a native/WebKit
-    /// host wrongly marked `.blink` gets an alpha-1/255 underline that AppKit and
-    /// legacy WebKit paint invisibly anyway.
+    /// Hosts whose text fields may be rendered by Blink (Chromium/Electron/CEF).
+    /// Web-content clients receive plain NSString marked text; native fields owned
+    /// by those apps are separated during context analysis and avoid marked text.
     private static let blinkRendererBundleIds: Set<String> = [
         "com.anthropic.claudefordesktop",
         "com.openai.codex",
@@ -200,6 +203,21 @@ public enum ClientCompatibilityPolicy {
         "com.operasoftware.Opera"
     ]
 
+    /// Blink hosts with a known native AppKit address field. Electron shells such
+    /// as Slack and Codex render their editors in web content even when their text
+    /// client omits Chromium's replacement-range attribute, so negative attribute
+    /// evidence must never opt them into direct insertion.
+    private static let blinkBrowserNativeTextClientBundleIds: Set<String> = [
+        "com.google.Chrome",
+        "com.google.Chrome.canary",
+        "com.brave.Browser",
+        "com.microsoft.edgemac",
+        "company.thebrowser.Browser",      // Arc
+        "com.naver.whale",
+        "com.vivaldi.Vivaldi",
+        "com.operasoftware.Opera"
+    ]
+
     public static func compositionRenderer(bundleId: String) -> CompositionRenderer {
         if blinkRendererBundleIds.contains(bundleId) { return .blink }
         let lower = bundleId.lowercased()
@@ -207,6 +225,21 @@ public enum ClientCompatibilityPolicy {
             return .blink
         }
         return .system
+    }
+
+    /// Chromium's RenderWidgetHostViewCocoa advertises this replacement-range
+    /// attribute; Chrome's native AppKit fields do not. Keep this as a pure policy
+    /// so the one activation-time IPC remains in ClientContextDetector.
+    static func usesBlinkWebContentTextClient(
+        bundleId: String,
+        validAttributeNames: Set<String>
+    ) -> Bool {
+        compositionRenderer(bundleId: bundleId) == .blink
+            && validAttributeNames.contains(blinkReplacementRangeAttributeName)
+    }
+
+    static func supportsBlinkNativeDirectInsertion(bundleId: String) -> Bool {
+        blinkBrowserNativeTextClientBundleIds.contains(bundleId)
     }
 }
 
@@ -242,9 +275,14 @@ public struct ClientContextDetector: Sendable {
     /// Gated on the experimental flag: when direct insertion is OFF (the default,
     /// shipping configuration) this returns false WITHOUT any IPC, so the marked-text
     /// path pays zero extra cost for a feature it never uses.
-    static func probeDocumentAccessSafe(_ client: IMKTextInput, bundleId: String) -> Bool {
+    static func probeDocumentAccessSafe(
+        _ client: IMKTextInput,
+        bundleId: String,
+        allowBlinkNativeField: Bool = false
+    ) -> Bool {
         guard ConfigurationManager.shared.experimentalDirectInsertion ||
-              ClientCompatibilityPolicy.prefersDirectInsertionForComposition(bundleId: bundleId) else {
+              ClientCompatibilityPolicy.prefersDirectInsertionForComposition(bundleId: bundleId) ||
+              allowBlinkNativeField else {
             return false
         }
         let sel = client.selectedRange()
@@ -287,6 +325,25 @@ public struct ClientContextDetector: Sendable {
         // Check text input capability via validAttributesForMarkedText
         let validAttrs = client.validAttributesForMarkedText() ?? []
         let hasTextInputCapability = !validAttrs.isEmpty
+        let validAttributeNames = Set(validAttrs.compactMap { attribute -> String? in
+            if let key = attribute as? NSAttributedString.Key {
+                return key.rawValue
+            }
+            return attribute as? String
+        })
+        let usesBlinkWebContentTextClient =
+            ClientCompatibilityPolicy.usesBlinkWebContentTextClient(
+                bundleId: bundleId,
+                validAttributeNames: validAttributeNames
+            )
+        let usesBlinkNativeTextClient =
+            ClientCompatibilityPolicy.compositionRenderer(bundleId: bundleId) == .blink
+                && !usesBlinkWebContentTextClient
+        let supportsBlinkNativeDirectInsertion =
+            usesBlinkNativeTextClient
+                && ClientCompatibilityPolicy.supportsBlinkNativeDirectInsertion(
+                    bundleId: bundleId
+                )
         
         // 3. SECURE INPUT CHECK is no longer cached here.
         // It is checked dynamically in PriTypeInputController.handle() for better accuracy.
@@ -310,7 +367,12 @@ public struct ClientContextDetector: Sendable {
             bundleId: bundleId,
             hasTextInputCapability: hasTextInputCapability,
             isLikelyDesktopArea: isLikelyDesktopArea,
-            documentAccessSafe: probeDocumentAccessSafe(client, bundleId: bundleId)
+            documentAccessSafe: probeDocumentAccessSafe(
+                client,
+                bundleId: bundleId,
+                allowBlinkNativeField: supportsBlinkNativeDirectInsertion
+            ),
+            usesBlinkNativeTextClient: usesBlinkNativeTextClient
         )
     }
 }

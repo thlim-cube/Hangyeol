@@ -12,13 +12,15 @@ struct TextDeliveryPolicyTests {
         bundleId: String,
         hasTextInputCapability: Bool = true,
         isLikelyDesktopArea: Bool = false,
-        documentAccessSafe: Bool = false
+        documentAccessSafe: Bool = false,
+        usesBlinkNativeTextClient: Bool = false
     ) -> ClientContext {
         ClientContext(
             bundleId: bundleId,
             hasTextInputCapability: hasTextInputCapability,
             isLikelyDesktopArea: isLikelyDesktopArea,
-            documentAccessSafe: documentAccessSafe
+            documentAccessSafe: documentAccessSafe,
+            usesBlinkNativeTextClient: usesBlinkNativeTextClient
         )
     }
 
@@ -52,6 +54,32 @@ struct TextDeliveryPolicyTests {
         #expect(TextDeliveryPolicy.mode(for: ctx) == .markedText)
     }
 
+    @Test("Chrome native fields use direct insertion without entering marked text")
+    func blinkNativeFieldUsesDirectInsertion() {
+        let ctx = context(
+            bundleId: "com.google.Chrome",
+            documentAccessSafe: true,
+            usesBlinkNativeTextClient: true
+        )
+        #expect(TextDeliveryPolicy.mode(for: ctx) == .directInsertion)
+    }
+
+    @Test("Electron fields that look native stay on marked text")
+    func electronNativeLookingFieldStaysMarked() {
+        for bundleId in [
+            "com.tinyspeck.slackmacgap",
+            "com.openai.codex",
+            "com.microsoft.VSCode"
+        ] {
+            let ctx = context(
+                bundleId: bundleId,
+                documentAccessSafe: true,
+                usesBlinkNativeTextClient: true
+            )
+            #expect(TextDeliveryPolicy.mode(for: ctx) == .markedText)
+        }
+    }
+
     @Test("Adapter success APIs reject writes after ownership is revoked")
     func adapterReportsRejectedClientWrites() {
         let client = FakeIMKTextInput()
@@ -74,6 +102,19 @@ struct TextDeliveryPolicyTests {
         }
         #expect(!direct.tryInsertText("A"))
         #expect(client.insertCalls.isEmpty)
+    }
+
+    @Test("Blink web content receives plain marked text while native hosts keep attributes")
+    func markedTextPayloadMatchesHostCompatibility() {
+        let blinkClient = FakeIMKTextInput()
+        MarkedTextAdapter(client: blinkClient, bundleId: "com.google.Chrome")
+            .setMarkedText("가")
+        #expect(blinkClient.markedPayloadWasAttributed == [false])
+
+        let nativeClient = FakeIMKTextInput()
+        MarkedTextAdapter(client: nativeClient, bundleId: "com.apple.TextEdit")
+            .setMarkedText("가")
+        #expect(nativeClient.markedPayloadWasAttributed == [true])
     }
 }
 
@@ -115,33 +156,95 @@ struct CompositionRendererTests {
     }
 }
 
-// MARK: - Preedit underline invisibility attributes
+// MARK: - Marked-text payload compatibility
 
-/// The underline must be invisible in every renderer, but each engine needs a
-/// different trick (see `PreeditUnderline` doc): Blink repaints a fully transparent
-/// underline in the text color, so it gets alpha 1/255; everything else gets
-/// style 0 + NSColor.clear (AppKit honors the 0, WebKit special-cases clear).
-@Suite("PreeditUnderline")
-struct PreeditUnderlineTests {
-    @Test("Blink hosts get a single underline with near-zero (but non-zero) alpha")
-    func blinkAttributes() throws {
-        let attrs = PreeditUnderline.attributes(forBundleId: "com.google.Chrome")
-        #expect(attrs[.underlineStyle] as? Int == NSUnderlineStyle.single.rawValue)
-        let color = try #require(attrs[.underlineColor] as? NSColor)
-        let alpha = color.alphaComponent
-        #expect(alpha > 0, "exactly-transparent triggers Blink's text-color substitution")
-        #expect(alpha < 0.01, "must stay imperceptible")
+@Suite("MarkedTextPayload")
+struct MarkedTextPayloadTests {
+    @Test("Blink hosts receive a plain NSString marked payload")
+    func blinkUsesPlainString() {
+        let payload = MarkedTextPayload.value("가", forBundleId: "com.google.Chrome")
+        #expect(payload is NSString)
+        #expect(!(payload is NSAttributedString))
     }
 
-    @Test("System hosts get style 0 with exactly NSColor.clear")
+    @Test("System hosts retain attributed marked text with a clear underline")
     func systemAttributes() throws {
         for bundleId in ["com.apple.TextEdit", "com.apple.Safari", "com.kakao.KakaoTalkMac"] {
-            let attrs = PreeditUnderline.attributes(forBundleId: bundleId)
+            let payload = try #require(
+                MarkedTextPayload.value("가", forBundleId: bundleId) as? NSAttributedString
+            )
+            let attrs = payload.attributes(at: 0, effectiveRange: nil)
             #expect(attrs[.underlineStyle] as? Int == 0)
             let color = try #require(attrs[.underlineColor] as? NSColor)
             // WebKit's extraction fast path compares isEqual:NSColor.clearColor —
             // it must be the literal clear color, not a hand-built alpha-0 color.
             #expect(color == NSColor.clear)
         }
+    }
+}
+
+@Suite("Blink text-client classification")
+struct BlinkTextClientClassificationTests {
+    @Test("Only browser bundles may use Blink native direct insertion")
+    func nativeDirectInsertionIsBrowserOnly() {
+        for bundleId in [
+            "com.google.Chrome",
+            "com.brave.Browser",
+            "com.microsoft.edgemac"
+        ] {
+            #expect(ClientCompatibilityPolicy.supportsBlinkNativeDirectInsertion(
+                bundleId: bundleId
+            ))
+        }
+
+        for bundleId in [
+            "com.tinyspeck.slackmacgap",
+            "com.openai.codex",
+            "com.microsoft.VSCode",
+            "com.example.UnknownElectronApp"
+        ] {
+            #expect(!ClientCompatibilityPolicy.supportsBlinkNativeDirectInsertion(
+                bundleId: bundleId
+            ))
+        }
+    }
+
+    @Test("Chromium web content is identified by its replacement-range attribute")
+    func webContentSignature() {
+        #expect(ClientCompatibilityPolicy.usesBlinkWebContentTextClient(
+            bundleId: "com.google.Chrome",
+            validAttributeNames: ["NSUnderlineStyle", "NSTextInputReplacementRangeAttributeName"]
+        ))
+        #expect(!ClientCompatibilityPolicy.usesBlinkWebContentTextClient(
+            bundleId: "com.google.Chrome",
+            validAttributeNames: ["NSFont", "NSForegroundColor"]
+        ))
+        #expect(!ClientCompatibilityPolicy.usesBlinkWebContentTextClient(
+            bundleId: "com.apple.TextEdit",
+            validAttributeNames: ["NSTextInputReplacementRangeAttributeName"]
+        ))
+    }
+
+    @Test("Context analysis normalizes both native attribute keys and NSString names")
+    func contextAnalysisNormalizesAttributeNames() {
+        for replacementAttribute in [
+            NSAttributedString.Key("NSTextInputReplacementRangeAttributeName") as Any,
+            "NSTextInputReplacementRangeAttributeName" as NSString
+        ] {
+            let webClient = FakeIMKTextInput()
+            webClient.bundleID = "com.google.Chrome"
+            webClient.validAttributesValue = [replacementAttribute]
+
+            let webContext = ClientContextDetector.analyze(client: webClient)
+            #expect(!webContext.usesBlinkNativeTextClient)
+        }
+
+        let nativeClient = FakeIMKTextInput()
+        nativeClient.bundleID = "com.google.Chrome"
+        nativeClient.validAttributesValue = [NSAttributedString.Key.underlineStyle]
+
+        let nativeContext = ClientContextDetector.analyze(client: nativeClient)
+        #expect(nativeContext.usesBlinkNativeTextClient)
+        #expect(nativeContext.documentAccessSafe)
     }
 }

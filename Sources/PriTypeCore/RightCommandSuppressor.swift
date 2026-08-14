@@ -21,8 +21,8 @@ import ApplicationServices
 /// If CGEventTap creation fails (e.g., permission issues), `IOKitManager` takes over.
 ///
 /// ## Key Features
-/// - **Chord-safe modifier toggle**: Modifier-only keys toggle on standalone release
-///   while their complete down/up sequence remains visible to host shortcuts
+/// - **Chord-safe modifier toggle**: Modifier-only keys toggle on physical down;
+///   the opposite Command rolls the change back for the host screenshot shortcut
 /// - **Pair-safe suppression**: Suppressed bindings never leak an orphan down/up edge
 /// - **Dynamic binding**: Supports any key via KeyBinding struct
 public final class RightCommandSuppressor: @unchecked Sendable {
@@ -238,7 +238,8 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             _ = modifierToggleState.handle(
                 keyCode: keyCode,
                 pressed: type == .keyDown,
-                toggleKeyCode: toggleBinding.keyCode
+                toggleKeyCode: toggleBinding.keyCode,
+                inputKind: .regular
             )
         }
 
@@ -277,7 +278,8 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 ? modifierToggleState.handle(
                     keyCode: keyCode,
                     pressed: physicalKeyIsDown,
-                    toggleKeyCode: toggleBinding.keyCode
+                    toggleKeyCode: toggleBinding.keyCode,
+                    inputKind: .modifier
                 )
                 : .passThrough
             let transition = modifierKeyState.observe(
@@ -402,18 +404,31 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             }
         }
 
-        sanitizeModifierFlagsForHost(event)
+        let hiddenTypingToggleKeyCode = type == .keyDown || type == .keyUp
+            ? modifierToggleState.activeStandaloneToggleKeyCode
+            : nil
+        sanitizeModifierFlagsForHost(
+            event,
+            additionallyHiding: hiddenTypingToggleKeyCode
+        )
         
         return Unmanaged.passUnretained(event)
     }
     
     // MARK: - Helpers
     
-    private func sanitizeModifierFlagsForHost(_ event: CGEvent) {
-        guard modifierKeyState.hasSuppressedKeyCodes else { return }
+    private func sanitizeModifierFlagsForHost(
+        _ event: CGEvent,
+        additionallyHiding hiddenKeyCode: Int64? = nil
+    ) {
+        guard modifierKeyState.hasSuppressedKeyCodes || hiddenKeyCode != nil else { return }
+        var hostVisibleKeyCodes = modifierKeyState.hostVisiblePressedKeyCodes
+        if let hiddenKeyCode {
+            hostVisibleKeyCodes.remove(hiddenKeyCode)
+        }
         let sanitized = Self.hostVisibleModifierFlags(
             event.flags,
-            pressedKeyCodes: modifierKeyState.hostVisiblePressedKeyCodes
+            pressedKeyCodes: hostVisibleKeyCodes
         )
         guard sanitized != event.flags else { return }
         event.flags = sanitized
