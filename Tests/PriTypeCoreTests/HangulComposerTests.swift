@@ -395,11 +395,13 @@ struct HangulComposerTests {
     func modifierKeyPassthrough() {
         let (composer, delegate, _) = makeComposer()
         _ = composer.handle(TestEventFactory.keyEvent(char: "r", keyCode: 15)!, delegate: delegate)
+        let callCountBeforeShortcut = delegate.orderedCalls.count
         
         let cmdEvent = TestEventFactory.keyEvent(char: "s", keyCode: 1, modifiers: [.command])!
         let handled = composer.handle(cmdEvent, delegate: delegate)
         
         #expect(!handled, "Command+key should pass through")
+        #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeShortcut)) == ["insert:ㄱ"])
     }
     
     // MARK: - Special Key Tests
@@ -419,23 +421,45 @@ struct HangulComposerTests {
         #expect(delegate.markedText.isEmpty)
     }
 
-    @Test("Slack Shift+Return commits without a redundant marked-text clear")
-    func slackShiftReturnDoesNotClearAfterCommit() throws {
+    @Test(
+        "Slack Return commits without a redundant marked-text clear",
+        arguments: [NSEvent.ModifierFlags(), NSEvent.ModifierFlags.shift]
+    )
+    func slackReturnDoesNotClearAfterCommit(modifiers: NSEvent.ModifierFlags) throws {
         let (composer, delegate, _) = makeComposer()
         composer.markKeystroke(bundleId: "com.tinyspeck.slackmacgap")
         _ = composer.handle(TestEventFactory.keyEvent(char: "r", keyCode: 15)!, delegate: delegate)
         _ = composer.handle(TestEventFactory.keyEvent(char: "k", keyCode: 40)!, delegate: delegate)
         let callCountBeforeReturn = delegate.orderedCalls.count
 
-        let shiftReturn = try #require(TestEventFactory.keyEvent(
+        let returnEvent = try #require(TestEventFactory.keyEvent(
             char: "\r",
             keyCode: KeyCode.return,
-            modifiers: [.shift]
+            modifiers: modifiers
         ))
-        let handled = composer.handle(shiftReturn, delegate: delegate)
+        let handled = composer.handle(returnEvent, delegate: delegate)
 
         #expect(!handled)
         #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeReturn)) == ["insert:가"])
+        #expect(delegate.fullText == "가")
+        #expect(delegate.markedText.isEmpty)
+    }
+
+    @Test("Forward Delete commits composition before host deletion")
+    func forwardDeleteCommitsBeforePassthrough() throws {
+        let (composer, delegate, _) = makeComposer()
+        _ = composer.handle(TestEventFactory.keyEvent(char: "r", keyCode: 15)!, delegate: delegate)
+        _ = composer.handle(TestEventFactory.keyEvent(char: "k", keyCode: 40)!, delegate: delegate)
+        let callCountBeforeDelete = delegate.orderedCalls.count
+
+        let forwardDelete = try #require(TestEventFactory.keyEvent(
+            char: "\u{F728}",
+            keyCode: KeyCode.forwardDelete
+        ))
+        let handled = composer.handle(forwardDelete, delegate: delegate)
+
+        #expect(!handled)
+        #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeDelete)) == ["insert:가"])
         #expect(delegate.fullText == "가")
         #expect(delegate.markedText.isEmpty)
     }
@@ -533,6 +557,7 @@ struct HangulComposerTests {
         let (composer, delegate, _) = makeComposer()
         _ = composer.handle(TestEventFactory.keyEvent(char: "r", keyCode: 15)!, delegate: delegate)
         _ = composer.handle(TestEventFactory.keyEvent(char: "k", keyCode: 40)!, delegate: delegate)
+        let callCountBeforeHome = delegate.orderedCalls.count
         
         let homeKey = TestEventFactory.keyEvent(char: "\u{F729}", keyCode: 115)!
         let handled = composer.handle(homeKey, delegate: delegate)
@@ -540,6 +565,7 @@ struct HangulComposerTests {
         #expect(!handled)
         #expect(delegate.insertedTexts.contains("가"))
         #expect(delegate.markedText == "")
+        #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeHome)) == ["insert:가"])
     }
     
     @Test("Cmd shortcut without composition just passes through")

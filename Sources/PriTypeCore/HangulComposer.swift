@@ -263,27 +263,13 @@ public class HangulComposer: @unchecked Sendable {
 
     // MARK: - Private Helpers
     
-    /// Handle special keys (Return, Escape, Space, Arrow, Tab, Backspace)
+    /// Handle special keys (Return, Escape, Space, Arrow, Tab, Delete)
     /// - Returns: `nil` if not a special key, otherwise the result to return from handle()
-    private func handleSpecialKey(
-        keyCode: UInt16,
-        modifierFlags: NSEvent.ModifierFlags,
-        delegate: HangulComposerDelegate
-    ) -> Bool? {
+    private func handleSpecialKey(keyCode: UInt16, delegate: HangulComposerDelegate) -> Bool? {
         // Return / Enter
         if keyCode == KeyCode.return || keyCode == KeyCode.numpadEnter {
             let hadComposition = !context.isEmpty()
             commitComposition(delegate: delegate)
-            let isBlinkSoftLineBreak = modifierFlags.contains(.shift)
-                && ClientCompatibilityPolicy.compositionRenderer(
-                    bundleId: lastInputBundleId
-                ) == .blink
-            // insertText already ends the composition. A following empty NSString
-            // marked update races Blink's Shift+Return DOM line break and can erase
-            // the syllable that was just committed.
-            if hadComposition && !isBlinkSoftLineBreak {
-                delegate.setMarkedText("")
-            }
             localTextBuffer = ""
 
             if hadComposition && ClientCompatibilityPolicy.needsDirectNewlineAfterReturnCommit(bundleId: lastInputBundleId) {
@@ -351,6 +337,15 @@ public class HangulComposer: @unchecked Sendable {
         
         // Tab
         if keyCode == KeyCode.tab {
+            commitComposition(delegate: delegate)
+            localTextBuffer = ""
+            return false
+        }
+
+        // Forward Delete is host-owned: commit the current composition, then let
+        // the app delete the character after the caret. Backspace remains owned
+        // by the Hangul engine while a composition is active.
+        if keyCode == KeyCode.forwardDelete {
             commitComposition(delegate: delegate)
             localTextBuffer = ""
             return false
@@ -465,7 +460,6 @@ public class HangulComposer: @unchecked Sendable {
         if inputMode == .english {
             if !context.isEmpty() {
                 commitComposition(delegate: delegate)
-                delegate.setMarkedText("")
             }
             localTextBuffer = ""
             if textConvenience.handleEnglishModeInput(event, delegate: delegate) {
@@ -501,7 +495,6 @@ public class HangulComposer: @unchecked Sendable {
              // live and the host app ignores or misapplies the shortcut (e.g. Cmd+←).
              if !context.isEmpty() {
                  commitComposition(delegate: delegate)
-                 delegate.setMarkedText("")
              }
              localTextBuffer = "" // Any system shortcut (Cmd+V, Cmd+Z, etc.) invalidates local context
              return false
@@ -511,11 +504,7 @@ public class HangulComposer: @unchecked Sendable {
         // payload. Some IMK clients deliver Return/Numpad Enter with empty
         // `characters`; checking the payload first would leave the last Hangul
         // syllable uncommitted while the host performs its Return action.
-        if let result = handleSpecialKey(
-            keyCode: keyCode,
-            modifierFlags: event.modifierFlags,
-            delegate: delegate
-        ) {
+        if let result = handleSpecialKey(keyCode: keyCode, delegate: delegate) {
             return result
         }
         
@@ -534,7 +523,6 @@ public class HangulComposer: @unchecked Sendable {
                 DebugLogger.event("input.non_text_key_passthrough")
                 if !context.isEmpty() {
                     commitComposition(delegate: delegate)
-                    delegate.setMarkedText("")
                 }
                 localTextBuffer = ""
                 return false

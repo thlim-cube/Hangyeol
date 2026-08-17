@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.6] - 2026-08-18
+
+### Fixed
+- 한글 조합 중 Forward Delete나 앱 전달 키를 누를 때 중복된 빈 marked-text 갱신이 현재 입력을 지우거나 커서를 어긋나게 하던 문제를 해결했습니다.
+
 ## [2.8.5] - 2026-08-14
 
 ### Fixed

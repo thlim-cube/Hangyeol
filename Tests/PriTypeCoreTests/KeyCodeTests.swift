@@ -57,6 +57,7 @@ struct KeyCodeTests {
     func keyCodeConstants() {
         #expect(KeyCode.space == 49)
         #expect(KeyCode.backspace == 51)
+        #expect(KeyCode.forwardDelete == 117)
         #expect(KeyCode.escape == 53)
         #expect(KeyCode.`return` == 36)
         #expect(KeyCode.numpadEnter == 76)

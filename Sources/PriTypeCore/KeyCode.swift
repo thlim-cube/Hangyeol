@@ -14,8 +14,11 @@ public enum KeyCode {
     /// Space key (49)
     public static let space: UInt16 = 49
     
-    /// Backspace/Delete key (51)
+    /// Backspace/Backward Delete key (51)
     public static let backspace: UInt16 = 51
+
+    /// Forward Delete key (117)
+    public static let forwardDelete: UInt16 = 117
     
     /// Escape key (53)
     public static let escape: UInt16 = 53
