@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.7] - 2026-08-18
+
+### Changed
+- Serena 프로젝트 설정을 현재 언어 서버 및 워크스페이스 설정 스키마로 갱신했습니다.
+
 ## [2.8.6] - 2026-08-18
 
 ### Fixed
