@@ -419,6 +419,27 @@ struct HangulComposerTests {
         #expect(delegate.markedText.isEmpty)
     }
 
+    @Test("Slack Shift+Return commits without a redundant marked-text clear")
+    func slackShiftReturnDoesNotClearAfterCommit() throws {
+        let (composer, delegate, _) = makeComposer()
+        composer.markKeystroke(bundleId: "com.tinyspeck.slackmacgap")
+        _ = composer.handle(TestEventFactory.keyEvent(char: "r", keyCode: 15)!, delegate: delegate)
+        _ = composer.handle(TestEventFactory.keyEvent(char: "k", keyCode: 40)!, delegate: delegate)
+        let callCountBeforeReturn = delegate.orderedCalls.count
+
+        let shiftReturn = try #require(TestEventFactory.keyEvent(
+            char: "\r",
+            keyCode: KeyCode.return,
+            modifiers: [.shift]
+        ))
+        let handled = composer.handle(shiftReturn, delegate: delegate)
+
+        #expect(!handled)
+        #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeReturn)) == ["insert:가"])
+        #expect(delegate.fullText == "가")
+        #expect(delegate.markedText.isEmpty)
+    }
+
     @Test("Return key uses GoodNotes compatibility newline")
     func returnKeyGoodNotesCompatibility() {
         let (composer, delegate, _) = makeComposer()

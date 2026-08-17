@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.5] - 2026-08-14
+
+### Fixed
+- Slack 등 Blink/Electron 편집기에서 한글 조합 직후 Shift+Enter를 누르면 중복된 빈 marked-text 갱신이 마지막 음절을 지우던 문제를 해결했습니다.
+
 ## [2.8.4] - 2026-08-14
 
 ### Fixed

@@ -265,12 +265,23 @@ public class HangulComposer: @unchecked Sendable {
     
     /// Handle special keys (Return, Escape, Space, Arrow, Tab, Backspace)
     /// - Returns: `nil` if not a special key, otherwise the result to return from handle()
-    private func handleSpecialKey(keyCode: UInt16, delegate: HangulComposerDelegate) -> Bool? {
+    private func handleSpecialKey(
+        keyCode: UInt16,
+        modifierFlags: NSEvent.ModifierFlags,
+        delegate: HangulComposerDelegate
+    ) -> Bool? {
         // Return / Enter
         if keyCode == KeyCode.return || keyCode == KeyCode.numpadEnter {
             let hadComposition = !context.isEmpty()
             commitComposition(delegate: delegate)
-            if hadComposition {
+            let isBlinkSoftLineBreak = modifierFlags.contains(.shift)
+                && ClientCompatibilityPolicy.compositionRenderer(
+                    bundleId: lastInputBundleId
+                ) == .blink
+            // insertText already ends the composition. A following empty NSString
+            // marked update races Blink's Shift+Return DOM line break and can erase
+            // the syllable that was just committed.
+            if hadComposition && !isBlinkSoftLineBreak {
                 delegate.setMarkedText("")
             }
             localTextBuffer = ""
@@ -344,7 +355,7 @@ public class HangulComposer: @unchecked Sendable {
             localTextBuffer = ""
             return false
         }
-        
+
         // Backspace
         if keyCode == KeyCode.backspace {
             if !localTextBuffer.isEmpty {
@@ -500,7 +511,11 @@ public class HangulComposer: @unchecked Sendable {
         // payload. Some IMK clients deliver Return/Numpad Enter with empty
         // `characters`; checking the payload first would leave the last Hangul
         // syllable uncommitted while the host performs its Return action.
-        if let result = handleSpecialKey(keyCode: keyCode, delegate: delegate) {
+        if let result = handleSpecialKey(
+            keyCode: keyCode,
+            modifierFlags: event.modifierFlags,
+            delegate: delegate
+        ) {
             return result
         }
         
