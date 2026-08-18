@@ -421,11 +421,8 @@ struct HangulComposerTests {
         #expect(delegate.markedText.isEmpty)
     }
 
-    @Test(
-        "Slack Return commits without a redundant marked-text clear",
-        arguments: [NSEvent.ModifierFlags(), NSEvent.ModifierFlags.shift]
-    )
-    func slackReturnDoesNotClearAfterCommit(modifiers: NSEvent.ModifierFlags) throws {
+    @Test("Slack Shift+Return commits without a redundant marked-text clear")
+    func slackShiftReturnDoesNotClearAfterCommit() throws {
         let (composer, delegate, _) = makeComposer()
         composer.markKeystroke(bundleId: "com.tinyspeck.slackmacgap")
         _ = composer.handle(TestEventFactory.keyEvent(char: "r", keyCode: 15)!, delegate: delegate)
@@ -435,13 +432,44 @@ struct HangulComposerTests {
         let returnEvent = try #require(TestEventFactory.keyEvent(
             char: "\r",
             keyCode: KeyCode.return,
-            modifiers: modifiers
+            modifiers: [.shift]
         ))
         let handled = composer.handle(returnEvent, delegate: delegate)
 
         #expect(!handled)
         #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeReturn)) == ["insert:가"])
         #expect(delegate.fullText == "가")
+        #expect(delegate.markedText.isEmpty)
+    }
+
+    @Test("Confluence Return closes the committed marked text before host newline")
+    func confluenceReturnClosesCommittedMarkedText() throws {
+        let (composer, delegate, _) = makeComposer()
+        composer.markKeystroke(bundleId: "com.google.Chrome")
+        for (character, keyCode) in [
+            ("q", UInt16(12)), ("k", UInt16(40)), ("d", UInt16(2)),
+            ("t", UInt16(17)), ("l", UInt16(37)), ("r", UInt16(15))
+        ] {
+            _ = composer.handle(
+                try #require(TestEventFactory.keyEvent(char: character, keyCode: keyCode)),
+                delegate: delegate
+            )
+        }
+        #expect(delegate.fullText + delegate.markedText == "방식")
+        #expect(delegate.markedText == "식")
+        let callCountBeforeReturn = delegate.orderedCalls.count
+
+        let returnEvent = try #require(TestEventFactory.keyEvent(
+            char: "\r",
+            keyCode: KeyCode.return
+        ))
+        let handled = composer.handle(returnEvent, delegate: delegate)
+
+        #expect(!handled)
+        #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeReturn)) == [
+            "insert:식", "mark:"
+        ])
+        #expect(delegate.fullText == "방식")
         #expect(delegate.markedText.isEmpty)
     }
 

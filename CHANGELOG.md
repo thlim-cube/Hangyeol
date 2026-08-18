@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.8] - 2026-08-18
+
+### Fixed
+- Confluence 등 Blink 웹 편집기에서 한글 조합 직후 일반 Enter를 누르면 마지막 음절이 사라지던 문제를 해결하고, Shift+Enter 예외는 해당 경로에만 적용되도록 좁혔습니다.
+
 ## [2.8.7] - 2026-08-18
 
 ### Changed

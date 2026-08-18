@@ -265,11 +265,25 @@ public class HangulComposer: @unchecked Sendable {
     
     /// Handle special keys (Return, Escape, Space, Arrow, Tab, Delete)
     /// - Returns: `nil` if not a special key, otherwise the result to return from handle()
-    private func handleSpecialKey(keyCode: UInt16, delegate: HangulComposerDelegate) -> Bool? {
+    private func handleSpecialKey(
+        keyCode: UInt16,
+        modifierFlags: NSEvent.ModifierFlags,
+        delegate: HangulComposerDelegate
+    ) -> Bool? {
         // Return / Enter
         if keyCode == KeyCode.return || keyCode == KeyCode.numpadEnter {
             let hadComposition = !context.isEmpty()
             commitComposition(delegate: delegate)
+            let isBlinkSoftLineBreak = keyCode == KeyCode.return
+                && modifierFlags.contains(.shift)
+                && ClientCompatibilityPolicy.compositionRenderer(
+                    bundleId: lastInputBundleId
+                ) == .blink
+            // Blink needs an explicit composition close before an ordinary
+            // Return, while a second empty update races its Shift+Return path.
+            if hadComposition && !isBlinkSoftLineBreak {
+                delegate.setMarkedText("")
+            }
             localTextBuffer = ""
 
             if hadComposition && ClientCompatibilityPolicy.needsDirectNewlineAfterReturnCommit(bundleId: lastInputBundleId) {
@@ -504,7 +518,11 @@ public class HangulComposer: @unchecked Sendable {
         // payload. Some IMK clients deliver Return/Numpad Enter with empty
         // `characters`; checking the payload first would leave the last Hangul
         // syllable uncommitted while the host performs its Return action.
-        if let result = handleSpecialKey(keyCode: keyCode, delegate: delegate) {
+        if let result = handleSpecialKey(
+            keyCode: keyCode,
+            modifierFlags: event.modifierFlags,
+            delegate: delegate
+        ) {
             return result
         }
         
