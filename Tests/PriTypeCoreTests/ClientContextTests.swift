@@ -1,4 +1,6 @@
 import Testing
+import Cocoa
+import Carbon.HIToolbox
 @testable import PriTypeCore
 
 // MARK: - ClientContext Tests
@@ -30,15 +32,90 @@ struct ClientContextTests {
         #expect(desktopCtx.shouldUseImmediateMode)
     }
     
-    @Test("Finder without text capability uses immediate mode")
-    func finderNoTextCapabilityShouldUseImmediateMode() {
+    @Test("Finder rename fields stay in marked-text mode even without advertised attributes")
+    func finderRenameWithoutAdvertisedAttributesUsesMarkedText() {
         let noTextCtx = ClientContext(
             bundleId: "com.apple.finder",
             hasTextInputCapability: false,
             isLikelyDesktopArea: false
         )
         
-        #expect(noTextCtx.shouldUseImmediateMode)
+        #expect(!noTextCtx.shouldUseImmediateMode)
+    }
+
+    @Test("Finder rename client is analyzed from its field coordinates")
+    func finderRenameClientUsesFieldCoordinates() {
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.apple.finder"
+        client.validAttributesValue = []
+        client.firstRectValue = NSRect(x: 420, y: 260, width: 120, height: 22)
+        client.selectedRangeValue = NSRange(location: NSNotFound, length: 0)
+
+        let context = ClientContextDetector.analyze(client: client)
+
+        #expect(!context.hasTextInputCapability)
+        #expect(!context.isLikelyDesktopArea)
+        #expect(!context.shouldUseImmediateMode)
+        #expect(TextDeliveryPolicy.mode(for: context) == .markedText)
+    }
+
+    @Test("Finder rename selection overrides the dummy-window coordinate")
+    func finderRenameSelectionOverridesDummyCoordinate() {
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.apple.finder"
+        client.validAttributesValue = []
+        client.firstRectValue = NSRect(x: 5, y: 20, width: 0, height: 0)
+        client.selectedRangeValue = NSRange(location: 4, length: 0)
+
+        let context = ClientContextDetector.analyze(client: client)
+
+        // Secure classification keeps using advertised marked-text capability,
+        // while adapter routing preserves the raw dummy-coordinate observation.
+        #expect(!context.hasTextInputCapability)
+        #expect(context.isLikelyDesktopArea)
+        #expect(context.capabilities.hasUsableSelection)
+        #expect(context.hostSurface == .appKit)
+        #expect(!context.shouldUseImmediateMode)
+        #expect(TextDeliveryPolicy.mode(for: context) == .markedText)
+    }
+
+    @Test("Finder document-access capability overrides the desktop sentinel")
+    func finderDocumentAccessOverridesDesktopSentinel() {
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.apple.finder"
+        client.validAttributesValue = []
+        client.firstRectValue = NSRect(x: 5, y: 20, width: 0, height: 0)
+        client.selectedRangeValue = NSRange(location: NSNotFound, length: NSNotFound)
+        client.supportedPropertyValues = [
+            TSMDocumentPropertyTag(kTSMDocumentSupportDocumentAccessPropertyTag)
+        ]
+
+        let context = ClientContextDetector.analyze(client: client)
+
+        #expect(context.capabilities.advertisesDocumentAccess)
+        #expect(!context.hasTextInputCapability)
+        #expect(context.hostSurface == .appKit)
+        #expect(context.documentAccessSafe)
+        #expect(!context.shouldUseImmediateMode)
+        #expect(TextDeliveryPolicy.mode(for: context) == .markedText)
+    }
+
+    @Test("Finder desktop keeps immediate mode without an editable selection")
+    func finderDesktopWithoutSelectionStaysImmediate() {
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.apple.finder"
+        client.validAttributesValue = []
+        client.firstRectValue = NSRect(x: 5, y: 20, width: 0, height: 0)
+        client.selectedRangeValue = NSRange(location: NSNotFound, length: 0)
+
+        let context = ClientContextDetector.analyze(client: client)
+
+        #expect(!context.hasTextInputCapability)
+        #expect(!context.capabilities.hasEditableTextEvidence)
+        #expect(context.hostSurface == .finderNonText)
+        #expect(context.isLikelyDesktopArea)
+        #expect(context.shouldUseImmediateMode)
+        #expect(TextDeliveryPolicy.mode(for: context) == .immediate)
     }
     
     @Test("Non-Finder apps never use immediate mode")
@@ -155,6 +232,26 @@ struct ClientContextTests {
         #expect(ClientCompatibilityPolicy.prefersDirectInsertionForComposition(bundleId: "com.nousresearch.hermes"))
         #expect(ClientCompatibilityPolicy.prefersDirectInsertionForComposition(bundleId: "com.nousresearch.hermes.setup"))
         #expect(!ClientCompatibilityPolicy.prefersDirectInsertionForComposition(bundleId: "com.openai.codex"))
+    }
+
+    @Test("Blink host-key deferral distinguishes Electron editors from browser-native fields")
+    func blinkHostKeyDeferralDistinguishesNativeFields() {
+        #expect(ClientCompatibilityPolicy.needsBlinkWebContentHostKeyMediation(
+            bundleId: "com.openai.codex",
+            usesBlinkNativeTextClient: true
+        ))
+        #expect(ClientCompatibilityPolicy.needsBlinkWebContentHostKeyMediation(
+            bundleId: "com.tinyspeck.slackmacgap",
+            usesBlinkNativeTextClient: true
+        ))
+        #expect(ClientCompatibilityPolicy.needsBlinkWebContentHostKeyMediation(
+            bundleId: "com.google.Chrome",
+            usesBlinkNativeTextClient: false
+        ))
+        #expect(!ClientCompatibilityPolicy.needsBlinkWebContentHostKeyMediation(
+            bundleId: "com.google.Chrome",
+            usesBlinkNativeTextClient: true
+        ))
     }
     
     // MARK: - Resolution / Desktop Detection (migrated from ResolutionTests.swift)

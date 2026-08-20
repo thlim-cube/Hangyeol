@@ -44,6 +44,7 @@ public protocol HangulComposerDelegate: AnyObject {
     /// the existing Void callback succeeds, keeping external conformers compatible.
     func tryInsertText(_ text: String) -> Bool
     func tryReplaceTextBeforeCursor(length: Int, with text: String) -> Bool
+    func tryScheduleHostKey(keyCode: UInt16, modifierFlags: UInt) -> Bool
 }
 
 public extension HangulComposerDelegate {
@@ -56,6 +57,11 @@ public extension HangulComposerDelegate {
         replaceTextBeforeCursor(length: length, with: text)
         return true
     }
+
+    func tryScheduleHostKey(keyCode: UInt16, modifierFlags: UInt) -> Bool {
+        false
+    }
+
 }
 
 // MARK: - InputMode Enum

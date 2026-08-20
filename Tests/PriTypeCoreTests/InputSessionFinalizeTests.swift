@@ -118,6 +118,24 @@ struct InputSessionFinalizeTests {
         #expect(client.markCalls.isEmpty)
     }
 
+    @Test("A deferred Return replay revokes only its matching field context")
+    func deferredReturnReplayInvalidatesMatchingSession() {
+        let (session, _, client) = makeMarkedSession()
+        let staleClient = FakeIMKTextInput()
+
+        #expect(!PriTypeInputController.routeDeferredHostKey(
+            in: session,
+            client: staleClient,
+            keyCode: KeyCode.return
+        ))
+        #expect(!session.contextNeedsRefresh)
+
+        session.adapter.recordDeferredHostKeyPassedToHost(keyCode: KeyCode.return)
+        #expect(session.contextNeedsRefresh)
+        #expect(client.insertCalls.isEmpty)
+        #expect(client.markCalls.isEmpty)
+    }
+
     @Test("Host-passed field boundaries make the reused client context untrusted")
     func hostPassedFieldBoundariesInvalidateContext() async {
         let fieldBoundaryKeys: [(name: String, keyCode: UInt16, character: String)] = [

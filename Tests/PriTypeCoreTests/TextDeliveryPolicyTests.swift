@@ -30,6 +30,16 @@ struct TextDeliveryPolicyTests {
         #expect(TextDeliveryPolicy.mode(for: ctx) == .immediate)
     }
 
+    @Test("Finder rename field uses marked text even when attributes are empty")
+    func finderRenameWithoutAttributesIsMarked() {
+        let ctx = context(
+            bundleId: "com.apple.finder",
+            hasTextInputCapability: false,
+            isLikelyDesktopArea: false
+        )
+        #expect(TextDeliveryPolicy.mode(for: ctx) == .markedText)
+    }
+
     @Test("Default context resolves to canonical marked text")
     func defaultIsMarkedText() {
         let ctx = context(bundleId: "com.apple.TextEdit", documentAccessSafe: true)
@@ -116,6 +126,18 @@ struct TextDeliveryPolicyTests {
             .setMarkedText("가")
         #expect(nativeClient.markedPayloadWasAttributed == [true])
     }
+
+    @Test("Marked adapter exposes only its live preedit to host-key transactions")
+    func markedAdapterTracksHostTransactionText() {
+        let client = FakeIMKTextInput()
+        let adapter = MarkedTextAdapter(client: client, bundleId: "com.google.Chrome")
+
+        adapter.setMarkedText("마")
+        #expect(adapter.hostTransactionMarkedText == "마")
+
+        #expect(adapter.tryInsertText("마"))
+        #expect(adapter.hostTransactionMarkedText == nil)
+    }
 }
 
 // MARK: - Composition renderer classification
@@ -185,6 +207,65 @@ struct MarkedTextPayloadTests {
 
 @Suite("Blink text-client classification")
 struct BlinkTextClientClassificationTests {
+    @Test("Actual replacement-range capability selects Blink web before bundle fallback")
+    func replacementRangeCapabilitySelectsBlinkWeb() {
+        let capabilities = IMKClientCapabilitySnapshot(
+            advertisesMarkedTextAttributes: true,
+            advertisesDocumentAccess: true,
+            hasUsableSelection: true,
+            advertisesBlinkReplacementRange: true,
+            caretGeometry: .unavailable
+        )
+
+        #expect(HostSurfaceResolver.resolve(
+            bundleId: "com.google.Chrome",
+            capabilities: capabilities
+        ) == .blinkWeb)
+    }
+
+    @Test("Browser native field requires editable capability evidence")
+    func browserNativeFieldRequiresCapabilityEvidence() {
+        let editable = IMKClientCapabilitySnapshot(
+            advertisesMarkedTextAttributes: true,
+            advertisesDocumentAccess: true,
+            hasUsableSelection: true,
+            advertisesBlinkReplacementRange: false,
+            caretGeometry: .unavailable
+        )
+        let unavailable = IMKClientCapabilitySnapshot(
+            advertisesMarkedTextAttributes: false,
+            advertisesDocumentAccess: false,
+            hasUsableSelection: false,
+            advertisesBlinkReplacementRange: false,
+            caretGeometry: .unavailable
+        )
+
+        #expect(HostSurfaceResolver.resolve(
+            bundleId: "com.google.Chrome",
+            capabilities: editable
+        ) == .blinkNative)
+        #expect(HostSurfaceResolver.resolve(
+            bundleId: "com.google.Chrome",
+            capabilities: unavailable
+        ) == .blinkWeb)
+    }
+
+    @Test("Electron bundle remains a secondary web fallback")
+    func electronBundleIsSecondaryFallback() {
+        let capabilities = IMKClientCapabilitySnapshot(
+            advertisesMarkedTextAttributes: true,
+            advertisesDocumentAccess: true,
+            hasUsableSelection: true,
+            advertisesBlinkReplacementRange: false,
+            caretGeometry: .unavailable
+        )
+
+        #expect(HostSurfaceResolver.resolve(
+            bundleId: "com.openai.codex",
+            capabilities: capabilities
+        ) == .blinkWeb)
+    }
+
     @Test("Only browser bundles may use Blink native direct insertion")
     func nativeDirectInsertionIsBrowserOnly() {
         for bundleId in [

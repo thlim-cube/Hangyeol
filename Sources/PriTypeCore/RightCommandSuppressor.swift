@@ -214,6 +214,12 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             }
             return Unmanaged.passUnretained(event)
         }
+
+        // Deferred Chromium host keys belong to the host even when the same key is
+        // configured as a custom PriType shortcut.
+        if DeferredHostKeyDelivery.isReplayedHostKey(event) {
+            return Unmanaged.passUnretained(event)
+        }
         
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let config = ConfigurationManager.shared

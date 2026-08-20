@@ -880,6 +880,12 @@ final class InputSession: @unchecked Sendable {
         adapter.setClientWriteValidator { [weak self] in
             self?.clientWritesAreConfirmedSafe == true
         }
+        adapter.setDeferredHostKeyBoundaryHandler { [weak self] keyCode in
+            self?.observeHostFieldBoundaryKeyDown(
+                keyCode: keyCode,
+                passedToHost: true
+            )
+        }
     }
 
     /// The marked-text finalize, callable against any client. `PriTypeInputController`

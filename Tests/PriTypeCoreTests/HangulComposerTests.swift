@@ -421,8 +421,8 @@ struct HangulComposerTests {
         #expect(delegate.markedText.isEmpty)
     }
 
-    @Test("Slack Shift+Return commits without a redundant marked-text clear")
-    func slackShiftReturnDoesNotClearAfterCommit() throws {
+    @Test("Slack Shift+Return clears before commit and defers the soft line break")
+    func slackShiftReturnDefersAfterCommit() throws {
         let (composer, delegate, _) = makeComposer()
         composer.markKeystroke(bundleId: "com.tinyspeck.slackmacgap")
         _ = composer.handle(TestEventFactory.keyEvent(char: "r", keyCode: 15)!, delegate: delegate)
@@ -436,16 +436,23 @@ struct HangulComposerTests {
         ))
         let handled = composer.handle(returnEvent, delegate: delegate)
 
-        #expect(!handled)
-        #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeReturn)) == ["insert:가"])
+        #expect(handled)
+        #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeReturn)) == [
+            "schedule:return", "mark:", "insert:가"
+        ])
         #expect(delegate.fullText == "가")
         #expect(delegate.markedText.isEmpty)
+        delegate.deliverScheduledReturns()
+        #expect(delegate.fullText == "가\n")
     }
 
-    @Test("Confluence Return closes the committed marked text before host newline")
-    func confluenceReturnClosesCommittedMarkedText() throws {
+    @Test("Blink browser web content owns composed Return exactly once")
+    func blinkWebContentOwnsComposedReturn() throws {
         let (composer, delegate, _) = makeComposer()
-        composer.markKeystroke(bundleId: "com.google.Chrome")
+        composer.markKeystroke(
+            bundleId: "com.google.Chrome",
+            usesBlinkNativeTextClient: false
+        )
         for (character, keyCode) in [
             ("q", UInt16(12)), ("k", UInt16(40)), ("d", UInt16(2)),
             ("t", UInt16(17)), ("l", UInt16(37)), ("r", UInt16(15))
@@ -465,12 +472,79 @@ struct HangulComposerTests {
         ))
         let handled = composer.handle(returnEvent, delegate: delegate)
 
-        #expect(!handled)
+        #expect(handled)
         #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeReturn)) == [
-            "insert:식", "mark:"
+            "schedule:return", "mark:", "insert:식"
         ])
         #expect(delegate.fullText == "방식")
+        delegate.deliverScheduledReturns()
+        #expect(delegate.fullText == "방식\n")
         #expect(delegate.markedText.isEmpty)
+    }
+
+    @Test("Codex Shift+Return defers the composed soft line break")
+    func codexShiftReturnDefersComposedSoftLineBreak() throws {
+        let (composer, delegate, _) = makeComposer()
+        composer.markKeystroke(
+            bundleId: "com.openai.codex",
+            usesBlinkNativeTextClient: true
+        )
+        _ = composer.handle(
+            try #require(TestEventFactory.keyEvent(char: "r", keyCode: 15)),
+            delegate: delegate
+        )
+        _ = composer.handle(
+            try #require(TestEventFactory.keyEvent(char: "k", keyCode: 40)),
+            delegate: delegate
+        )
+        let callCountBeforeReturn = delegate.orderedCalls.count
+
+        let handled = composer.handle(
+            try #require(TestEventFactory.keyEvent(
+                char: "\r",
+                keyCode: KeyCode.return,
+                modifiers: [.shift]
+            )),
+            delegate: delegate
+        )
+
+        #expect(handled)
+        #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeReturn)) == [
+            "schedule:return", "mark:", "insert:가"
+        ])
+        #expect(delegate.scheduledHostKeyCodes == [KeyCode.return])
+        #expect(delegate.scheduledHostKeyModifierFlags.count == 1)
+        #expect(
+            NSEvent.ModifierFlags(rawValue: delegate.scheduledHostKeyModifierFlags.first ?? 0)
+                .contains(.shift)
+        )
+    }
+
+    @Test("Codex Command+Shift+Return remains host-owned")
+    func codexCommandShiftReturnStaysHostOwned() throws {
+        let (composer, delegate, _) = makeComposer()
+        composer.markKeystroke(
+            bundleId: "com.openai.codex",
+            usesBlinkNativeTextClient: true
+        )
+        _ = composer.handle(
+            try #require(TestEventFactory.keyEvent(char: "r", keyCode: 15)),
+            delegate: delegate
+        )
+        let callCountBeforeReturn = delegate.orderedCalls.count
+
+        let handled = composer.handle(
+            try #require(TestEventFactory.keyEvent(
+                char: "\r",
+                keyCode: KeyCode.return,
+                modifiers: [.command, .shift]
+            )),
+            delegate: delegate
+        )
+
+        #expect(!handled)
+        #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeReturn)) == ["insert:ㄱ"])
+        #expect(delegate.scheduledHostKeyCodes.isEmpty)
     }
 
     @Test("Forward Delete commits composition before host deletion")
@@ -488,6 +562,124 @@ struct HangulComposerTests {
 
         #expect(!handled)
         #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeDelete)) == ["insert:가"])
+        #expect(delegate.fullText == "가")
+        #expect(delegate.markedText.isEmpty)
+    }
+
+    @Test("Blink web Forward Delete waits for the committed mark to retire")
+    func blinkWebForwardDeleteWaitsForMarkedRetirement() throws {
+        let (composer, delegate, _) = makeComposer()
+        composer.markKeystroke(
+            bundleId: "com.google.Chrome",
+            usesBlinkNativeTextClient: false
+        )
+        _ = composer.handle(
+            try #require(TestEventFactory.keyEvent(char: "r", keyCode: 15)),
+            delegate: delegate
+        )
+        _ = composer.handle(
+            try #require(TestEventFactory.keyEvent(char: "k", keyCode: 40)),
+            delegate: delegate
+        )
+        let callCountBeforeDelete = delegate.orderedCalls.count
+
+        let handled = composer.handle(
+            try #require(TestEventFactory.keyEvent(
+                char: "\u{F728}",
+                keyCode: KeyCode.forwardDelete
+            )),
+            delegate: delegate
+        )
+
+        #expect(handled)
+        #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeDelete)) == [
+            "schedule:forward-delete", "insert:가"
+        ])
+        #expect(delegate.scheduledHostKeyCodes == [KeyCode.forwardDelete])
+    }
+
+    @Test("Chrome native fields keep immediate Forward Delete pass-through")
+    func chromeNativeFieldForwardDeletePassesThrough() throws {
+        let (composer, delegate, _) = makeComposer()
+        composer.markKeystroke(
+            bundleId: "com.google.Chrome",
+            usesBlinkNativeTextClient: true
+        )
+        _ = composer.handle(
+            try #require(TestEventFactory.keyEvent(char: "r", keyCode: 15)),
+            delegate: delegate
+        )
+        _ = composer.handle(
+            try #require(TestEventFactory.keyEvent(char: "k", keyCode: 40)),
+            delegate: delegate
+        )
+
+        let handled = composer.handle(
+            try #require(TestEventFactory.keyEvent(
+                char: "\u{F728}",
+                keyCode: KeyCode.forwardDelete
+            )),
+            delegate: delegate
+        )
+
+        #expect(!handled)
+        #expect(delegate.scheduledHostKeyCodes.isEmpty)
+        #expect(delegate.fullText == "가")
+    }
+
+    @Test("Modified Blink Forward Delete remains host-owned")
+    func modifiedBlinkForwardDeletePassesThrough() throws {
+        let (composer, delegate, _) = makeComposer()
+        composer.markKeystroke(
+            bundleId: "com.google.Chrome",
+            usesBlinkNativeTextClient: false
+        )
+        _ = composer.handle(
+            try #require(TestEventFactory.keyEvent(char: "r", keyCode: 15)),
+            delegate: delegate
+        )
+
+        let handled = composer.handle(
+            try #require(TestEventFactory.keyEvent(
+                char: "\u{F728}",
+                keyCode: KeyCode.forwardDelete,
+                modifiers: [.function, .shift]
+            )),
+            delegate: delegate
+        )
+
+        #expect(!handled)
+        #expect(delegate.scheduledHostKeyCodes.isEmpty)
+        #expect(delegate.fullText == "ㄱ")
+    }
+
+    @Test("Blink web Forward Delete fails open when replay is unavailable")
+    func blinkWebForwardDeleteReplayUnavailable() throws {
+        let (composer, delegate, _) = makeComposer()
+        composer.markKeystroke(
+            bundleId: "com.google.Chrome",
+            usesBlinkNativeTextClient: false
+        )
+        delegate.hostKeySchedulingSucceeds = false
+        _ = composer.handle(
+            try #require(TestEventFactory.keyEvent(char: "r", keyCode: 15)),
+            delegate: delegate
+        )
+        _ = composer.handle(
+            try #require(TestEventFactory.keyEvent(char: "k", keyCode: 40)),
+            delegate: delegate
+        )
+
+        let handled = composer.handle(
+            try #require(TestEventFactory.keyEvent(
+                char: "\u{F728}",
+                keyCode: KeyCode.forwardDelete
+            )),
+            delegate: delegate
+        )
+
+        #expect(!handled)
+        #expect(delegate.scheduledHostKeyCodes.isEmpty)
         #expect(delegate.fullText == "가")
         #expect(delegate.markedText.isEmpty)
     }

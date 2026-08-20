@@ -1,5 +1,6 @@
 import Cocoa
 import InputMethodKit
+import Carbon.HIToolbox
 
 // MARK: - SecureInputPolicy
 
@@ -47,16 +48,91 @@ struct SecureInputPolicy: Sendable {
 
 // MARK: - ClientContext
 
+enum HostSurface: Sendable, Equatable {
+    case appKit
+    case blinkWeb
+    case blinkNative
+    case finderNonText
+
+    var diagnosticValue: StaticString {
+        switch self {
+        case .appKit: "appkit"
+        case .blinkWeb: "blink_web"
+        case .blinkNative: "blink_native"
+        case .finderNonText: "finder_non_text"
+        }
+    }
+}
+
+struct IMKClientCapabilitySnapshot: Sendable, Equatable {
+    enum CaretGeometry: Sendable, Equatable {
+        case usable
+        case finderDesktopSentinel
+        case unavailable
+    }
+
+    let advertisesMarkedTextAttributes: Bool
+    let advertisesDocumentAccess: Bool
+    let hasUsableSelection: Bool
+    let advertisesBlinkReplacementRange: Bool
+    let caretGeometry: CaretGeometry
+
+    var hasEditableTextEvidence: Bool {
+        advertisesMarkedTextAttributes
+            || advertisesDocumentAccess
+            || hasUsableSelection
+    }
+
+    static let unknown = IMKClientCapabilitySnapshot(
+        advertisesMarkedTextAttributes: false,
+        advertisesDocumentAccess: false,
+        hasUsableSelection: false,
+        advertisesBlinkReplacementRange: false,
+        caretGeometry: .unavailable
+    )
+}
+
+enum HostSurfaceResolver {
+    static func resolve(
+        bundleId: String,
+        capabilities: IMKClientCapabilitySnapshot
+    ) -> HostSurface {
+        if capabilities.advertisesBlinkReplacementRange {
+            return .blinkWeb
+        }
+
+        if ClientCompatibilityPolicy.compositionRenderer(bundleId: bundleId) == .blink {
+            if ClientCompatibilityPolicy.supportsBlinkNativeDirectInsertion(bundleId: bundleId),
+               capabilities.hasEditableTextEvidence {
+                return .blinkNative
+            }
+            return .blinkWeb
+        }
+
+        if bundleId == "com.apple.finder",
+           !capabilities.hasEditableTextEvidence,
+           capabilities.caretGeometry == .finderDesktopSentinel {
+            return .finderNonText
+        }
+
+        return .appKit
+    }
+}
+
 /// Represents the context of the current text input client
 ///
 /// This struct encapsulates information about the client application and
 /// its text input capabilities, enabling context-aware input handling.
 public struct ClientContext: Sendable {
+    let capabilities: IMKClientCapabilitySnapshot
+    let hostSurface: HostSurface
     
     /// Bundle identifier of the client application
     public let bundleId: String
     
-    /// Whether the client has text input capability (based on validAttributesForMarkedText)
+    /// Whether the client advertises marked-text capability. This remains separate
+    /// from document-access and selection evidence because the secure-input policy
+    /// uses this conservative signal.
     public let hasTextInputCapability: Bool
     
     /// Whether the client appears to be in a desktop/non-text area (coordinate heuristic)
@@ -85,12 +161,51 @@ public struct ClientContext: Sendable {
         documentAccessSafe: Bool = false,
         usesBlinkNativeTextClient: Bool = false
     ) {
+        let inferredCapabilities = IMKClientCapabilitySnapshot(
+            advertisesMarkedTextAttributes: hasTextInputCapability,
+            advertisesDocumentAccess: documentAccessSafe,
+            hasUsableSelection: documentAccessSafe,
+            advertisesBlinkReplacementRange: false,
+            caretGeometry: isLikelyDesktopArea ? .finderDesktopSentinel : .usable
+        )
         self.bundleId = bundleId
         self.hasTextInputCapability = hasTextInputCapability
         self.isLikelyDesktopArea = isLikelyDesktopArea
         self.isLightweight = isLightweight
         self.documentAccessSafe = documentAccessSafe
         self.usesBlinkNativeTextClient = usesBlinkNativeTextClient
+        self.capabilities = inferredCapabilities
+        if bundleId == "com.apple.finder", isLikelyDesktopArea {
+            self.hostSurface = .finderNonText
+        } else if usesBlinkNativeTextClient,
+                  ClientCompatibilityPolicy.supportsBlinkNativeDirectInsertion(
+                      bundleId: bundleId
+                  ) {
+            self.hostSurface = .blinkNative
+        } else if ClientCompatibilityPolicy.compositionRenderer(bundleId: bundleId) == .blink {
+            self.hostSurface = .blinkWeb
+        } else {
+            self.hostSurface = .appKit
+        }
+    }
+
+    init(
+        bundleId: String,
+        hasTextInputCapability: Bool,
+        isLikelyDesktopArea: Bool,
+        isLightweight: Bool = false,
+        documentAccessSafe: Bool,
+        capabilities: IMKClientCapabilitySnapshot,
+        hostSurface: HostSurface
+    ) {
+        self.bundleId = bundleId
+        self.hasTextInputCapability = hasTextInputCapability
+        self.isLikelyDesktopArea = isLikelyDesktopArea
+        self.isLightweight = isLightweight
+        self.documentAccessSafe = documentAccessSafe
+        self.usesBlinkNativeTextClient = hostSurface == .blinkNative
+        self.capabilities = capabilities
+        self.hostSurface = hostSurface
     }
     
     // MARK: - Derived Properties
@@ -102,10 +217,12 @@ public struct ClientContext: Sendable {
     
     /// Whether immediate mode should be used (skip marked text display)
     ///
-    /// Returns `true` when:
-    /// - Client is Finder AND (no text capability OR likely desktop area)
+    /// Finder's rename field can expose both an empty
+    /// `validAttributesForMarkedText` list and the desktop dummy coordinates.
+    /// Document-access or selection capability is stronger editor evidence than
+    /// those heuristics.
     public var shouldUseImmediateMode: Bool {
-        isFinder && (!hasTextInputCapability || isLikelyDesktopArea)
+        hostSurface == .finderNonText
     }
 }
 
@@ -241,6 +358,22 @@ public enum ClientCompatibilityPolicy {
     static func supportsBlinkNativeDirectInsertion(bundleId: String) -> Bool {
         blinkBrowserNativeTextClientBundleIds.contains(bundleId)
     }
+
+    static func needsBlinkWebContentHostKeyMediation(
+        bundleId: String,
+        usesBlinkNativeTextClient: Bool
+    ) -> Bool {
+        if blinkBrowserNativeTextClientBundleIds.contains(bundleId) {
+            return !usesBlinkNativeTextClient
+        }
+
+        // Electron shells in the renderer allowlist expose only web-content
+        // editors even when their IMK client lacks Chromium's identifying
+        // replacement-range attribute. Do not mistake that negative evidence
+        // for a native AppKit field.
+        return blinkRendererBundleIds.contains(bundleId)
+            || bundleId.lowercased().contains("electron")
+    }
 }
 
 /// Which engine renders the host's marked-text (composition) decoration.
@@ -266,6 +399,19 @@ public enum CompositionRenderer: Sendable, Equatable {
 /// }
 /// ```
 public struct ClientContextDetector: Sendable {
+    private static let maxReasonableTextLocation = 10_000_000
+    private static let documentAccessProperty = TSMDocumentPropertyTag(
+        kTSMDocumentSupportDocumentAccessPropertyTag
+    )
+
+    private static func hasUsableSelection(_ range: NSRange) -> Bool {
+        let (end, overflow) = range.location.addingReportingOverflow(range.length)
+        return range.location != NSNotFound
+            && !overflow
+            && range.location < maxReasonableTextLocation
+            && end < maxReasonableTextLocation
+    }
+
     /// Probe for legacy Carbon `TSMDocumentAccess` support. A client that returns a
     /// sane selection range honors `insertText(replacementRange:)`; NSNotFound
     /// (terminals/secure/launchers) or absurd values (Chromium garbage) mean the
@@ -285,8 +431,68 @@ public struct ClientContextDetector: Sendable {
               allowBlinkNativeField else {
             return false
         }
-        let sel = client.selectedRange()
-        return sel.location != NSNotFound && sel.location < 10_000_000
+        return hasUsableSelection(client.selectedRange())
+    }
+
+    private static func probeCapabilities(
+        client: IMKTextInput,
+        bundleId: String,
+        validAttributeNames: Set<String>,
+        validAttributesAreAdvertised: Bool
+    ) -> IMKClientCapabilitySnapshot {
+        let isFinder = bundleId == "com.apple.finder"
+        let isBlink = ClientCompatibilityPolicy.compositionRenderer(bundleId: bundleId) == .blink
+        let shouldProbeDocumentAccess = isFinder
+            || isBlink
+            || ConfigurationManager.shared.experimentalDirectInsertion
+            || ClientCompatibilityPolicy.prefersDirectInsertionForComposition(bundleId: bundleId)
+
+        let selectedRange = shouldProbeDocumentAccess
+            ? client.selectedRange()
+            : NSRange(location: NSNotFound, length: NSNotFound)
+        let hasUsableSelection = hasUsableSelection(selectedRange)
+        let advertisesDocumentAccess = client.supportsProperty(documentAccessProperty)
+
+        let caretGeometry: IMKClientCapabilitySnapshot.CaretGeometry
+        if isFinder {
+            let rect = client.firstRect(
+                forCharacterRange: NSRange(location: 0, length: 0),
+                actualRange: nil
+            )
+            let isDesktopSentinel = rect.origin.x >= 0 && rect.origin.y >= 0
+                && rect.origin.x < PriTypeConfig.finderDesktopThreshold
+                && rect.origin.y < PriTypeConfig.finderDesktopThreshold
+            caretGeometry = isDesktopSentinel ? .finderDesktopSentinel : .usable
+        } else {
+            caretGeometry = .unavailable
+        }
+
+        return IMKClientCapabilitySnapshot(
+            advertisesMarkedTextAttributes: validAttributesAreAdvertised,
+            advertisesDocumentAccess: advertisesDocumentAccess,
+            hasUsableSelection: hasUsableSelection,
+            advertisesBlinkReplacementRange: validAttributeNames.contains(
+                "NSTextInputReplacementRangeAttributeName"
+            ),
+            caretGeometry: caretGeometry
+        )
+    }
+
+    private static func logCapabilities(
+        _ capabilities: IMKClientCapabilitySnapshot,
+        surface: HostSurface
+    ) {
+        DebugLogger.event("host.capabilities", metadata: [
+            .state("surface", surface.diagnosticValue),
+            .flag("marked_attributes", capabilities.advertisesMarkedTextAttributes),
+            .flag("document_access", capabilities.advertisesDocumentAccess),
+            .flag("usable_selection", capabilities.hasUsableSelection),
+            .flag("blink_replacement", capabilities.advertisesBlinkReplacementRange),
+            .flag(
+                "finder_desktop_sentinel",
+                capabilities.caretGeometry == .finderDesktopSentinel
+            )
+        ])
     }
 
     public static func analyzeForActivation(client: IMKTextInput) -> ClientContext {
@@ -302,7 +508,9 @@ public struct ClientContextDetector: Sendable {
             hasTextInputCapability: !isFinder,
             isLikelyDesktopArea: isFinder,
             isLightweight: true,
-            documentAccessSafe: probeDocumentAccessSafe(client, bundleId: bundleId)
+            documentAccessSafe: probeDocumentAccessSafe(client, bundleId: bundleId),
+            capabilities: .unknown,
+            hostSurface: isFinder ? .finderNonText : .appKit
         )
     }
 
@@ -319,8 +527,6 @@ public struct ClientContextDetector: Sendable {
             bundleId = app.bundleIdentifier ?? ""
         }
         
-        let isFinder = (bundleId == "com.apple.finder")
-        
         // 2. Capabilities Check (Required for both Finder and standard apps)
         // Check text input capability via validAttributesForMarkedText
         let validAttrs = client.validAttributesForMarkedText() ?? []
@@ -331,48 +537,33 @@ public struct ClientContextDetector: Sendable {
             }
             return attribute as? String
         })
-        let usesBlinkWebContentTextClient =
-            ClientCompatibilityPolicy.usesBlinkWebContentTextClient(
-                bundleId: bundleId,
-                validAttributeNames: validAttributeNames
-            )
-        let usesBlinkNativeTextClient =
-            ClientCompatibilityPolicy.compositionRenderer(bundleId: bundleId) == .blink
-                && !usesBlinkWebContentTextClient
-        let supportsBlinkNativeDirectInsertion =
-            usesBlinkNativeTextClient
-                && ClientCompatibilityPolicy.supportsBlinkNativeDirectInsertion(
-                    bundleId: bundleId
-                )
-        
+        let capabilities = probeCapabilities(
+            client: client,
+            bundleId: bundleId,
+            validAttributeNames: validAttributeNames,
+            validAttributesAreAdvertised: !validAttrs.isEmpty
+        )
+        let hostSurface = HostSurfaceResolver.resolve(
+            bundleId: bundleId,
+            capabilities: capabilities
+        )
         // 3. SECURE INPUT CHECK is no longer cached here.
         // It is checked dynamically in PriTypeInputController.handle() for better accuracy.
         
         // 4. CONDITIONAL HEURISTIC: Coordinate check ONLY for Finder
         // This prevents false positives in other apps (e.g. Safari tabs at top of screen)
-        var isLikelyDesktopArea = false
-        if isFinder {
-            // Coordinate-based heuristic for desktop detection
-            let firstRect = client.firstRect(
-                forCharacterRange: NSRange(location: 0, length: 0),
-                actualRange: nil
-            )
-            // Check if input area is suspiciously close to top-left (typical for Finder's dummy window)
-            isLikelyDesktopArea = firstRect.origin.x >= 0 && firstRect.origin.y >= 0 &&
-                                   firstRect.origin.x < PriTypeConfig.finderDesktopThreshold &&
-                                   firstRect.origin.y < PriTypeConfig.finderDesktopThreshold
-        }
+        let isLikelyDesktopArea = capabilities.caretGeometry == .finderDesktopSentinel
+
+        logCapabilities(capabilities, surface: hostSurface)
         
         return ClientContext(
             bundleId: bundleId,
             hasTextInputCapability: hasTextInputCapability,
             isLikelyDesktopArea: isLikelyDesktopArea,
-            documentAccessSafe: probeDocumentAccessSafe(
-                client,
-                bundleId: bundleId,
-                allowBlinkNativeField: supportsBlinkNativeDirectInsertion
-            ),
-            usesBlinkNativeTextClient: usesBlinkNativeTextClient
+            documentAccessSafe: capabilities.advertisesDocumentAccess
+                || capabilities.hasUsableSelection,
+            capabilities: capabilities,
+            hostSurface: hostSurface
         )
     }
 }

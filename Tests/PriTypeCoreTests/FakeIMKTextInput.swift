@@ -18,6 +18,7 @@ final class FakeIMKTextInput: NSObject, IMKTextInput {
     var onSelectedRange: (() -> Void)?
     var attributedSubstringUnavailable = false
     var validAttributesValue: [Any] = []
+    var supportedPropertyValues: Set<TSMDocumentPropertyTag> = []
 
     private func plainString(_ value: Any?) -> String {
         if let attributed = value as? NSAttributedString { return attributed.string }
@@ -102,7 +103,9 @@ final class FakeIMKTextInput: NSObject, IMKTextInput {
     func supportsUnicode() -> Bool { true }
     func bundleIdentifier() -> String! { bundleID }
     func windowLevel() -> CGWindowLevel { 0 }
-    func supportsProperty(_ property: TSMDocumentPropertyTag) -> Bool { false }
+    func supportsProperty(_ property: TSMDocumentPropertyTag) -> Bool {
+        supportedPropertyValues.contains(property)
+    }
     func uniqueClientIdentifierString() -> String! { "synthetic-client" }
     func string(from range: NSRange, actualRange: NSRangePointer!) -> String! {
         attributedSubstring(from: range)?.string

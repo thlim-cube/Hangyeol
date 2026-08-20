@@ -813,6 +813,20 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         #endif
         guard let event = event, let client = sender as? IMKTextInput else { return false }
 
+        // A Blink web-editor host key is replayed only after the adapter has
+        // observed its committed marked range retire. The marker makes that one
+        // replay a raw host event instead of recursively entering composition.
+        if DeferredHostKeyDelivery.isReplayedHostKey(event) {
+            DebugLogger.event("input.host_key", metadata: [
+                .state("action", "pass_deferred_replay_to_host")
+            ])
+            return Self.routeDeferredHostKey(
+                in: session,
+                client: client,
+                keyCode: event.keyCode
+            )
+        }
+
         if Self.sharedController !== self {
             guard Self.sharedController == nil,
                   claimProcessActiveController(incomingClient: client) else {
@@ -863,7 +877,10 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         #endif
 
         // 3. Mark keystroke with current app's bundleId for cross-app hanja validation
-        composer.markKeystroke(bundleId: session.context.bundleId)
+        composer.markKeystroke(
+            bundleId: session.context.bundleId,
+            usesBlinkNativeTextClient: session.context.usesBlinkNativeTextClient
+        )
 
         // 4. DYNAMIC CHECK: Secure Input (password fields) — raw pass-through.
         guard let contextLease = session.captureContextStateLease() else { return false }
@@ -924,6 +941,22 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     static func routeSecureKeyDown(in session: InputSession, keyCode: UInt16) -> Bool {
         session.discardForSecureInput()
         session.observeHostFieldBoundaryKeyDown(keyCode: keyCode, passedToHost: true)
+        return false
+    }
+
+    /// A deferred host key bypasses composition on replay. Return can also move
+    /// focus, so only the existing field-boundary observer decides whether to stale.
+    static func routeDeferredHostKey(
+        in session: InputSession?,
+        client: IMKTextInput,
+        keyCode: UInt16
+    ) -> Bool {
+        if let session, session.matches(client) {
+            session.observeHostFieldBoundaryKeyDown(
+                keyCode: keyCode,
+                passedToHost: true
+            )
+        }
         return false
     }
 

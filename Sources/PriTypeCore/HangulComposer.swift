@@ -273,18 +273,47 @@ public class HangulComposer: @unchecked Sendable {
         // Return / Enter
         if keyCode == KeyCode.return || keyCode == KeyCode.numpadEnter {
             let hadComposition = !context.isEmpty()
-            commitComposition(delegate: delegate)
+            let usesBlinkComposition = ClientCompatibilityPolicy.compositionRenderer(
+                bundleId: lastInputBundleId
+            ) == .blink
             let isBlinkSoftLineBreak = keyCode == KeyCode.return
                 && modifierFlags.contains(.shift)
-                && ClientCompatibilityPolicy.compositionRenderer(
-                    bundleId: lastInputBundleId
-                ) == .blink
-            // Blink needs an explicit composition close before an ordinary
-            // Return, while a second empty update races its Shift+Return path.
-            if hadComposition && !isBlinkSoftLineBreak {
+                && usesBlinkComposition
+            let hostOwnedReturnModifiers: NSEvent.ModifierFlags = [
+                .command, .control, .option
+            ]
+            let defersBlinkWebContentReturn = hadComposition
+                && ClientCompatibilityPolicy.needsBlinkWebContentHostKeyMediation(
+                    bundleId: lastInputBundleId,
+                    usesBlinkNativeTextClient: lastInputUsesBlinkNativeTextClient
+                )
+                && modifierFlags.intersection(hostOwnedReturnModifiers).isEmpty
+
+            // Blink can acknowledge the commit before the renderer retires its
+            // marked range. Capture that range first so the host Return is released
+            // only after the composition has actually become ordinary document text.
+            let scheduledHostReturn = defersBlinkWebContentReturn
+                && delegate.tryScheduleHostKey(
+                    keyCode: keyCode,
+                    modifierFlags: modifierFlags.rawValue
+                )
+            if defersBlinkWebContentReturn {
+                delegate.setMarkedText("")
+            }
+            commitComposition(delegate: delegate)
+            if hadComposition
+                && !isBlinkSoftLineBreak
+                && !defersBlinkWebContentReturn {
                 delegate.setMarkedText("")
             }
             localTextBuffer = ""
+
+            if scheduledHostReturn {
+                DebugLogger.event("input.return", metadata: [
+                    .state("action", "commit_then_defer_until_mark_retired")
+                ])
+                return true
+            }
 
             if hadComposition && ClientCompatibilityPolicy.needsDirectNewlineAfterReturnCommit(bundleId: lastInputBundleId) {
                 delegate.insertText("\n")
@@ -360,8 +389,34 @@ public class HangulComposer: @unchecked Sendable {
         // the app delete the character after the caret. Backspace remains owned
         // by the Hangul engine while a composition is active.
         if keyCode == KeyCode.forwardDelete {
+            let hadComposition = !context.isEmpty()
+            let hostOwnedDeleteModifiers: NSEvent.ModifierFlags = [
+                .command, .control, .option, .shift
+            ]
+            let defersBlinkWebContentDelete = hadComposition
+                && ClientCompatibilityPolicy.needsBlinkWebContentHostKeyMediation(
+                    bundleId: lastInputBundleId,
+                    usesBlinkNativeTextClient: lastInputUsesBlinkNativeTextClient
+                )
+                && modifierFlags.intersection(hostOwnedDeleteModifiers).isEmpty
+
+            // Blink can acknowledge insertText before the renderer retires its
+            // marked range. Arm the host key first, then let the adapter release it
+            // only after that exact range has disappeared and the caret is stable.
+            let scheduledHostDelete = defersBlinkWebContentDelete
+                && delegate.tryScheduleHostKey(
+                    keyCode: keyCode,
+                    modifierFlags: modifierFlags.rawValue
+                )
             commitComposition(delegate: delegate)
             localTextBuffer = ""
+
+            if scheduledHostDelete {
+                DebugLogger.event("input.forward_delete", metadata: [
+                    .state("action", "commit_then_defer_until_mark_retired")
+                ])
+                return true
+            }
             return false
         }
 
@@ -705,10 +760,15 @@ public class HangulComposer: @unchecked Sendable {
     /// Used to prevent cross-app hanja leaking: if the current app differs from
     /// the app that populated localTextBuffer, the buffer is considered stale.
     private var lastInputBundleId: String = ""
+    private var lastInputUsesBlinkNativeTextClient = false
     
     /// Record which app the current keystroke is from (called from handle via controller)
-    public func markKeystroke(bundleId: String) {
+    public func markKeystroke(
+        bundleId: String,
+        usesBlinkNativeTextClient: Bool = false
+    ) {
         lastInputBundleId = bundleId
+        lastInputUsesBlinkNativeTextClient = usesBlinkNativeTextClient
     }
     
     /// Check if the buffer belongs to the given app

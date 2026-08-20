@@ -43,6 +43,9 @@ final class MockComposerDelegate: HangulComposerDelegate {
     var shouldPassThroughBackspaceAfterClearingComposition = false
     var insertTextSucceeds = true
     var replaceTextBeforeCursorSucceeds = true
+    var hostKeySchedulingSucceeds = true
+    var scheduledHostKeyCodes: [UInt16] = []
+    var scheduledHostKeyModifierFlags: [UInt] = []
     var passThroughBackspaceAfterClearingCompositionCallCount = 0
     
     func insertText(_ text: String) {
@@ -103,6 +106,27 @@ final class MockComposerDelegate: HangulComposerDelegate {
         fullText.append(text)
         return true
     }
+
+    func tryScheduleHostKey(keyCode: UInt16, modifierFlags: UInt) -> Bool {
+        guard hostKeySchedulingSucceeds else { return false }
+        orderedCalls.append(
+            keyCode == KeyCode.forwardDelete
+                ? "schedule:forward-delete"
+                : "schedule:return"
+        )
+        scheduledHostKeyCodes.append(keyCode)
+        scheduledHostKeyModifierFlags.append(modifierFlags)
+        return true
+    }
+
+    func deliverScheduledReturns() {
+        let returnCount = scheduledHostKeyCodes.filter {
+            $0 == KeyCode.return || $0 == KeyCode.numpadEnter
+        }.count
+        fullText.append(String(repeating: "\n", count: returnCount))
+        scheduledHostKeyCodes = []
+        scheduledHostKeyModifierFlags = []
+    }
     
     func reset() {
         insertedTexts = []
@@ -115,6 +139,9 @@ final class MockComposerDelegate: HangulComposerDelegate {
         shouldPassThroughBackspaceAfterClearingComposition = false
         insertTextSucceeds = true
         replaceTextBeforeCursorSucceeds = true
+        hostKeySchedulingSucceeds = true
+        scheduledHostKeyCodes = []
+        scheduledHostKeyModifierFlags = []
         passThroughBackspaceAfterClearingCompositionCallCount = 0
     }
 }

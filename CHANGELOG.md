@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.9] - 2026-08-20
+
+### Changed
+- 실제 `IMKTextInput` capability를 기준으로 AppKit, Blink 웹, Blink 네이티브, Finder 비텍스트 입력 표면을 분류하고, 입력 전달 어댑터 선택을 단일 resolver로 통합했습니다.
+- Blink 웹의 Return·Shift+Return·Forward Delete를 조합 확정과 호스트 키 재전달이 한 경계에서 처리되는 트랜잭션으로 통합했습니다.
+
+### Fixed
+- Confluence와 Codex에서 한글 조합 직후 Enter를 누르면 마지막 음절이 사라지거나 Enter를 두 번 눌러야 하던 문제를 해결했습니다.
+- 기존 문장 중간에서 입력 중인 한글 뒤를 빠르게 Forward Delete할 때 현재 조합이 삭제되던 문제를 해결했습니다. 조합한 글자가 문서에 반영된 것을 확인한 뒤 뒤쪽 글자만 삭제합니다.
+- Finder 이름 변경 필드를 데스크톱 비텍스트 영역으로 오분류해 키 입력이 막히는 경로를 capability와 실제 caret 정보로 분리했습니다.
+
 ## [2.8.8] - 2026-08-18
 
 ### Fixed
