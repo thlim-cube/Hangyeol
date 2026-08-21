@@ -150,9 +150,8 @@ struct KeyEventDeduplicator {
 
 // MARK: - DirectInsertionPlanner
 //
-// Pure decision logic for the experimental Windows-style direct-insertion delivery
-// (Phase 3 — see Docs/KoreanWindowsInputFeasibility.md). Extracted from the adapter
-// so the read-modify-write math is unit-testable without a live IMKTextInput.
+// Pure decision logic for the experimental Windows-style direct-insertion delivery,
+// extracted so read-modify-write math is testable without a live IMKTextInput.
 //
 // In direct insertion there is NO marked text: the in-progress syllable is written
 // into the document as REAL text and rewritten in place on each keystroke. The

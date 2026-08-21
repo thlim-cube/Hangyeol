@@ -51,12 +51,118 @@ struct ClientContextTests {
         client.firstRectValue = NSRect(x: 420, y: 260, width: 120, height: 22)
         client.selectedRangeValue = NSRange(location: NSNotFound, length: 0)
 
-        let context = ClientContextDetector.analyze(client: client)
+        let context = ClientContextDetector.analyze(
+            client: client,
+            experimentalDirectInsertion: false
+        )
 
         #expect(!context.hasTextInputCapability)
         #expect(!context.isLikelyDesktopArea)
         #expect(!context.shouldUseImmediateMode)
-        #expect(TextDeliveryPolicy.mode(for: context) == .markedText)
+        #expect(HostAdapterResolver.mode(
+            for: context,
+            experimentalDirectInsertion: false
+        ) == .markedText)
+    }
+
+    @Test("Finder rename evidence survives the Secure Input gate without weakening fallback")
+    func finderRenameSecureInputTrustIsNarrow() {
+        let renameClient = FakeIMKTextInput()
+        renameClient.bundleID = "com.apple.finder"
+        renameClient.validAttributesValue = []
+        renameClient.firstRectValue = NSRect(x: 420, y: 260, width: 120, height: 22)
+        renameClient.selectedRangeValue = NSRange(location: NSNotFound, length: 0)
+        let renameContext = ClientContextDetector.analyze(
+            client: renameClient,
+            experimentalDirectInsertion: false
+        )
+        var renameSelectionReads = 0
+        let renameSignals = PriTypeInputController.secureInputSignals(
+            context: renameContext,
+            hasGlobalSecureInput: false,
+            selectedRange: {
+                renameSelectionReads += 1
+                return renameClient.selectedRange()
+            }
+        )
+
+        #expect(renameContext.isConfirmedFinderTextTarget)
+        #expect(!SecureInputPolicy.shouldPassThrough(renameSignals))
+        #expect(renameSelectionReads == 0)
+
+        let desktopClient = FakeIMKTextInput()
+        desktopClient.bundleID = "com.apple.finder"
+        desktopClient.validAttributesValue = []
+        desktopClient.firstRectValue = NSRect(x: 5, y: 20, width: 0, height: 0)
+        desktopClient.selectedRangeValue = NSRange(location: NSNotFound, length: 0)
+        let desktopContext = ClientContextDetector.analyze(
+            client: desktopClient,
+            experimentalDirectInsertion: false
+        )
+        let desktopSignals = PriTypeInputController.secureInputSignals(
+            context: desktopContext,
+            hasGlobalSecureInput: false,
+            selectedRange: desktopClient.selectedRange
+        )
+
+        #expect(!desktopContext.isConfirmedFinderTextTarget)
+        #expect(SecureInputPolicy.shouldPassThrough(desktopSignals))
+
+        let globallySecureSignals = PriTypeInputController.secureInputSignals(
+            context: renameContext,
+            hasGlobalSecureInput: true,
+            selectedRange: {
+                Issue.record("Global Secure Input must not probe the client selection")
+                return NSRange(location: 0, length: 0)
+            }
+        )
+        #expect(SecureInputPolicy.shouldPassThrough(globallySecureSignals))
+
+        let unknownAppKit = ClientContext(
+            bundleId: "com.example.passwordlike",
+            hasTextInputCapability: false,
+            isLikelyDesktopArea: false
+        )
+        let unknownSignals = PriTypeInputController.secureInputSignals(
+            context: unknownAppKit,
+            hasGlobalSecureInput: false,
+            selectedRange: { NSRange(location: NSNotFound, length: 0) }
+        )
+        #expect(!unknownAppKit.isConfirmedFinderTextTarget)
+        #expect(SecureInputPolicy.shouldPassThrough(unknownSignals))
+
+        for invalidRect in [
+            NSRect.null,
+            NSRect(x: 420, y: 260, width: 120, height: 0),
+            NSRect(x: 20_000_000, y: 20_000_000, width: 120, height: 22)
+        ] {
+            let invalidGeometryClient = FakeIMKTextInput()
+            invalidGeometryClient.bundleID = "com.apple.finder"
+            invalidGeometryClient.validAttributesValue = []
+            invalidGeometryClient.firstRectValue = invalidRect
+            invalidGeometryClient.selectedRangeValue = NSRange(
+                location: NSNotFound,
+                length: 0
+            )
+            let invalidGeometryContext = ClientContextDetector.analyze(
+                client: invalidGeometryClient,
+                experimentalDirectInsertion: false
+            )
+            var selectionReads = 0
+            let invalidGeometrySignals = PriTypeInputController.secureInputSignals(
+                context: invalidGeometryContext,
+                hasGlobalSecureInput: false,
+                selectedRange: {
+                    selectionReads += 1
+                    return invalidGeometryClient.selectedRange()
+                }
+            )
+
+            #expect(invalidGeometryContext.capabilities.caretGeometry == .unavailable)
+            #expect(!invalidGeometryContext.isConfirmedFinderTextTarget)
+            #expect(SecureInputPolicy.shouldPassThrough(invalidGeometrySignals))
+            #expect(selectionReads == 1)
+        }
     }
 
     @Test("Finder rename selection overrides the dummy-window coordinate")
@@ -67,7 +173,10 @@ struct ClientContextTests {
         client.firstRectValue = NSRect(x: 5, y: 20, width: 0, height: 0)
         client.selectedRangeValue = NSRange(location: 4, length: 0)
 
-        let context = ClientContextDetector.analyze(client: client)
+        let context = ClientContextDetector.analyze(
+            client: client,
+            experimentalDirectInsertion: false
+        )
 
         // Secure classification keeps using advertised marked-text capability,
         // while adapter routing preserves the raw dummy-coordinate observation.
@@ -76,7 +185,10 @@ struct ClientContextTests {
         #expect(context.capabilities.hasUsableSelection)
         #expect(context.hostSurface == .appKit)
         #expect(!context.shouldUseImmediateMode)
-        #expect(TextDeliveryPolicy.mode(for: context) == .markedText)
+        #expect(HostAdapterResolver.mode(
+            for: context,
+            experimentalDirectInsertion: false
+        ) == .markedText)
     }
 
     @Test("Finder document-access capability overrides the desktop sentinel")
@@ -90,14 +202,20 @@ struct ClientContextTests {
             TSMDocumentPropertyTag(kTSMDocumentSupportDocumentAccessPropertyTag)
         ]
 
-        let context = ClientContextDetector.analyze(client: client)
+        let context = ClientContextDetector.analyze(
+            client: client,
+            experimentalDirectInsertion: false
+        )
 
         #expect(context.capabilities.advertisesDocumentAccess)
         #expect(!context.hasTextInputCapability)
         #expect(context.hostSurface == .appKit)
         #expect(context.documentAccessSafe)
         #expect(!context.shouldUseImmediateMode)
-        #expect(TextDeliveryPolicy.mode(for: context) == .markedText)
+        #expect(HostAdapterResolver.mode(
+            for: context,
+            experimentalDirectInsertion: false
+        ) == .markedText)
     }
 
     @Test("Finder desktop keeps immediate mode without an editable selection")
@@ -108,14 +226,20 @@ struct ClientContextTests {
         client.firstRectValue = NSRect(x: 5, y: 20, width: 0, height: 0)
         client.selectedRangeValue = NSRange(location: NSNotFound, length: 0)
 
-        let context = ClientContextDetector.analyze(client: client)
+        let context = ClientContextDetector.analyze(
+            client: client,
+            experimentalDirectInsertion: false
+        )
 
         #expect(!context.hasTextInputCapability)
         #expect(!context.capabilities.hasEditableTextEvidence)
         #expect(context.hostSurface == .finderNonText)
         #expect(context.isLikelyDesktopArea)
         #expect(context.shouldUseImmediateMode)
-        #expect(TextDeliveryPolicy.mode(for: context) == .immediate)
+        #expect(HostAdapterResolver.mode(
+            for: context,
+            experimentalDirectInsertion: false
+        ) == .immediate)
     }
     
     @Test("Non-Finder apps never use immediate mode")
@@ -234,26 +358,6 @@ struct ClientContextTests {
         #expect(!ClientCompatibilityPolicy.prefersDirectInsertionForComposition(bundleId: "com.openai.codex"))
     }
 
-    @Test("Blink host-key deferral distinguishes Electron editors from browser-native fields")
-    func blinkHostKeyDeferralDistinguishesNativeFields() {
-        #expect(ClientCompatibilityPolicy.needsBlinkWebContentHostKeyMediation(
-            bundleId: "com.openai.codex",
-            usesBlinkNativeTextClient: true
-        ))
-        #expect(ClientCompatibilityPolicy.needsBlinkWebContentHostKeyMediation(
-            bundleId: "com.tinyspeck.slackmacgap",
-            usesBlinkNativeTextClient: true
-        ))
-        #expect(ClientCompatibilityPolicy.needsBlinkWebContentHostKeyMediation(
-            bundleId: "com.google.Chrome",
-            usesBlinkNativeTextClient: false
-        ))
-        #expect(!ClientCompatibilityPolicy.needsBlinkWebContentHostKeyMediation(
-            bundleId: "com.google.Chrome",
-            usesBlinkNativeTextClient: true
-        ))
-    }
-    
     // MARK: - Resolution / Desktop Detection (migrated from ResolutionTests.swift)
     
     @Test("Desktop detection — standard resolution")

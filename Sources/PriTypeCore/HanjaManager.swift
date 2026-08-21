@@ -47,9 +47,11 @@ public final class HanjaManager: @unchecked Sendable {
         if table.load() {
             self.table = table
             self.isLoaded = true
-            DebugLogger.log("HanjaManager: Loaded dictionary from default path")
+            DebugLogger.event("hanja.dictionary_loaded", metadata: [
+                .state("source", "default")
+            ])
         } else {
-            DebugLogger.log("HanjaManager: WARNING - Failed to load hanja dictionary")
+            DebugLogger.event("hanja.dictionary_load_failed")
         }
     }
     
@@ -61,7 +63,9 @@ public final class HanjaManager: @unchecked Sendable {
         
         let bundle = Self.resourceBundle
         guard let url = bundle.url(forResource: "jamo_symbols", withExtension: "json") else {
-            DebugLogger.log("HanjaManager: jamo_symbols.json not found in bundle")
+            DebugLogger.event("hanja.symbols_load_failed", metadata: [
+                .state("reason", "resource_missing")
+            ])
             jamoSymbolsLoaded = true
             return
         }
@@ -77,7 +81,9 @@ public final class HanjaManager: @unchecked Sendable {
                 .count("entry_count", jamoSymbols.values.map(\.count).reduce(0, +))
             ])
         } catch {
-            DebugLogger.log("HanjaManager: Failed to load jamo_symbols.json: \(error)")
+            DebugLogger.event("hanja.symbols_load_failed", metadata: [
+                .state("reason", "decode_failed")
+            ])
         }
         jamoSymbolsLoaded = true
     }

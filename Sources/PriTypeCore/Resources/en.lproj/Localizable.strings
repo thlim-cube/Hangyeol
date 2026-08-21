@@ -4,7 +4,7 @@
 "settings.title" = "Settings";
 "settings.footer" = "Designed for macOS";
 
-/* Status Bar */
+/* Legacy status API compatibility */
 "status.inputHealth" = "Input Health";
 "status.ready" = "Ready";
 "status.starting" = "Starting";

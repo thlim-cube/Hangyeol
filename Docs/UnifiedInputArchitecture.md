@@ -4,9 +4,8 @@
 상태: **canonical** — 이 문서가 한/영 입력 구조의 정식 명세다.
 
 이 문서는 `v2.6.5`(내부 모드 통합)와 `v2.7.2`(macOS 입력 소스 통합)의 장점을 결합한
-현재 아키텍처를 기술한다. 과거의 [InputArchitectureHybridRollbackPlan.md](InputArchitectureHybridRollbackPlan.md)는
-"영어 가짜 모드 2개 등록" 안을 제안했으나, 실제 구현은 더 단순한 **단일 소스 하이브리드**로
-수렴했다. 그 차이와 근거는 아래 §2.1에 정리한다.
+현재 아키텍처는 **단일 소스 하이브리드**다. 검토 단계의 "영어 가짜 모드 2개 등록" 안은
+채택하지 않았으며, 그 차이와 근거는 아래 §2.1에 정리한다.
 
 ---
 
@@ -35,8 +34,8 @@
 ASCII-capable keyboard layout(Dvorak·AZERTY 등)을 대신 적용한다.
 Caps Lock 기반 전환은 예외로 macOS가 실제 TIS source를 소유하고, 이때 PriType custom toggle은 비활성화한다.
 macOS 소유권 활성화 또는 ABC→PriType 재선택 경계는 pending으로 기록하고, 다음 비보안 PriType
-keyDown에서 내부 mode를 한국어로 정합화한다. 경계가 확정된 동안 상태바는 실제 mode를 쓰지 않고
-다음 일반 입력의 예상 mode인 `한`을 먼저 표시한다.
+keyDown에서 내부 mode를 한국어로 정합화한다. 정합화 전에는 `InputModeOwnershipTracker`가 pending
+상태만 유지하고 실제 mode와 client를 변경하지 않는다.
 
 ---
 
@@ -56,7 +55,7 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
                           ┌─────────────────┴─────────────────┐
                      .korean                                .english
               libhangul 조합 + marked text          기본 pure pass-through (return false)
-                                                    StatusBar "A", macOS가 영문 처리
+                                                    macOS가 영문 처리
 ```
 
 ### 2.1 단일 소스 등록 (영어 가짜 모드 미등록)
@@ -66,16 +65,14 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 
 과거 RollbackPlan은 Korean/English 두 가짜 모드 등록을 제안했지만 채택하지 않는다. 이유:
 
-- 메뉴바 모드 표시는 앱 시작 시 초기화되는 [StatusBarManager](../Sources/PriTypeCore/StatusBarManager.swift)의 `한`/`A`가 담당한다. pending 소유권 정합화가 있으면 실제 저장 mode보다 다음 일반 입력의 예상 mode를 우선 표시한다.
-  가짜 영어 모드의 유일한 명분(메뉴 표시)이 불필요하다.
+- [StatusBarManager](../Sources/PriTypeCore/StatusBarManager.swift)는 과거 공개 API의 source compatibility를 위한 no-op shell이며 별도 메뉴 막대 아이콘을 표시하지 않는다.
+- 영어 표시를 위해 가짜 IMK mode를 추가하면 아래의 비동기 전환과 stale 입력 소스 문제를 다시 만든다.
 - 두 모드는 전환마다 `selectInputMode:`라는 **또 다른 비동기 IMK 호출을 hot path에 추가**한다.
   이는 `composer.inputMode`와 desync 가능 → 우리가 제거하려던 race를 재도입한다.
 - 2.7대에서 고생한 입력 소스 중복, `tsVisibleInputModeOrderedArrayKey` 튜닝, stale ID 정리가 다시 필요해진다.
 
 **트레이드오프(수용):** 영어 모드일 때도 macOS 메뉴바의 입력 소스 아이콘은 PriType(한글)로 남는다.
-이는 2.6.5와 동일한 화면상 사소함이며, 사용자에겐 PriType 자체 `한`/`A` 표시가 실질 지표다.
-상태바 메뉴는 실제 또는 pending 예상 모드와 중앙 감시 backend, IOKit 제한 사항, 손쉬운 사용 권한,
-시스템 Secure Input 활성 여부만 표시하며 입력 문자열·preedit·문서 내용은 수집하지 않는다.
+PriType은 별도 `한`/`A` 상태 아이콘을 추가하지 않는다. 실제 mode는 `InputModeStore`, pending 소유권 정합화는 `InputModeOwnershipTracker`, 감시 backend 수명은 `ToggleMonitorStatusStore`가 각각 보관한다.
 
 ### 2.2 상태 소유권
 
@@ -88,7 +85,6 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 | 감시 backend 단일 소유권·제한 | `ToggleMonitorStatusStore` | CGEventTap/IOKit 동시 실행 방지, IOKit 미지원 바인딩 노출 |
 | IMK 세션 edge(commit·override·layout) | `PriTypeInputController` | imperative 경계 |
 | 실제 TIS source 선택 | **macOS만** | Caps Lock 경로 한정 |
-| 사용자 표시(한/A)·입력 상태 metadata | `StatusBarManager` | `setMode` actual, `setPendingMode` expected; pending 우선, 실제 mode/client 불변 |
 | TIS 조회·stale 정리 | `InputSourceManager` | hot path 제외 |
 
 ---
@@ -163,13 +159,12 @@ Tap/IOKit  ──requestToggle(source)──►  InputModeCoordinator
              → overrideKeyboardWithKeyboardNamed(ABC/US 또는 opt-in 현재 Roman layout)
              → composer.setInputMode(next)
       Secure Input: client write 없이 composition discard
-                    → composer.setInputMode(next)와 상태 표시 갱신
+                    → composer.setInputMode(next)
                     → Roman layout sync는 다음 비보안 입력 직전까지 보류
 
 TIS/소유권 알림 ──► InputModeOwnershipTracker
    경계가 아니거나 TIS 조회 실패: no-op, 상태 추정 금지
    실제 경계: pending Korean reconciliation만 기록
-   StatusBarManager: pending `한` 표시만 갱신 (InputModeStore/client 불변)
 
 다음 PriType keyDown
    1. session/context 확인 및 중복 keyDown 판정
@@ -187,7 +182,7 @@ TIS/소유권 알림 ──► InputModeOwnershipTracker
 
 - active controller가 없으면 composer mode만 단독으로 바꾸지 않는다(다음 activate에서 stale state로 첫 글자 엉킴 방지).
 - active session이 없으면 custom toggle은 no-op이다.
-- Secure Input에서는 pending macOS 소유권 정합화만 보류하므로 실제 `InputModeStore`와 client는 바뀌지 않고 예상 `한` 표시만 유지한다. 이는 client write 없이 실제 내부 mode를 바꾸고 Roman layout만 보류하는 Secure custom toggle과 별도 계약이다.
+- Secure Input에서는 pending macOS 소유권 정합화만 보류하므로 실제 `InputModeStore`와 client는 바뀌지 않는다. 이는 client write 없이 실제 내부 mode를 바꾸고 Roman layout만 보류하는 Secure custom toggle과 별도 계약이다.
 - TIS source를 조회할 수 없으면 선택 source를 추정하지 않는다.
 - Caps Lock 소유 상태면 custom toggle은 진입 자체가 거부된다.
 - regular/combo 한자 바인딩은 `nonsecure`에서만 전체 press pair를 소비하고, `secure`/`unknown`에서는 전체 쌍을 host로 통과시킨다. modifier-only 한자키는 기존 전역 단축키 계약을 유지한다.
@@ -225,7 +220,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build -c release 
 - 동일 PriType source에서 탭·앱·필드 이동 — 마지막 한/영 mode 유지
 - Secure Input 필드의 pending 소유권 경계 — commit/mode write 없음(custom toggle은 별도 계약)
 - 새 controller가 이전 deactivate보다 먼저 활성화 — write-safe인 이전 조합만 1회 확정하고, stale·미확인 generation은 write-free discard; 늦은 deactivate가 새 owner에 영향 없음
-- CGEventTap 반복 실패 — tap 완전 해제 후 IOKit 단독 실행, 미지원 regular/combo 바인딩이 상태바에 표시됨
+- CGEventTap 반복 실패 — tap 완전 해제 후 IOKit 단독 실행, 미지원 regular/combo 바인딩을 중앙 감시 상태에 기록
 
 ---
 
@@ -234,5 +229,5 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build -c release 
 - 최신 설정창 UI/UX (Liquid Glass)
 - Caps Lock은 macOS 입력 소스 설정이 소유한다는 정책
 - GoodNotes Return 중복/누락 보정
-- 앱 비활성 시 조합 강제 commit — host-무관 멱등 안전망(과거 KakaoTalk 하드코딩을 일반화: `PriTypeInputController`의 `NSWorkspace` 비활성 옵저버 + `forceCommitForApplicationDeactivate`)
+- 앱 비활성 시 조합 강제 commit — host-무관 멱등 안전망(과거 KakaoTalk 하드코딩을 일반화: `InputSession.handleAppDeactivation()` → `finalize(.appDeactivate)`)
 - 설치/시작 시 PriType 자신을 `TISEnableInputSource` 하지 않는 보수화

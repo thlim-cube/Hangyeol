@@ -274,7 +274,7 @@ public protocol ConfigurationProviding: AnyObject, Sendable {
 
     /// Experimental: deliver the in-progress syllable as REAL text (Windows-style
     /// direct insertion) instead of marked text on probe-verified, non-denylisted hosts.
-    /// Default OFF. See Docs/KoreanWindowsInputFeasibility.md (Phase 3).
+    /// Default OFF. See ARCHITECTURE.md, `HostAdapterResolver`.
     var experimentalDirectInsertion: Bool { get }
 }
 
@@ -759,7 +759,7 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     /// Experimental Windows-style direct insertion (Phase 3). Default OFF.
     /// When ON, the in-progress syllable is delivered as REAL text on probe-verified,
     /// non-denylisted hosts instead of marked text. This is a research
-    /// vehicle — see Docs/KoreanWindowsInputFeasibility.md. Enable via Settings or:
+    /// vehicle. Enable via Settings or:
     ///   defaults write com.pritype.inputmethod.v2 com.pritype.experimentalDirectInsertion -bool YES
     public var experimentalDirectInsertion: Bool {
         get {

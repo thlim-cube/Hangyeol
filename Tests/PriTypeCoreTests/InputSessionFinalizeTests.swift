@@ -57,6 +57,40 @@ struct InputSessionFinalizeTests {
         return result
     }
 
+    @Test("Composition root keeps the live direct-insertion preference")
+    func compositionRootUsesLiveDirectInsertionPreference() {
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.apple.TextEdit"
+        let configuration = MockConfiguration()
+        let composer = HangulComposer(
+            statusBar: MockStatusBar(),
+            configuration: configuration
+        )
+        let session = PriTypeInputController.makeInputSession(
+            client: client,
+            context: context(bundleId: client.bundleID, documentAccessSafe: true),
+            composer: composer,
+            configuration: configuration
+        )
+        _ = session.prepareForNonSecureClientWrites()
+
+        #expect(session.adapter.deliveryMode == .markedText)
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        #expect(client.markedText == "ㄱ")
+
+        configuration.experimentalDirectInsertion = true
+        session.ensureAdapterMatchesPolicy()
+        #expect(session.adapter.deliveryMode == .directInsertion)
+        #expect(client.document == "ㄱ")
+
+        configuration.experimentalDirectInsertion = false
+        session.ensureAdapterMatchesPolicy()
+        #expect(session.adapter.deliveryMode == .markedText)
+    }
+
     @Test("An unclassified session cannot write during lifecycle finalize")
     func unclassifiedSessionFinalizeDoesNotWrite() {
         let client = FakeIMKTextInput()
@@ -1199,6 +1233,61 @@ struct InputSessionFinalizeTests {
         #expect(!composer.hasActiveComposition)
         #expect(client.document == "ㄱ")
         #expect(client.markedText.isEmpty)
+    }
+
+    @Test("Same-client surface changes discard old ownership and rebuild marked delivery")
+    func sameClientSurfaceChangeRebuildsMarkedAdapter() {
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.example.opaque"
+        let composer = HangulComposer(
+            statusBar: MockStatusBar(),
+            configuration: MockConfiguration()
+        )
+        let session = InputSession(
+            client: client,
+            context: context(bundleId: client.bundleID, documentAccessSafe: true),
+            composer: composer
+        )
+        _ = session.prepareForNonSecureClientWrites()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        #expect(session.adapter.hostSurface == .appKit)
+        #expect(client.markedPayloadWasAttributed == [true])
+
+        let blinkCapabilities = IMKClientCapabilitySnapshot(
+            advertisesMarkedTextAttributes: true,
+            advertisesDocumentAccess: true,
+            hasUsableSelection: true,
+            advertisesBlinkReplacementRange: true,
+            caretGeometry: .usable
+        )
+        let blinkContext = ClientContext(
+            bundleId: client.bundleID,
+            hasTextInputCapability: true,
+            isLikelyDesktopArea: false,
+            documentAccessSafe: true,
+            capabilities: blinkCapabilities,
+            hostSurface: HostSurfaceResolver.resolve(
+                bundleId: client.bundleID,
+                capabilities: blinkCapabilities
+            )
+        )
+
+        session.markContextStaleForSameClientReactivation()
+        #expect(session.refreshContextIfNeeded(using: { _ in blinkContext }))
+        _ = session.prepareForNonSecureClientWrites()
+        session.ensureAdapterMatchesPolicy()
+
+        #expect(!composer.hasActiveComposition)
+        #expect(client.insertCalls.isEmpty)
+        #expect(session.adapter.deliveryMode == .markedText)
+        #expect(session.adapter.hostSurface == .blinkWeb)
+
+        session.adapter.setMarkedText("가")
+        #expect(client.markedPayloadWasAttributed == [true, false])
     }
 
     @Test("Secure context refresh rebuilds policy without committing old fallback")

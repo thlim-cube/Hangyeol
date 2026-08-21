@@ -15,18 +15,13 @@ enum ToggleMonitorIssue: Equatable, Sendable {
     case iokitOpenFailed(Int32)
 }
 
-/// 설정 화면과 상태 표시가 사용할 수 있는 전환키 감시 상태입니다.
+/// 두 감시 backend가 공유하는 전환키 수명주기 상태입니다.
 enum ToggleMonitorStatus: Equatable, Sendable {
     case stopped
     case starting(ToggleMonitorBackend)
     case running(backend: ToggleMonitorBackend, limitations: [ToggleMonitorIssue])
     case transitioning(from: ToggleMonitorBackend, to: ToggleMonitorBackend)
     case unavailable(ToggleMonitorIssue)
-}
-
-extension Notification.Name {
-    /// `ToggleMonitorStatusStore.status`가 바뀔 때 게시됩니다.
-    static let toggleMonitorStatusChanged = Notification.Name("PriTypeToggleMonitorStatusChanged")
 }
 
 /// CGEventTap과 IOKit이 동시에 활성화되지 않도록 시작 권한과 현재 상태를 관리합니다.
@@ -63,11 +58,7 @@ final class ToggleMonitorStatusStore: @unchecked Sendable {
         }
         lock.unlock()
 
-        if let nextStatus {
-            publish(nextStatus)
-            return true
-        }
-        return false
+        return nextStatus != nil
     }
 
     func markRunning(_ backend: ToggleMonitorBackend, limitations: [ToggleMonitorIssue] = []) {
@@ -81,7 +72,6 @@ final class ToggleMonitorStatusStore: @unchecked Sendable {
         }
         storedStatus = nextStatus
         lock.unlock()
-        publish(nextStatus)
     }
 
     /// event tap 자원이 해제된 뒤 IOKit 인계를 한 번만 시작합니다.
@@ -94,7 +84,6 @@ final class ToggleMonitorStatusStore: @unchecked Sendable {
         case .starting(.eventTap), .running(backend: .eventTap, limitations: _):
             storedStatus = nextStatus
             lock.unlock()
-            publish(nextStatus)
             return true
         case .stopped, .starting(.iokit), .running(backend: .iokit, limitations: _),
              .transitioning, .unavailable:
@@ -126,7 +115,6 @@ final class ToggleMonitorStatusStore: @unchecked Sendable {
         }
         storedStatus = nextStatus
         lock.unlock()
-        publish(nextStatus)
     }
 
     func updateLimitations(_ limitations: [ToggleMonitorIssue], for backend: ToggleMonitorBackend) {
@@ -141,7 +129,6 @@ final class ToggleMonitorStatusStore: @unchecked Sendable {
         }
         storedStatus = nextStatus
         lock.unlock()
-        publish(nextStatus)
     }
 
     func markStopped(_ backend: ToggleMonitorBackend) {
@@ -160,17 +147,6 @@ final class ToggleMonitorStatusStore: @unchecked Sendable {
         }
         lock.unlock()
 
-        if shouldStop {
-            publish(.stopped)
-        }
-    }
-
-    private func publish(_ status: ToggleMonitorStatus) {
-        NotificationCenter.default.post(
-            name: .toggleMonitorStatusChanged,
-            object: self,
-            userInfo: ["status": status]
-        )
     }
 }
 

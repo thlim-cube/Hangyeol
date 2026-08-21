@@ -482,6 +482,37 @@ struct HangulComposerTests {
         #expect(delegate.markedText.isEmpty)
     }
 
+    @Test("Capability-selected Blink web mediates Return and Forward Delete")
+    func capabilitySelectedBlinkWebMediatesHostKeys() throws {
+        for (keyCode, character) in [
+            (KeyCode.return, "\r"),
+            (KeyCode.forwardDelete, "\u{F728}")
+        ] {
+            let (composer, delegate, _) = makeComposer()
+            composer.markKeystroke(
+                bundleId: "com.example.opaque",
+                hostSurface: .blinkWeb
+            )
+            _ = composer.handle(
+                try #require(TestEventFactory.keyEvent(char: "r", keyCode: 15)),
+                delegate: delegate
+            )
+            _ = composer.handle(
+                try #require(TestEventFactory.keyEvent(char: "k", keyCode: 40)),
+                delegate: delegate
+            )
+
+            let handled = composer.handle(
+                try #require(TestEventFactory.keyEvent(char: character, keyCode: keyCode)),
+                delegate: delegate
+            )
+
+            #expect(handled)
+            #expect(delegate.scheduledHostKeyCodes == [keyCode])
+            #expect(delegate.fullText == "가")
+        }
+    }
+
     @Test("Codex Shift+Return defers the composed soft line break")
     func codexShiftReturnDefersComposedSoftLineBreak() throws {
         let (composer, delegate, _) = makeComposer()

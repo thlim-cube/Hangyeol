@@ -41,9 +41,9 @@ enum CompositionFinalizeReason: String {
 /// `handle()`), kept across `deactivateServer` so an early `handle()` can refresh
 /// its context, and replaced when a different client appears.
 ///
-/// INVARIANT: `finalize(reason:)` is the ONLY way an in-progress composition ends
-/// against this session's client. It is idempotent (no-op without active composition)
-/// and host-agnostic — no bundle-ID special cases.
+/// INVARIANT: `finalize(reason:)` is the only session/lifecycle boundary that ends an
+/// in-progress composition against this client. Ordinary key handling may commit
+/// through `HangulComposer`; lifecycle callers use this idempotent, host-agnostic path.
 final class InputSession: @unchecked Sendable {
     struct FocusLossActivation: Equatable {
         fileprivate let generation: UInt64
@@ -136,19 +136,30 @@ final class InputSession: @unchecked Sendable {
     /// it. Injected by the controller so focus-loss behavior remains session-testable.
     private let retireActiveControllerAfterFocusLoss: (InputSession) -> Void
 
+    /// Reads the in-memory direct-insertion preference. Production injects the live
+    /// configuration snapshot; tests inject an explicit value so process defaults
+    /// cannot change the adapter under test.
+    private let experimentalDirectInsertion: () -> Bool
+
     init(
         client: IMKTextInput,
         context: ClientContext,
         composer: HangulComposer,
+        experimentalDirectInsertion: @escaping () -> Bool,
         invalidateHanjaShortcutSessionState: @escaping () -> Void = {},
         retireActiveControllerAfterFocusLoss: @escaping (InputSession) -> Void = { _ in }
     ) {
         self.client = client
         self.context = context
         self.composer = composer
+        self.experimentalDirectInsertion = experimentalDirectInsertion
         self.invalidateHanjaShortcutSessionState = invalidateHanjaShortcutSessionState
         self.retireActiveControllerAfterFocusLoss = retireActiveControllerAfterFocusLoss
-        self.adapter = TextDeliveryPolicy.makeAdapter(for: client, context: context)
+        self.adapter = HostAdapterResolver.makeAdapter(
+            for: client,
+            context: context,
+            experimentalDirectInsertion: experimentalDirectInsertion()
+        )
         configureClientWriteValidator(on: adapter)
     }
 
@@ -260,9 +271,13 @@ final class InputSession: @unchecked Sendable {
               context.isLikelyDesktopArea == newContext.isLikelyDesktopArea,
               context.isLightweight == newContext.isLightweight,
               context.documentAccessSafe == newContext.documentAccessSafe,
+              context.hostSurface == newContext.hostSurface,
               context.usesBlinkNativeTextClient == newContext.usesBlinkNativeTextClient,
               adapter.deliveryMode == .markedText,
-              TextDeliveryPolicy.mode(for: newContext) == .markedText,
+              HostAdapterResolver.mode(
+                  for: newContext,
+                  experimentalDirectInsertion: experimentalDirectInsertion()
+              ) == .markedText,
               lastNonSecureGeneration == contextGeneration,
               deferredMarkedTextCleanupToken == nil,
               composer.hasActiveComposition else {
@@ -299,18 +314,28 @@ final class InputSession: @unchecked Sendable {
         return true
     }
 
-    /// Rebuild the adapter if the delivery policy no longer matches it (e.g. the
-    /// experimental direct-insertion flag flipped mid-session). Cheap — two enum
-    /// compares on the hot path. This may finalize into the client, so production
-    /// callers must first pass the current field's secure-input gate.
+    /// Rebuild the adapter if the delivery policy or host surface no longer matches
+    /// it. Cheap enum comparisons on the hot path. This may finalize into the client,
+    /// so production callers must first pass the current field's secure-input gate.
     func ensureAdapterMatchesPolicy() {
-        let resolved = TextDeliveryPolicy.mode(for: context)
-        guard adapter.deliveryMode != resolved else { return }
+        let directInsertionEnabled = experimentalDirectInsertion()
+        let resolved = HostAdapterResolver.mode(
+            for: context,
+            experimentalDirectInsertion: directInsertionEnabled
+        )
+        guard adapter.deliveryMode != resolved
+                || adapter.hostSurface != context.hostSurface else {
+            return
+        }
         // The old adapter owns the currently rendered preedit. Finalize through it
         // before replacing the adapter, otherwise marked text or direct-insertion
         // tracking can be stranded when the experimental setting changes at runtime.
         finalize(reason: .deliveryModeChange)
-        let replacement = TextDeliveryPolicy.makeAdapter(for: client, context: context)
+        let replacement = HostAdapterResolver.makeAdapter(
+            for: client,
+            context: context,
+            experimentalDirectInsertion: directInsertionEnabled
+        )
         configureClientWriteValidator(on: replacement)
         adapter = replacement
     }
@@ -868,9 +893,18 @@ final class InputSession: @unchecked Sendable {
         lastNonSecureGeneration = nil
 
         guard rebuildAdapter else { return }
-        let resolved = TextDeliveryPolicy.mode(for: context)
-        if adapter.deliveryMode != resolved {
-            let replacement = TextDeliveryPolicy.makeAdapter(for: client, context: context)
+        let directInsertionEnabled = experimentalDirectInsertion()
+        let resolved = HostAdapterResolver.mode(
+            for: context,
+            experimentalDirectInsertion: directInsertionEnabled
+        )
+        if adapter.deliveryMode != resolved
+            || adapter.hostSurface != context.hostSurface {
+            let replacement = HostAdapterResolver.makeAdapter(
+                for: client,
+                context: context,
+                experimentalDirectInsertion: directInsertionEnabled
+            )
             configureClientWriteValidator(on: replacement)
             adapter = replacement
         }

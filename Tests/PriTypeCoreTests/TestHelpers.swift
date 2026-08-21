@@ -1,5 +1,6 @@
 import Testing
 import Cocoa
+import InputMethodKit
 @testable import PriTypeCore
 
 // MARK: - Shared Test Helpers
@@ -27,6 +28,26 @@ final class MockConfiguration: ConfigurationProviding, @unchecked Sendable {
     var smartQuoteSubstitutionEnabled: Bool { true }
     var smartDashSubstitutionEnabled: Bool { true }
     var englishTextConvenienceFallbackEnabled: Bool = false
+    var experimentalDirectInsertion: Bool = false
+}
+
+extension InputSession {
+    convenience init(
+        client: IMKTextInput,
+        context: ClientContext,
+        composer: HangulComposer,
+        invalidateHanjaShortcutSessionState: @escaping () -> Void = {},
+        retireActiveControllerAfterFocusLoss: @escaping (InputSession) -> Void = { _ in }
+    ) {
+        self.init(
+            client: client,
+            context: context,
+            composer: composer,
+            experimentalDirectInsertion: { false },
+            invalidateHanjaShortcutSessionState: invalidateHanjaShortcutSessionState,
+            retireActiveControllerAfterFocusLoss: retireActiveControllerAfterFocusLoss
+        )
+    }
 }
 
 /// Mock implementation of HangulComposerDelegate for tests

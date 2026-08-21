@@ -24,15 +24,8 @@ public final class InputModeCoordinator: @unchecked Sendable {
 
     private var ownershipTracker = InputModeOwnershipTracker()
     private var ownershipObserverTokens: [NSObjectProtocol] = []
-    private let modePresentation: PendingInputModePresenting
 
-    private init() {
-        modePresentation = StatusBarManager.shared
-    }
-
-    init(modePresentation: PendingInputModePresenting) {
-        self.modePresentation = modePresentation
-    }
+    private init() {}
 
     /// Start process-wide observation of real ownership and TIS selection
     /// boundaries. Observers only record pending work; they never write mode state
@@ -132,7 +125,6 @@ public final class InputModeCoordinator: @unchecked Sendable {
         guard controller.reconcileMacOSOwnedInputSourceBoundary() else { return false }
 
         ownershipTracker.markReconciled()
-        modePresentation.setPendingMode(nil)
         DebugLogger.event("input_mode.ownership_reconciled", metadata: [
             .state("mode", "korean")
         ])
@@ -152,9 +144,6 @@ public final class InputModeCoordinator: @unchecked Sendable {
     func observe(_ snapshot: InputModeOwnershipSnapshot) {
         assert(Thread.isMainThread, "Input-mode ownership observation must run on the main thread")
         let boundary = ownershipTracker.observe(snapshot)
-        modePresentation.setPendingMode(
-            ownershipTracker.hasPendingKoreanReconciliation ? .korean : nil
-        )
 
         guard let boundary else { return }
         DebugLogger.event("input_mode.ownership_boundary", metadata: [

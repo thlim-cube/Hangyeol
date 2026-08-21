@@ -294,6 +294,35 @@ struct ReturnDeliveryTests {
         #expect(replayedKeyDown.modifierFlags.contains(.function))
     }
 
+    @Test("Approved replay posts key down, key up, then the field boundary")
+    func approvedReplayOrdering() throws {
+        let events = try #require(DeferredHostKeyDelivery.makeEvents(
+            keyCode: KeyCode.return,
+            modifierFlags: 0
+        ))
+        var calls: [String] = []
+
+        DeferredHostKeyDelivery.postApprovedReplay(
+            events,
+            keyCode: KeyCode.return,
+            postEvent: { event in
+                switch event.type {
+                case .keyDown:
+                    calls.append("keyDown")
+                case .keyUp:
+                    calls.append("keyUp")
+                default:
+                    calls.append("unexpected")
+                }
+            },
+            didPost: { keyCode in
+                calls.append("boundary:\(keyCode)")
+            }
+        )
+
+        #expect(calls == ["keyDown", "keyUp", "boundary:\(KeyCode.return)"])
+    }
+
     @Test("Blink Forward Delete keeps 마 and deletes the following 다")
     func blinkMidTextForwardDelete() throws {
         let composer = HangulComposer(

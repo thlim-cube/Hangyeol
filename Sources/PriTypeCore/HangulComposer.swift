@@ -273,9 +273,7 @@ public class HangulComposer: @unchecked Sendable {
         // Return / Enter
         if keyCode == KeyCode.return || keyCode == KeyCode.numpadEnter {
             let hadComposition = !context.isEmpty()
-            let usesBlinkComposition = ClientCompatibilityPolicy.compositionRenderer(
-                bundleId: lastInputBundleId
-            ) == .blink
+            let usesBlinkComposition = lastInputHostSurface == .blinkWeb
             let isBlinkSoftLineBreak = keyCode == KeyCode.return
                 && modifierFlags.contains(.shift)
                 && usesBlinkComposition
@@ -283,10 +281,7 @@ public class HangulComposer: @unchecked Sendable {
                 .command, .control, .option
             ]
             let defersBlinkWebContentReturn = hadComposition
-                && ClientCompatibilityPolicy.needsBlinkWebContentHostKeyMediation(
-                    bundleId: lastInputBundleId,
-                    usesBlinkNativeTextClient: lastInputUsesBlinkNativeTextClient
-                )
+                && lastInputHostSurface == .blinkWeb
                 && modifierFlags.intersection(hostOwnedReturnModifiers).isEmpty
 
             // Blink can acknowledge the commit before the renderer retires its
@@ -394,10 +389,7 @@ public class HangulComposer: @unchecked Sendable {
                 .command, .control, .option, .shift
             ]
             let defersBlinkWebContentDelete = hadComposition
-                && ClientCompatibilityPolicy.needsBlinkWebContentHostKeyMediation(
-                    bundleId: lastInputBundleId,
-                    usesBlinkNativeTextClient: lastInputUsesBlinkNativeTextClient
-                )
+                && lastInputHostSurface == .blinkWeb
                 && modifierFlags.intersection(hostOwnedDeleteModifiers).isEmpty
 
             // Blink can acknowledge insertText before the renderer retires its
@@ -634,7 +626,7 @@ public class HangulComposer: @unchecked Sendable {
         // (mark-before-commit) reintroduces stale-cursor preedit (cf. kitty #4219) and
         // breaks the experimental DirectInsertionAdapter, which relies on insertText
         // arriving first to finalize the live preedit before the new one is rendered.
-        // See Docs/KoreanWindowsInputFeasibility.md (Phase 0/1).
+        // See ARCHITECTURE.md, "입력 처리 흐름".
         if !commit.isEmpty {
             let finalStr = CompositionHelpers.convertAndNormalize(commit)
             delegate.insertText(finalStr)
@@ -760,15 +752,28 @@ public class HangulComposer: @unchecked Sendable {
     /// Used to prevent cross-app hanja leaking: if the current app differs from
     /// the app that populated localTextBuffer, the buffer is considered stale.
     private var lastInputBundleId: String = ""
-    private var lastInputUsesBlinkNativeTextClient = false
+    private var lastInputHostSurface: HostSurface = .appKit
     
     /// Record which app the current keystroke is from (called from handle via controller)
     public func markKeystroke(
         bundleId: String,
         usesBlinkNativeTextClient: Bool = false
     ) {
+        let hostSurface: HostSurface
+        if usesBlinkNativeTextClient,
+           ClientCompatibilityPolicy.supportsBlinkNativeDirectInsertion(bundleId: bundleId) {
+            hostSurface = .blinkNative
+        } else if ClientCompatibilityPolicy.compositionRenderer(bundleId: bundleId) == .blink {
+            hostSurface = .blinkWeb
+        } else {
+            hostSurface = .appKit
+        }
+        markKeystroke(bundleId: bundleId, hostSurface: hostSurface)
+    }
+
+    func markKeystroke(bundleId: String, hostSurface: HostSurface) {
         lastInputBundleId = bundleId
-        lastInputUsesBlinkNativeTextClient = usesBlinkNativeTextClient
+        lastInputHostSurface = hostSurface
     }
     
     /// Check if the buffer belongs to the given app

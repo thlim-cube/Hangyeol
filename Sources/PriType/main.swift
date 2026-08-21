@@ -15,10 +15,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     func applicationDidFinishLaunching(_ notification: Notification) {
         DebugLogger.log("AppDelegate: applicationDidFinishLaunching")
 
-        // StatusBarManager keeps mode presentation state for existing callers, but
-        // its separate menu-bar item is hidden to avoid duplicating macOS input UI.
-        StatusBarManager.shared.setup()
-
         // System Settings writes TISRomanSwitchState outside this process.
         // Refresh low-frequency system preference snapshots whenever application
         // focus changes; key handling reads only their in-memory values.
@@ -91,8 +87,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     private func setupIOKit() {
         // Check/request Accessibility permission
         if !IOKitManager.hasAccessibilityPermission() {
-            // Let the monitor owner publish the permission failure through the same
-            // authoritative store observed by the status UI.
+            // Record the permission failure in the same ownership state machine used
+            // by both monitoring backends.
             _ = RightCommandSuppressor.shared.start()
             DebugLogger.log("Requesting Accessibility permission...")
             IOKitManager.requestAccessibilityPermission()

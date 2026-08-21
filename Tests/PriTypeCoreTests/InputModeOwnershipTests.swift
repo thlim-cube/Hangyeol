@@ -2,24 +2,6 @@ import Cocoa
 import Testing
 @testable import PriTypeCore
 
-private final class RecordingModePresentation: StatusBarUpdating, PendingInputModePresenting {
-    private(set) var state: InputModePresentationState
-    private(set) var pendingUpdates: [InputMode?] = []
-
-    init(actualMode: InputMode = .korean) {
-        state = InputModePresentationState(actualMode: actualMode)
-    }
-
-    func setMode(_ mode: InputMode) {
-        state.setActualMode(mode)
-    }
-
-    func setPendingMode(_ mode: InputMode?) {
-        pendingUpdates.append(mode)
-        state.setPendingMode(mode)
-    }
-}
-
 @Suite("Input mode and composition ownership")
 struct InputModeOwnershipTests {
     private func makeComposer(
@@ -121,42 +103,6 @@ struct InputModeOwnershipTests {
         #expect(!sourceTracker.hasPendingKoreanReconciliation)
     }
 
-    @Test("Ownership boundaries update presentation without writing mode or client")
-    @MainActor
-    func pendingPresentationBeforeSecureGate() {
-        let presentation = RecordingModePresentation(actualMode: .english)
-        let coordinator = InputModeCoordinator(modePresentation: presentation)
-
-        let priTypeOwnedSnapshot = InputModeOwnershipSnapshot(
-            macOSOwnsSwitching: false,
-            selectedInputSource: .priType
-        )
-        coordinator.observe(priTypeOwnedSnapshot)
-        coordinator.observe(priTypeOwnedSnapshot)
-
-        #expect(presentation.state.pendingMode == nil)
-        #expect(presentation.state.displayedMode == .english)
-        #expect(presentation.pendingUpdates == [nil, nil])
-
-        let macOSOwnedSnapshot = InputModeOwnershipSnapshot(
-            macOSOwnsSwitching: true,
-            selectedInputSource: .priType
-        )
-        coordinator.observe(macOSOwnedSnapshot)
-        coordinator.observe(macOSOwnedSnapshot)
-
-        #expect(presentation.state.actualMode == .english)
-        #expect(presentation.state.pendingMode == .korean)
-        #expect(presentation.state.displayedMode == .korean)
-        #expect(presentation.pendingUpdates == [nil, nil, .korean, .korean])
-
-        coordinator.observe(priTypeOwnedSnapshot)
-
-        #expect(presentation.state.pendingMode == nil)
-        #expect(presentation.state.displayedMode == .english)
-        #expect(presentation.pendingUpdates == [nil, nil, .korean, .korean, nil])
-    }
-
     @Test("macOS ownership requests Korean until ownership returns")
     func macOSOwnershipLifecycle() {
         var tracker = InputModeOwnershipTracker()
@@ -229,8 +175,8 @@ struct InputModeOwnershipTests {
     func systemBoundaryTransactionFinalizesAndNormalizes() {
         let client = FakeIMKTextInput()
         let store = InputModeStore()
-        let presentation = RecordingModePresentation()
-        let composer = makeComposer(store: store, statusBar: presentation)
+        let statusBar = MockStatusBar()
+        let composer = makeComposer(store: store, statusBar: statusBar)
         let session = InputSession(
             client: client,
             context: ClientContext(
@@ -248,12 +194,10 @@ struct InputModeOwnershipTests {
             delegate: session.adapter
         )
         #expect(composer.hasActiveComposition)
-        makeComposer(store: store, statusBar: presentation).setInputMode(.english)
+        makeComposer(store: store, statusBar: statusBar).setInputMode(.english)
         #expect(composer.inputMode == .english)
         #expect(composer.hasActiveComposition)
-        presentation.setPendingMode(.korean)
-        #expect(presentation.state.actualMode == .english)
-        #expect(presentation.state.displayedMode == .korean)
+        #expect(statusBar.currentMode == .english)
 
         var didSyncLayout = false
         #expect(PriTypeInputController.applyMacOSOwnedInputSourceBoundary(to: session) {
@@ -262,8 +206,7 @@ struct InputModeOwnershipTests {
 
         #expect(didSyncLayout)
         #expect(composer.inputMode == .korean)
-        #expect(presentation.state.actualMode == .korean)
-        #expect(presentation.state.pendingMode == nil)
+        #expect(statusBar.currentMode == .korean)
         #expect(!composer.hasActiveComposition)
         #expect(client.document == "ㄱ")
         #expect(client.insertCalls.count == 1)

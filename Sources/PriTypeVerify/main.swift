@@ -319,7 +319,6 @@ func verify() {
     // Test 11: HangulCharacter (from LibHangul) utility functions
     print("\nTest 11: HangulCharacter (LibHangul) utilities")
     
-    // Note: Using LibHangul.HangulCharacter instead of JamoMapper
     // Test isChoseong
     if HangulCharacter.isChoseong(0x1100) && HangulCharacter.isChoseong(0x1112) && !HangulCharacter.isChoseong(0x1161) {
         print("PASS: isChoseong works correctly")
@@ -344,7 +343,7 @@ func verify() {
         exit(1)
     }
     
-    // Test jamoToCJamo (replaces JamoMapper.toCompatibilityJamo)
+    // Test jamoToCJamo
     if HangulCharacter.jamoToCJamo(0x1100) == 0x3131 && // ㄱ (choseong)
        HangulCharacter.jamoToCJamo(0x1161) == 0x314F && // ㅏ (jungseong)
        HangulCharacter.jamoToCJamo(0x11A8) == 0x3131 {  // ㄱ (jongseong)

@@ -1,7 +1,7 @@
 # ime-attr-probe
 
 IMK 전송 계층이 IME의 marked-text 속성을 실제로 앱에 어떻게 전달하는지 측정하는
-NSTextInputClient 프로브. macOS 업데이트 후 `PreeditUnderline`(TextDelivery.swift)의
+NSTextInputClient 프로브. macOS 업데이트 후 `MarkedTextPayload`의
 전송 계층 가정이 여전히 유효한지 재측정할 때 사용한다.
 
 ## 측정 결과 (macOS 26, 2026-06)
@@ -15,7 +15,7 @@ PriType이 보내는 **모든** 속성 페이로드 — `underlineStyle 0 + .cle
 ## 사용법
 
 PriType 디버그 빌드는 `PreeditStyleExperiment` UserDefaults 키를 읽지 않는다
-(실험 스위치는 측정 완료 후 제거됨). 재측정하려면 `PreeditUnderline.attributes`에
+(실험 스위치는 측정 완료 후 제거됨). 재측정하려면 `MarkedTextPayload.value`에
 임시로 실험 분기를 되살리거나, 이 프로브의 variants 배열이 거치는
 `CFPreferencesSetValue` 키를 IME가 읽도록 다시 연결할 것.
 
@@ -30,5 +30,7 @@ codesign --force -s - /tmp/probe/Probe.app
 창 안내에 따라 한글 키를 반복 입력하면 키 입력마다 실험값이 자동으로 넘어가고,
 도착한 속성이 `/tmp/ime_attr_probe/probe2.log`와 창에 기록된다.
 
-주의: 합성 키 연타로 자동화하지 말 것 — 같은 키 50ms 이내 비반복 재도착은
-`KeyEventDedup`이 호스트 중복 전달로 간주해 버린다(사람 입력은 불가능한 간격).
+주의: 합성 키 자동화는 물리 입력마다 서로 다른 event signature와 main-queue delivery turn을
+사용해야 한다. `KeyEventDedup`은 50ms 같은 시간창을 쓰지 않고, 동일 signature 재전달이나
+같은 delivery turn의 즉시 재진입만 중복으로 소비한다. 다음 turn의 빠른 연타는 별도 입력으로
+보존한다.

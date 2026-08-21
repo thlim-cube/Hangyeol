@@ -9,7 +9,7 @@ PriTypeCore는 libhangul 기반의 현대적인 macOS 한글 입력기 엔진입
 ### 주요 기능
 
 - **한글 조합**: libhangul 기반 정확한 조합 처리
-- **모드 전환**: 우측 Command 또는 Control+Space로 즉시 전환
+- **모드 전환**: 사용자 지정 전환키로 PriType 내부 한/영 모드를 즉시 전환
 - **Finder 지원**: 데스크톱 환경에서도 안정적인 입력
 - **보안**: 릴리즈 빌드에서 로깅 완전 제거
 
@@ -20,6 +20,7 @@ PriTypeCore는 libhangul 기반의 현대적인 macOS 한글 입력기 엔진입
 - ``HangulComposer``
 - ``HangulComposerDelegate``
 - ``InputMode``
+- ``ClientContext``
 
 ### 키 이벤트 처리
 
@@ -36,7 +37,6 @@ PriTypeCore는 libhangul 기반의 현대적인 macOS 한글 입력기 엔진입
 ### 유틸리티
 
 - ``CompositionHelpers``
-- ``JamoMapper``
 - ``TextConvenienceHandler``
 - ``DebugLogger``
 

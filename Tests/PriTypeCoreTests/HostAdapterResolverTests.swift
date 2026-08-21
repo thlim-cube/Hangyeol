@@ -2,12 +2,12 @@ import Testing
 import Cocoa
 @testable import PriTypeCore
 
-// MARK: - TextDeliveryPolicy
+// MARK: - HostAdapterResolver
 
 /// The delivery-mode decision is the single point where a session picks how
 /// composition output reaches the host (marked text / direct insertion / immediate).
-@Suite("TextDeliveryPolicy")
-struct TextDeliveryPolicyTests {
+@Suite("HostAdapterResolver")
+struct HostAdapterResolverTests {
     private func context(
         bundleId: String,
         hasTextInputCapability: Bool = true,
@@ -24,10 +24,47 @@ struct TextDeliveryPolicyTests {
         )
     }
 
+    private func mode(
+        for context: ClientContext,
+        experimentalDirectInsertion: Bool = false
+    ) -> InputDeliveryMode {
+        HostAdapterResolver.mode(
+            for: context,
+            experimentalDirectInsertion: experimentalDirectInsertion
+        )
+    }
+
+    private func analyzedContext(
+        bundleId: String,
+        expectedHostSurface: HostSurface,
+        documentAccessSafe: Bool
+    ) -> ClientContext {
+        let capabilities = IMKClientCapabilitySnapshot(
+            advertisesMarkedTextAttributes: true,
+            advertisesDocumentAccess: documentAccessSafe,
+            hasUsableSelection: documentAccessSafe,
+            advertisesBlinkReplacementRange: expectedHostSurface == .blinkWeb,
+            caretGeometry: .usable
+        )
+        let hostSurface = HostSurfaceResolver.resolve(
+            bundleId: bundleId,
+            capabilities: capabilities
+        )
+        #expect(hostSurface == expectedHostSurface)
+        return ClientContext(
+            bundleId: bundleId,
+            hasTextInputCapability: true,
+            isLikelyDesktopArea: false,
+            documentAccessSafe: documentAccessSafe,
+            capabilities: capabilities,
+            hostSurface: hostSurface
+        )
+    }
+
     @Test("Finder desktop context resolves to immediate mode")
     func finderDesktopIsImmediate() {
         let ctx = context(bundleId: "com.apple.finder", hasTextInputCapability: false, isLikelyDesktopArea: true)
-        #expect(TextDeliveryPolicy.mode(for: ctx) == .immediate)
+        #expect(mode(for: ctx) == .immediate)
     }
 
     @Test("Finder rename field uses marked text even when attributes are empty")
@@ -37,31 +74,31 @@ struct TextDeliveryPolicyTests {
             hasTextInputCapability: false,
             isLikelyDesktopArea: false
         )
-        #expect(TextDeliveryPolicy.mode(for: ctx) == .markedText)
+        #expect(mode(for: ctx) == .markedText)
     }
 
     @Test("Default context resolves to canonical marked text")
     func defaultIsMarkedText() {
         let ctx = context(bundleId: "com.apple.TextEdit", documentAccessSafe: true)
-        #expect(TextDeliveryPolicy.mode(for: ctx) == .markedText)
+        #expect(mode(for: ctx) == .markedText)
     }
 
     @Test("Direct-insertion-preferring host without document access stays on marked text")
     func directPreferenceRequiresDocumentAccess() {
         let ctx = context(bundleId: "com.nousresearch.hermes", documentAccessSafe: false)
-        #expect(TextDeliveryPolicy.mode(for: ctx) == .markedText)
+        #expect(mode(for: ctx) == .markedText)
     }
 
     @Test("Direct-insertion-preferring host with document access gets direct insertion")
     func directPreferenceWithDocumentAccess() {
         let ctx = context(bundleId: "com.nousresearch.hermes", documentAccessSafe: true)
-        #expect(TextDeliveryPolicy.mode(for: ctx) == .directInsertion)
+        #expect(mode(for: ctx) == .directInsertion)
     }
 
     @Test("Denylisted Electron/Chromium hosts never get direct insertion")
     func denylistedHostStaysMarked() {
         let ctx = context(bundleId: "com.google.Chrome", documentAccessSafe: true)
-        #expect(TextDeliveryPolicy.mode(for: ctx) == .markedText)
+        #expect(mode(for: ctx) == .markedText)
     }
 
     @Test("Chrome native fields use direct insertion without entering marked text")
@@ -71,7 +108,7 @@ struct TextDeliveryPolicyTests {
             documentAccessSafe: true,
             usesBlinkNativeTextClient: true
         )
-        #expect(TextDeliveryPolicy.mode(for: ctx) == .directInsertion)
+        #expect(mode(for: ctx) == .directInsertion)
     }
 
     @Test("Electron fields that look native stay on marked text")
@@ -86,8 +123,88 @@ struct TextDeliveryPolicyTests {
                 documentAccessSafe: true,
                 usesBlinkNativeTextClient: true
             )
-            #expect(TextDeliveryPolicy.mode(for: ctx) == .markedText)
+            #expect(mode(for: ctx) == .markedText)
         }
+    }
+
+    @Test("Experimental direct insertion still requires document access and a safe host")
+    func experimentalDirectInsertionKeepsSafetyGates() {
+        let native = context(bundleId: "com.apple.TextEdit", documentAccessSafe: true)
+        let unreadable = context(bundleId: "com.apple.TextEdit", documentAccessSafe: false)
+        let denylisted = context(bundleId: "com.google.Chrome", documentAccessSafe: true)
+
+        #expect(mode(for: native, experimentalDirectInsertion: true) == .directInsertion)
+        #expect(mode(for: unreadable, experimentalDirectInsertion: true) == .markedText)
+        #expect(mode(for: denylisted, experimentalDirectInsertion: true) == .markedText)
+    }
+
+    @Test("Blink web capability owns adapter mode and marked payload")
+    func blinkWebCapabilityStaysCanonicalEndToEnd() {
+        for bundleId in [
+            "com.example.opaque",
+            "com.naver.whale",
+            "com.spotify.client"
+        ] {
+            let context = analyzedContext(
+                bundleId: bundleId,
+                expectedHostSurface: .blinkWeb,
+                documentAccessSafe: true
+            )
+            #expect(mode(for: context, experimentalDirectInsertion: true) == .markedText)
+
+            let client = FakeIMKTextInput()
+            let adapter = HostAdapterResolver.makeAdapter(
+                for: client,
+                context: context,
+                experimentalDirectInsertion: true
+            )
+            adapter.setMarkedText("가")
+
+            #expect(adapter.deliveryMode == .markedText)
+            #expect(client.markedPayloadWasAttributed == [false])
+        }
+    }
+
+    @Test("Hermes keeps its explicit direct-insertion contract on Blink web")
+    func hermesBlinkWebCompatibilityStaysDirect() {
+        for bundleId in [
+            "com.nousresearch.hermes",
+            "com.nousresearch.hermes.setup"
+        ] {
+            let context = analyzedContext(
+                bundleId: bundleId,
+                expectedHostSurface: .blinkWeb,
+                documentAccessSafe: true
+            )
+            #expect(mode(for: context, experimentalDirectInsertion: false) == .directInsertion)
+
+            let adapter = HostAdapterResolver.makeAdapter(
+                for: FakeIMKTextInput(),
+                context: context,
+                experimentalDirectInsertion: false
+            )
+            #expect(adapter.deliveryMode == .directInsertion)
+            #expect(adapter.hostSurface == .blinkWeb)
+        }
+    }
+
+    @Test("Native Blink and AppKit surfaces remain non-web delivery targets")
+    func nonWebSurfacesKeepTheirOwnDelivery() {
+        let blinkNative = analyzedContext(
+            bundleId: "com.google.Chrome",
+            expectedHostSurface: .blinkNative,
+            documentAccessSafe: true
+        )
+        let appKit = analyzedContext(
+            bundleId: "com.apple.TextEdit",
+            expectedHostSurface: .appKit,
+            documentAccessSafe: true
+        )
+
+        #expect(mode(for: blinkNative, experimentalDirectInsertion: false) == .directInsertion)
+        #expect(mode(for: appKit, experimentalDirectInsertion: true) == .directInsertion)
+        #expect(MarkedTextPayload.value("가", for: .blinkNative) is NSAttributedString)
+        #expect(MarkedTextPayload.value("가", for: .appKit) is NSAttributedString)
     }
 
     @Test("Adapter success APIs reject writes after ownership is revoked")
@@ -95,7 +212,10 @@ struct TextDeliveryPolicyTests {
         let client = FakeIMKTextInput()
         client.document = "a "
         client.selectedRangeValue = NSRange(location: 2, length: 0)
-        let adapter = MarkedTextAdapter(client: client, bundleId: client.bundleID)
+        let adapter = MarkedTextAdapter(
+            client: client,
+            hostSurface: .appKit
+        )
         adapter.setClientWriteValidator { false }
 
         #expect(!adapter.tryInsertText("A"))
@@ -104,7 +224,10 @@ struct TextDeliveryPolicyTests {
         #expect(client.document == "a ")
 
         var directWriteAllowed = true
-        let direct = DirectInsertionAdapter(client: client, bundleId: client.bundleID)
+        let direct = DirectInsertionAdapter(
+            client: client,
+            hostSurface: .appKit
+        )
         direct.setClientWriteValidator { directWriteAllowed }
         client.onSelectedRange = {
             client.onSelectedRange = nil
@@ -117,12 +240,18 @@ struct TextDeliveryPolicyTests {
     @Test("Blink web content receives plain marked text while native hosts keep attributes")
     func markedTextPayloadMatchesHostCompatibility() {
         let blinkClient = FakeIMKTextInput()
-        MarkedTextAdapter(client: blinkClient, bundleId: "com.google.Chrome")
+        MarkedTextAdapter(
+            client: blinkClient,
+            hostSurface: .blinkWeb
+        )
             .setMarkedText("가")
         #expect(blinkClient.markedPayloadWasAttributed == [false])
 
         let nativeClient = FakeIMKTextInput()
-        MarkedTextAdapter(client: nativeClient, bundleId: "com.apple.TextEdit")
+        MarkedTextAdapter(
+            client: nativeClient,
+            hostSurface: .appKit
+        )
             .setMarkedText("가")
         #expect(nativeClient.markedPayloadWasAttributed == [true])
     }
@@ -130,7 +259,10 @@ struct TextDeliveryPolicyTests {
     @Test("Marked adapter exposes only its live preedit to host-key transactions")
     func markedAdapterTracksHostTransactionText() {
         let client = FakeIMKTextInput()
-        let adapter = MarkedTextAdapter(client: client, bundleId: "com.google.Chrome")
+        let adapter = MarkedTextAdapter(
+            client: client,
+            hostSurface: .blinkWeb
+        )
 
         adapter.setMarkedText("마")
         #expect(adapter.hostTransactionMarkedText == "마")
@@ -184,16 +316,16 @@ struct CompositionRendererTests {
 struct MarkedTextPayloadTests {
     @Test("Blink hosts receive a plain NSString marked payload")
     func blinkUsesPlainString() {
-        let payload = MarkedTextPayload.value("가", forBundleId: "com.google.Chrome")
+        let payload = MarkedTextPayload.value("가", for: .blinkWeb)
         #expect(payload is NSString)
         #expect(!(payload is NSAttributedString))
     }
 
     @Test("System hosts retain attributed marked text with a clear underline")
     func systemAttributes() throws {
-        for bundleId in ["com.apple.TextEdit", "com.apple.Safari", "com.kakao.KakaoTalkMac"] {
+        for hostSurface in [HostSurface.appKit, .blinkNative] {
             let payload = try #require(
-                MarkedTextPayload.value("가", forBundleId: bundleId) as? NSAttributedString
+                MarkedTextPayload.value("가", for: hostSurface) as? NSAttributedString
             )
             let attrs = payload.attributes(at: 0, effectiveRange: nil)
             #expect(attrs[.underlineStyle] as? Int == 0)
@@ -290,22 +422,6 @@ struct BlinkTextClientClassificationTests {
         }
     }
 
-    @Test("Chromium web content is identified by its replacement-range attribute")
-    func webContentSignature() {
-        #expect(ClientCompatibilityPolicy.usesBlinkWebContentTextClient(
-            bundleId: "com.google.Chrome",
-            validAttributeNames: ["NSUnderlineStyle", "NSTextInputReplacementRangeAttributeName"]
-        ))
-        #expect(!ClientCompatibilityPolicy.usesBlinkWebContentTextClient(
-            bundleId: "com.google.Chrome",
-            validAttributeNames: ["NSFont", "NSForegroundColor"]
-        ))
-        #expect(!ClientCompatibilityPolicy.usesBlinkWebContentTextClient(
-            bundleId: "com.apple.TextEdit",
-            validAttributeNames: ["NSTextInputReplacementRangeAttributeName"]
-        ))
-    }
-
     @Test("Context analysis normalizes both native attribute keys and NSString names")
     func contextAnalysisNormalizesAttributeNames() {
         for replacementAttribute in [
@@ -316,7 +432,10 @@ struct BlinkTextClientClassificationTests {
             webClient.bundleID = "com.google.Chrome"
             webClient.validAttributesValue = [replacementAttribute]
 
-            let webContext = ClientContextDetector.analyze(client: webClient)
+            let webContext = ClientContextDetector.analyze(
+                client: webClient,
+                experimentalDirectInsertion: false
+            )
             #expect(!webContext.usesBlinkNativeTextClient)
         }
 
@@ -324,7 +443,10 @@ struct BlinkTextClientClassificationTests {
         nativeClient.bundleID = "com.google.Chrome"
         nativeClient.validAttributesValue = [NSAttributedString.Key.underlineStyle]
 
-        let nativeContext = ClientContextDetector.analyze(client: nativeClient)
+        let nativeContext = ClientContextDetector.analyze(
+            client: nativeClient,
+            experimentalDirectInsertion: false
+        )
         #expect(nativeContext.usesBlinkNativeTextClient)
         #expect(nativeContext.documentAccessSafe)
     }

@@ -41,7 +41,7 @@ public enum L10n {
         public static var footer: String { localized("settings.footer") }
     }
 
-    // MARK: - Status Bar
+    // MARK: - Legacy Status API Compatibility
 
     public enum status {
         public static var inputHealth: String { localized("status.inputHealth") }

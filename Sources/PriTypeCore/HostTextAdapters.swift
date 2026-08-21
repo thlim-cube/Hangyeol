@@ -1,115 +1,8 @@
 import Cocoa
 import InputMethodKit
 
-// MARK: - InputDeliveryMode
-
-/// How composition output reaches the focused client.
-enum InputDeliveryMode: Equatable {
-    case immediate          // Finder desktop: defer, no marked window
-    case directInsertion    // EXPERIMENTAL: real-text in-place rewrite
-    case markedText         // Default: canonical marked-text composition
-}
-
-// MARK: - HostAdapterResolver
-
-struct HostAdapterResolver {
-    static func mode(for context: ClientContext) -> InputDeliveryMode {
-        if context.hostSurface == .finderNonText {
-            return .immediate
-        }
-        if context.hostSurface == .blinkNative,
-           context.documentAccessSafe {
-            return .directInsertion
-        }
-        if (ConfigurationManager.shared.experimentalDirectInsertion
-            || ClientCompatibilityPolicy.prefersDirectInsertionForComposition(
-                bundleId: context.bundleId
-            )),
-           context.documentAccessSafe,
-           !ClientCompatibilityPolicy.directInsertionDenied(bundleId: context.bundleId) {
-            return .directInsertion
-        }
-        return .markedText
-    }
-
-    static func makeAdapter(
-        for client: IMKTextInput,
-        context: ClientContext
-    ) -> BaseClientAdapter {
-        switch mode(for: context) {
-        case .immediate:
-            return ImmediateModeAdapter(client: client, bundleId: context.bundleId)
-        case .directInsertion:
-            DebugLogger.event("delivery.adapter_created", metadata: [
-                .state("mode", "direct_insertion")
-            ])
-            return DirectInsertionAdapter(client: client, bundleId: context.bundleId)
-        case .markedText:
-            return MarkedTextAdapter(client: client, bundleId: context.bundleId)
-        }
-    }
-}
-
-// MARK: - TextDeliveryPolicy
-
-/// Single decision point for how composition is delivered to a client.
-///
-/// Default is canonical marked text. Direct insertion (experimental) is attempted in
-/// EVERY app when the flag is ON — there is no per-app allowlist. The only gate is the
-/// activation probe `documentAccessSafe`: apps that neither advertise TSM document
-/// access nor report a usable selection range physically cannot do in-place rewrites,
-/// so they keep the marked-text path. Apps that pass the probe but misbehave at runtime degrade to
-/// marked text via the adapter's caret-stability guard / bail path — so enabling it
-/// everywhere never corrupts text, it just falls back where it can't work.
-enum TextDeliveryPolicy {
-    static func mode(for context: ClientContext) -> InputDeliveryMode {
-        HostAdapterResolver.mode(for: context)
-    }
-
-    static func makeAdapter(for client: IMKTextInput, context: ClientContext) -> BaseClientAdapter {
-        HostAdapterResolver.makeAdapter(for: client, context: context)
-    }
-}
-
-// MARK: - MarkedTextPayload
-
-/// Host-compatible payload for canonical marked-text composition.
-///
-/// ⚠️ TRANSPORT REALITY on macOS 26 (measured 2026-06 with an NSTextInputClient
-/// probe on the live IMK path, enumerating every payload we can send): underline
-/// style 0 + `.clear`, single + alpha-1/255, `NSMarkedClauseSegment` 1…9 (every
-/// TSM hilite category incl. kNoHilite), and even an attribute-LESS string ALL
-/// arrive at the client as the same regenerated pair `NSUnderline=2 + accent
-/// blue`. The receiving framework discards IME-provided styling and synthesizes
-/// the system marked-text style — distinct categories that carry distinct styles
-/// in `IMKInputController.mark(forStyle:at:)` dictionaries (e.g. style 3 → gray
-/// U=3, style 4 → gray U=1) arrive indistinguishable, so the channel is fully
-/// dead, not merely quantized. On macOS 26 NO setMarkedText attributes can hide
-/// the composition underline, for any IME (Apple's Korean IME draws the same
-/// underline). The only underline-free composition is to not use marked text at
-/// all — `DirectInsertionAdapter` via `experimentalDirectInsertion`.
-///
-/// On macOS 26, Chrome and Electron hosts can trap inside AppKit's
-/// `_forceAttributedString` for attributed marked payloads (`CFEqual` receives a
-/// null argument). Chromium web-content clients accept NSString directly. Native
-/// Blink-host fields such as Chrome's omnibox use direct insertion instead and do
-/// not enter this payload path.
-enum MarkedTextPayload {
-    static func value(_ text: String, forBundleId bundleId: String) -> Any {
-        switch ClientCompatibilityPolicy.compositionRenderer(bundleId: bundleId) {
-        case .blink:
-            return text as NSString
-        case .system:
-            return NSAttributedString(
-                string: text,
-                attributes: [
-                    .underlineStyle: 0,
-                    .underlineColor: NSColor.clear
-                ]
-            )
-        }
-    }
-}
+// Host delivery implementations. Adapter selection belongs to
+// `HostAdapterResolver`; deferred host-owned keys belong to `HostKeyTransaction`.
 
 // MARK: - BaseClientAdapter
 
@@ -118,10 +11,9 @@ enum MarkedTextPayload {
 class BaseClientAdapter: NSObject, HangulComposerDelegate {
     let client: IMKTextInput
     private var clientWriteIsAllowed: () -> Bool = { true }
-    private var deferredHostKeyBoundary = DeferredHostKeyBoundary()
+    private var deferredHostKeyBoundaryHandler: (UInt16) -> Void = { _ in }
 
-    /// Host bundle id, for engine-tuned preedit styling.
-    let bundleId: String
+    let hostSurface: HostSurface
 
     /// The delivery mode this adapter implements. Used by `InputSession` to detect
     /// when the resolved policy no longer matches the live adapter (e.g. the
@@ -132,9 +24,9 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
     /// Non-marked adapters do not expose a document-promotion proof.
     var hostTransactionMarkedText: String? { nil }
 
-    init(client: IMKTextInput, bundleId: String) {
+    init(client: IMKTextInput, hostSurface: HostSurface) {
         self.client = client
-        self.bundleId = bundleId
+        self.hostSurface = hostSurface
     }
 
     func setClientWriteValidator(_ validator: @escaping () -> Bool) {
@@ -144,11 +36,11 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
     func setDeferredHostKeyBoundaryHandler(
         _ handler: @escaping (UInt16) -> Void
     ) {
-        deferredHostKeyBoundary = DeferredHostKeyBoundary(handler: handler)
+        deferredHostKeyBoundaryHandler = handler
     }
 
     func recordDeferredHostKeyPassedToHost(keyCode: UInt16) {
-        deferredHostKeyBoundary.handler(keyCode)
+        deferredHostKeyBoundaryHandler(keyCode)
     }
 
     final func canWriteToClient() -> Bool {
@@ -171,27 +63,14 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
     }
 
     func tryScheduleHostKey(keyCode: UInt16, modifierFlags: UInt) -> Bool {
-        guard IOKitManager.hasAccessibilityPermission(),
-              canWriteToClient(),
-              let events = DeferredHostKeyDelivery.makeEvents(
-                  keyCode: keyCode,
-                  modifierFlags: modifierFlags
-              ) else { return false }
-
-        let replayAuthorization = DeferredClientWriteAuthorization(
-            isAllowed: clientWriteIsAllowed
-        )
-        let replay = DeferredHostKeyReplay(
+        HostKeyTransaction.schedule(
             client: client,
             keyCode: keyCode,
-            events: events,
-            authorization: replayAuthorization,
-            postedBoundary: deferredHostKeyBoundary,
+            modifierFlags: modifierFlags,
+            isClientWriteAllowed: clientWriteIsAllowed,
+            didPost: deferredHostKeyBoundaryHandler,
             expectedCommittedText: hostTransactionMarkedText
         )
-        guard replay.isArmed else { return false }
-        replay.schedule()
-        return true
     }
 
     func setMarkedText(_ text: String) {
@@ -227,269 +106,6 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
     }
 }
 
-/// The adapter and its validator are main-thread-only. This box crosses only the
-/// compiler's DispatchQueue sendability boundary; the closure still runs on main.
-private final class DeferredClientWriteAuthorization: @unchecked Sendable {
-    let isAllowed: () -> Bool
-
-    init(isAllowed: @escaping () -> Bool) {
-        self.isAllowed = isAllowed
-    }
-}
-
-/// Main-thread callback captured by the deferred CGEvent delivery.
-private final class DeferredHostKeyBoundary: @unchecked Sendable {
-    let handler: (UInt16) -> Void
-
-    init(handler: @escaping (UInt16) -> Void = { _ in }) {
-        self.handler = handler
-    }
-}
-
-enum DeferredCompositionRetirementDecision: Equatable {
-    case wait
-    case deliver
-    case cancel
-}
-
-enum DeferredHostKeyTargetPolicy {
-    case compositionOnly
-    case caretAnchored
-}
-
-/// A host-owned key may leave Blink only after the exact marked range that was
-/// committed has retired. Forward Delete additionally keeps the caret anchored
-/// because it targets the character after that caret; Return does not.
-struct DeferredCompositionRetirementGate {
-    private static let maxReasonableLocation = 10_000_000
-
-    private let originalMarkedRange: NSRange
-    private let expectedCaretLocation: Int
-    private let targetPolicy: DeferredHostKeyTargetPolicy
-    private var stableUnmarkedObservations = 0
-
-    var requiresCaretAnchor: Bool {
-        targetPolicy == .caretAnchored
-    }
-
-    var committedTextVerificationRange: NSRange? {
-        targetPolicy == .caretAnchored ? originalMarkedRange : nil
-    }
-
-    init?(
-        markedRange: NSRange,
-        targetPolicy: DeferredHostKeyTargetPolicy = .caretAnchored
-    ) {
-        let (end, overflow) = markedRange.location.addingReportingOverflow(markedRange.length)
-        guard markedRange.location != NSNotFound,
-              markedRange.length > 0,
-              !overflow,
-              markedRange.location < Self.maxReasonableLocation,
-              end < Self.maxReasonableLocation else { return nil }
-        originalMarkedRange = markedRange
-        expectedCaretLocation = end
-        self.targetPolicy = targetPolicy
-    }
-
-    mutating func observe(
-        markedRange: NSRange,
-        selectedRange: NSRange,
-        committedTextIsVisible: Bool? = nil
-    ) -> DeferredCompositionRetirementDecision {
-        if targetPolicy == .caretAnchored {
-            guard selectedRange.location == expectedCaretLocation,
-                  selectedRange.length == 0 else { return .cancel }
-        }
-
-        if markedRange.location != NSNotFound, markedRange.length > 0 {
-            stableUnmarkedObservations = 0
-            return markedRange == originalMarkedRange ? .wait : .cancel
-        }
-
-        if targetPolicy == .caretAnchored,
-           committedTextIsVisible != true {
-            stableUnmarkedObservations = 0
-            return .wait
-        }
-
-        stableUnmarkedObservations += 1
-        return stableUnmarkedObservations >= 2 ? .deliver : .wait
-    }
-}
-
-private final class DeferredHostKeyReplay: @unchecked Sendable {
-    private static let maxRetirementPolls = 100
-
-    private let client: IMKTextInput
-    private let keyCode: UInt16
-    private let events: DeferredHostKeyDelivery.Events
-    private let authorization: DeferredClientWriteAuthorization
-    private let postedBoundary: DeferredHostKeyBoundary
-    private let expectedCommittedText: String?
-    private var retirementGate: DeferredCompositionRetirementGate?
-    private var pollCount = 0
-
-    var isArmed: Bool {
-        guard retirementGate != nil else { return false }
-        return keyCode != KeyCode.forwardDelete || expectedCommittedText != nil
-    }
-
-    init(
-        client: IMKTextInput,
-        keyCode: UInt16,
-        events: DeferredHostKeyDelivery.Events,
-        authorization: DeferredClientWriteAuthorization,
-        postedBoundary: DeferredHostKeyBoundary,
-        expectedCommittedText: String?
-    ) {
-        self.client = client
-        self.keyCode = keyCode
-        self.events = events
-        self.authorization = authorization
-        self.postedBoundary = postedBoundary
-        self.expectedCommittedText = expectedCommittedText?
-            .precomposedStringWithCanonicalMapping
-        let targetPolicy: DeferredHostKeyTargetPolicy = keyCode == KeyCode.forwardDelete
-            ? .caretAnchored
-            : .compositionOnly
-        retirementGate = DeferredCompositionRetirementGate(
-            markedRange: client.markedRange(),
-            targetPolicy: targetPolicy
-        )
-    }
-
-    func schedule() {
-        DispatchQueue.main.async { [self] in
-            deliverWhenReady()
-        }
-    }
-
-    private func deliverWhenReady() {
-        guard authorization.isAllowed() else {
-            DebugLogger.event("input.host_key_replay_skipped", metadata: [
-                .state("reason", "stale_session")
-            ])
-            return
-        }
-
-        if var gate = retirementGate {
-            let markedRange = client.markedRange()
-            let committedTextIsVisible: Bool?
-            if let verificationRange = gate.committedTextVerificationRange,
-               markedRange.location == NSNotFound || markedRange.length == 0,
-               let expectedCommittedText {
-                committedTextIsVisible = client
-                    .attributedSubstring(from: verificationRange)?
-                    .string
-                    .precomposedStringWithCanonicalMapping == expectedCommittedText
-            } else {
-                committedTextIsVisible = nil
-            }
-            let selectedRange = gate.requiresCaretAnchor
-                ? client.selectedRange()
-                : NSRange(location: NSNotFound, length: 0)
-            let decision = gate.observe(
-                markedRange: markedRange,
-                selectedRange: selectedRange,
-                committedTextIsVisible: committedTextIsVisible
-            )
-            retirementGate = gate
-            switch decision {
-            case .deliver:
-                break
-            case .cancel:
-                DebugLogger.event("input.host_key_replay_skipped", metadata: [
-                    .state("reason", "host_key_target_changed")
-                ])
-                return
-            case .wait:
-                pollCount += 1
-                guard pollCount < Self.maxRetirementPolls else {
-                    DebugLogger.event("input.host_key_replay_skipped", metadata: [
-                        .state("reason", "marked_text_not_retired")
-                    ])
-                    return
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(1)) { [self] in
-                    deliverWhenReady()
-                }
-                return
-            }
-        }
-
-        guard authorization.isAllowed() else {
-            DebugLogger.event("input.host_key_replay_skipped", metadata: [
-                .state("reason", "stale_session")
-            ])
-            return
-        }
-        events.keyDown.post(tap: .cghidEventTap)
-        events.keyUp.post(tap: .cghidEventTap)
-        postedBoundary.handler(keyCode)
-        DebugLogger.event("input.host_key_replay_delivered", metadata: [
-            .count("retirement_polls", pollCount)
-        ])
-    }
-}
-
-enum DeferredHostKeyDelivery {
-    struct Events {
-        let keyDown: CGEvent
-        let keyUp: CGEvent
-    }
-
-    private static let replayMarker: Int64 = 0x5052_5459_5045_5254
-
-    private static func supportsReplay(_ keyCode: UInt16) -> Bool {
-        keyCode == KeyCode.return
-            || keyCode == KeyCode.numpadEnter
-            || keyCode == KeyCode.forwardDelete
-    }
-
-    static func makeEvents(
-        keyCode: UInt16,
-        modifierFlags: UInt
-    ) -> Events? {
-        guard supportsReplay(keyCode),
-              let source = CGEventSource(stateID: .hidSystemState),
-              let keyDown = CGEvent(
-                  keyboardEventSource: source,
-                  virtualKey: CGKeyCode(keyCode),
-                  keyDown: true
-              ),
-              let keyUp = CGEvent(
-                  keyboardEventSource: source,
-                  virtualKey: CGKeyCode(keyCode),
-                  keyDown: false
-              ) else { return nil }
-
-        let flags = CGEventFlags(rawValue: UInt64(modifierFlags))
-        for event in [keyDown, keyUp] {
-            event.flags = flags
-            event.setIntegerValueField(
-                .eventSourceUserData,
-                value: replayMarker
-            )
-        }
-        return Events(keyDown: keyDown, keyUp: keyUp)
-    }
-
-    static func isReplayedHostKey(_ event: NSEvent) -> Bool {
-        guard supportsReplay(event.keyCode),
-              let cgEvent = event.cgEvent else { return false }
-        return isReplayedHostKey(cgEvent)
-    }
-
-    static func isReplayedHostKey(_ event: CGEvent) -> Bool {
-        let rawKeyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        guard rawKeyCode >= 0,
-              rawKeyCode <= Int64(UInt16.max),
-              supportsReplay(UInt16(rawKeyCode)) else { return false }
-        return event.getIntegerValueField(.eventSourceUserData) == replayMarker
-    }
-
-}
-
 // MARK: - MarkedTextAdapter
 
 /// Standard adapter for canonical marked-text composition display.
@@ -521,7 +137,7 @@ final class MarkedTextAdapter: BaseClientAdapter {
         // range) left native hosts like KakaoTalk in an inconsistent composition
         // state — a stranded/underlined preedit that never committed on focus loss.
         client.setMarkedText(
-            MarkedTextPayload.value(text, forBundleId: bundleId),
+            MarkedTextPayload.value(text, for: hostSurface),
             selectionRange: NSRange(location: text.utf16.count, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
         )
@@ -547,7 +163,7 @@ final class ImmediateModeAdapter: BaseClientAdapter {
 ///
 /// Selected when `experimentalDirectInsertion` is ON (or a compatibility policy
 /// explicitly prefers it), the activation probe found `documentAccessSafe`, and the
-/// host is not denylisted. OFF by default. See Docs/KoreanWindowsInputFeasibility.md.
+/// host is not denylisted. OFF by default.
 final class DirectInsertionAdapter: BaseClientAdapter {
     override var deliveryMode: InputDeliveryMode { .directInsertion }
 
@@ -595,7 +211,7 @@ final class DirectInsertionAdapter: BaseClientAdapter {
         guard canWriteToClient() else { return false }
         markedTextFallbackContent = text
         client.setMarkedText(
-            MarkedTextPayload.value(text, forBundleId: bundleId),
+            MarkedTextPayload.value(text, for: hostSurface),
             selectionRange: NSRange(location: text.utf16.count, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
         )

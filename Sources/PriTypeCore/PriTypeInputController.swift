@@ -7,15 +7,16 @@ import Carbon.HIToolbox
 ///
 /// The controller owns nothing but the IMK lifecycle. Everything session-scoped —
 /// client, analyzed context, delivery adapter, duplicate-keyDown state, focus-loss
-/// safety net — lives in a single `InputSession`, and EVERY composition-ending event
-/// (app deactivate, deactivateServer, mouse commit, custom toggle, macOS ownership,
-/// keyboard-layout change) funnels into `InputSession.finalize(reason:)`, the
+/// safety net — lives in a single `InputSession`, and every session/lifecycle-driven
+/// composition-ending event (app deactivate, deactivateServer, mouse commit,
+/// custom toggle, macOS ownership, keyboard-layout change) funnels into
+/// `InputSession.finalize(reason:)`, the
 /// one host-agnostic commit path.
 ///
 /// ```
 /// keyDown ──► handle() ──► ensureSession ──► dedup ──► secure gate ──► HangulComposer
 ///                                                                          │
-///                  TextDeliveryAdapter (marked / direct / immediate) ◄─────┘
+///                   BaseClientAdapter (marked / direct / immediate) ◄─────┘
 ///
 /// toggle key / macOS ownership ──► InputModeCoordinator ──► controller ─┐
 /// app deactivate / deactivateServer / mouse commit / layout change ────┴─► session.finalize
@@ -144,6 +145,26 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         )
     }
 
+    static func makeInputSession(
+        client: IMKTextInput,
+        context: ClientContext,
+        composer: HangulComposer,
+        configuration: ConfigurationProviding,
+        invalidateHanjaShortcutSessionState: @escaping () -> Void = {},
+        retireActiveControllerAfterFocusLoss: @escaping (InputSession) -> Void = { _ in }
+    ) -> InputSession {
+        InputSession(
+            client: client,
+            context: context,
+            composer: composer,
+            experimentalDirectInsertion: {
+                configuration.experimentalDirectInsertion
+            },
+            invalidateHanjaShortcutSessionState: invalidateHanjaShortcutSessionState,
+            retireActiveControllerAfterFocusLoss: retireActiveControllerAfterFocusLoss
+        )
+    }
+
     private func replaceSession(client: IMKTextInput, context: ClientContext) -> InputSession? {
         publishHanjaShortcutSessionState(.unknown)
         if let previous = session {
@@ -167,10 +188,11 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         }
         CursorRectResolver.invalidateCache()
 
-        let newSession = InputSession(
+        let newSession = Self.makeInputSession(
             client: client,
             context: context,
             composer: makeComposer(),
+            configuration: ConfigurationManager.shared,
             invalidateHanjaShortcutSessionState: { [weak self] in
                 self?.publishHanjaShortcutSessionState(.unknown)
             },
@@ -879,7 +901,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // 3. Mark keystroke with current app's bundleId for cross-app hanja validation
         composer.markKeystroke(
             bundleId: session.context.bundleId,
-            usesBlinkNativeTextClient: session.context.usesBlinkNativeTextClient
+            hostSurface: session.context.hostSurface
         )
 
         // 4. DYNAMIC CHECK: Secure Input (password fields) — raw pass-through.
@@ -960,22 +982,37 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         return false
     }
 
+    static func secureInputSignals(
+        context: ClientContext,
+        hasGlobalSecureInput: Bool,
+        selectedRange: () -> NSRange
+    ) -> SecureInputSignals {
+        let bundleId = context.bundleId
+        let hasTrustedTextInputCapability = context.hasTextInputCapability
+            || context.isConfirmedFinderTextTarget
+        let requiresSelectionProbe = SecureInputPolicy.requiresSelectionProbe(
+            bundleId: bundleId,
+            hasTextInputCapability: hasTrustedTextInputCapability,
+            hasGlobalSecureInput: hasGlobalSecureInput
+        )
+        let hasInvalidSelection = requiresSelectionProbe
+            && selectedRange().location == NSNotFound
+        return SecureInputSignals(
+            bundleId: bundleId,
+            hasTextInputCapability: hasTrustedTextInputCapability,
+            hasInvalidSelection: hasInvalidSelection,
+            hasGlobalSecureInput: hasGlobalSecureInput
+        )
+    }
+
     private func shouldPassThroughSecureInput(client: IMKTextInput, context: ClientContext) -> Bool {
         let bundleId = context.bundleId
         let isSystemSecureClient = SecureInputPolicy.isSystemSecureClient(bundleId)
         let hasGlobalSecureInput = !isSystemSecureClient && IsSecureEventInputEnabled()
-        let requiresSelectionProbe = SecureInputPolicy.requiresSelectionProbe(
-            bundleId: bundleId,
-            hasTextInputCapability: context.hasTextInputCapability,
-            hasGlobalSecureInput: hasGlobalSecureInput
-        )
-        let hasInvalidSelection = requiresSelectionProbe
-            && client.selectedRange().location == NSNotFound
-        let signals = SecureInputSignals(
-            bundleId: bundleId,
-            hasTextInputCapability: context.hasTextInputCapability,
-            hasInvalidSelection: hasInvalidSelection,
-            hasGlobalSecureInput: hasGlobalSecureInput
+        let signals = Self.secureInputSignals(
+            context: context,
+            hasGlobalSecureInput: hasGlobalSecureInput,
+            selectedRange: client.selectedRange
         )
         let isSecureInput = SecureInputPolicy.shouldPassThrough(signals)
 
@@ -1183,7 +1220,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     }
 
     @objc private func openSettings(_ sender: Any?) {
-        DebugLogger.log("Opening settings")
+        DebugLogger.event("ui.settings_opened")
         DispatchQueue.main.async {
             SettingsWindowController.shared.showSettings()
         }
@@ -1191,7 +1228,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
     @MainActor
     @objc private func showAbout(_ sender: Any?) {
-        DebugLogger.log("Showing about")
+        DebugLogger.event("ui.about_opened")
         AboutInfo.showAlert()
     }
 }
