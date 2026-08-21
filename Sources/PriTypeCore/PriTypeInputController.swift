@@ -496,15 +496,27 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         source: InputModeCoordinator.ToggleSource,
         trace: ToggleLatencyTrace
     ) {
-        guard let activeSession = session else {
+        guard applyPendingPriTypeModeTransition(source: source, trace: trace) else {
             DebugLogger.event("toggle.ignored", metadata: [
                 .state("source", source.diagnosticLabel),
-                .state("reason", "no_active_session")
+                .state("reason", "no_current_input_boundary")
             ])
             trace.mark(.ignored)
             return
         }
+    }
 
+    /// Returns true only after this exact controller/session has applied the mode
+    /// intent. The coordinator keeps a false result queued across IMK handoff.
+    @discardableResult
+    func applyPendingPriTypeModeTransition(
+        source: InputModeCoordinator.ToggleSource,
+        trace: ToggleLatencyTrace
+    ) -> Bool {
+        guard Self.sharedController === self,
+              let activeSession = session else { return false }
+
+        var didApplyMode = false
         _ = Self.routeExternalModeTransition(
             in: activeSession,
             source: source,
@@ -523,8 +535,12 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             },
             transactionIsCurrent: {
                 Self.sharedController === self && self.session === activeSession
+            },
+            didApplyMode: {
+                didApplyMode = true
             }
         )
+        return didApplyMode
     }
 
     /// Route a physical custom toggle through the same refresh-before-secure-gate
@@ -541,13 +557,19 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         shouldPassThroughSecureInput: (IMKTextInput, ClientContext) -> Bool,
         publishSecureInputState: (Bool) -> Void = { _ in },
         syncRomanKeyboardLayout: (IMKTextInput, InputMode) -> Void,
-        transactionIsCurrent: () -> Bool = { true }
+        transactionIsCurrent: () -> Bool = { true },
+        didApplyMode: () -> Void = {}
     ) -> Bool {
         _ = session.refreshContextForInputBoundary(using: analyzeContext)
         guard let contextLease = session.captureContextStateLease() else { return false }
 
         let composer = session.composer
         let nextMode = composer.inputMode.toggled
+        func applyMode() {
+            composer.setInputMode(nextMode)
+            trace.mark(.modeWrite)
+            didApplyMode()
+        }
         DebugLogger.event("toggle.transition_started", metadata: [
             .state("source", source.diagnosticLabel),
             .state("from", composer.inputMode == .korean ? "korean" : "english"),
@@ -566,8 +588,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         if isSecureInput {
             session.discardForSecureInput()
             session.deferRomanKeyboardLayoutSync(trace: trace)
-            composer.setInputMode(nextMode)
-            trace.mark(.modeWrite)
+            applyMode()
             return false
         }
 
@@ -581,8 +602,7 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             if transactionIsCurrent() {
                 session.discardForSecureInput()
                 session.deferRomanKeyboardLayoutSync(trace: trace)
-                composer.setInputMode(nextMode)
-                trace.mark(.modeWrite)
+                applyMode()
             }
             return false
         }
@@ -594,13 +614,11 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             if transactionIsCurrent() {
                 session.discardForSecureInput()
                 session.deferRomanKeyboardLayoutSync(trace: trace)
-                composer.setInputMode(nextMode)
-                trace.mark(.modeWrite)
+                applyMode()
             }
             return false
         }
-        composer.setInputMode(nextMode)
-        trace.mark(.modeWrite)
+        applyMode()
         return true
     }
 
@@ -872,6 +890,16 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // 1. Resolve the session FIRST — all subsequent logic uses its fresh context.
         guard let session = ensureSession(for: client) else { return false }
         let composer = session.composer
+
+        // A physical toggle can reach the event-tap thread just before this IMK
+        // controller becomes active. Consume that intent against the freshly
+        // classified session before this first key is interpreted.
+        _ = InputModeCoordinator.shared.reconcilePendingToggleIfNeeded(for: self)
+        guard Self.sharedController === self,
+              self.session === session,
+              !session.contextNeedsRefresh else {
+            return false
+        }
 
         // 2. Duplicate-keyDown suppression. Some hosts (observed: KakaoTalk) deliver
         // the same physical keyDown to the IME twice. That double-processes input —

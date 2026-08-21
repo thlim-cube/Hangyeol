@@ -51,6 +51,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     private var modifierKeyState = ModifierKeyPressState()
     private var modifierToggleState = EventTapModifierToggleState()
     private var regularKeyState = RegularKeyPressState()
+    private var keyBindingRecorderState = KeyBindingRecorderState()
     private var suppressedHanjaModifierKeyCode: Int64?
     
     /// Track CGEventTap disable events for auto-recovery
@@ -65,6 +66,20 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     
     /// Callback for key recording (settings UI)
     public var onKeyRecorded: ((_ keyCode: Int64, _ modifiers: UInt64) -> Void)?
+
+    func beginKeyRecording(
+        onRecorded: ((_ keyCode: Int64, _ modifiers: UInt64) -> Void)?
+    ) {
+        keyBindingRecorderState.reset()
+        onKeyRecorded = onRecorded
+        isRecordingKey = true
+    }
+
+    func endKeyRecording() {
+        isRecordingKey = false
+        onKeyRecorded = nil
+        keyBindingRecorderState.reset()
+    }
     
     private init() {}
     
@@ -220,6 +235,13 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         if DeferredHostKeyDelivery.isReplayedHostKey(event) {
             return Unmanaged.passUnretained(event)
         }
+
+        // Settings records shortcuts with an app-local monitor. Let the complete
+        // chord reach that monitor instead of triggering or suppressing the
+        // currently configured shortcut before it can be replaced.
+        if isRecordingKey, onKeyRecorded == nil {
+            return Unmanaged.passUnretained(event)
+        }
         
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let config = ConfigurationManager.shared
@@ -293,22 +315,45 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 physicalKeyIsDown: physicalKeyIsDown
             )
 
+            if isRecordingKey, let recordCallback = onKeyRecorded {
+                let decision = keyBindingRecorderState.handleModifier(
+                    keyCode: keyCode,
+                    isDown: physicalKeyIsDown
+                )
+                switch decision {
+                case .pending:
+                    if transition == .down {
+                        modifierKeyState.suppressUntilRelease(keyCode: keyCode)
+                    } else if transition == .up {
+                        _ = modifierKeyState.consumeSuppressedRelease(keyCode: keyCode)
+                    }
+                    return nil
+                case .ignored:
+                    return Unmanaged.passUnretained(event)
+                case .recorded(let binding):
+                    if transition == .up {
+                        _ = modifierKeyState.consumeSuppressedRelease(keyCode: keyCode)
+                    }
+                    DispatchQueue.main.async {
+                        recordCallback(binding.keyCode, binding.modifiers)
+                    }
+                    return nil
+                case .cancelled:
+                    return nil
+                case .capsLockBlocked:
+                    DispatchQueue.main.async {
+                        recordCallback(keyCode, 0)
+                    }
+                    return nil
+                }
+            }
+
             if transition == .up, modifierKeyState.consumeSuppressedRelease(keyCode: keyCode) {
                 if suppressedHanjaModifierKeyCode == keyCode {
                     suppressedHanjaModifierKeyCode = nil
                     DebugLogger.event("hanja.physical_up", metadata: [
                         .state("backend", "event_tap")
                     ])
-                }
-                return nil
-            }
-
-            // Key recording mode — capture only a physical down transition.
-            if isRecordingKey, transition == .down {
-                modifierKeyState.suppressUntilRelease(keyCode: keyCode)
-                let recordCallback = onKeyRecorded
-                DispatchQueue.main.async {
-                    recordCallback?(keyCode, 0)
                 }
                 return nil
             }
@@ -356,10 +401,22 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 )
                 guard action == .triggerAndSuppress else { return nil }
 
-                let modifiers = event.flags.rawValue & 0xFFFF0000  // Keep only modifier flags
+                let decision = keyBindingRecorderState.handleKeyDown(
+                    keyCode: keyCode,
+                    modifiers: event.flags.rawValue
+                )
                 let recordCallback = onKeyRecorded
-                DispatchQueue.main.async {
-                    recordCallback?(keyCode, modifiers)
+                switch decision {
+                case .recorded(let binding):
+                    DispatchQueue.main.async {
+                        recordCallback?(binding.keyCode, binding.modifiers)
+                    }
+                case .cancelled:
+                    DispatchQueue.main.async {
+                        recordCallback?(keyCode, 0)
+                    }
+                case .pending, .ignored, .capsLockBlocked:
+                    break
                 }
                 return nil
             }
@@ -492,6 +549,30 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         return eventFlags.rawValue & sideFlag != 0
     }
 
+    /// Local NSEvent monitors can omit side-specific NX flags. Prefer exact
+    /// side state when present, then fall back to the aggregate modifier flag.
+    static func modifierKeyIsDownForRecording(
+        keyCode: Int64,
+        eventFlags: CGEventFlags
+    ) -> Bool {
+        guard let sideFlag = modifierFlagBitsByKeyCode[keyCode] else { return false }
+        let familyKeyCodes: [Int64]
+        switch keyCode {
+        case 54, 55: familyKeyCodes = [54, 55]
+        case 58, 61: familyKeyCodes = [58, 61]
+        case 59, 62: familyKeyCodes = [59, 62]
+        case 56, 60: familyKeyCodes = [56, 60]
+        default: return false
+        }
+        let familySideMask = familyKeyCodes.reduce(UInt64(0)) {
+            $0 | (modifierFlagBitsByKeyCode[$1] ?? 0)
+        }
+        if eventFlags.rawValue & familySideMask != 0 {
+            return eventFlags.rawValue & sideFlag != 0
+        }
+        return eventFlags.contains(modifierMask(for: keyCode))
+    }
+
     static func physicallyPressedModifierKeyCodes(
         keyState: (Int64) -> Bool
     ) -> Set<Int64> {
@@ -523,6 +604,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         modifierKeyState.reset()
         modifierToggleState.reset()
         regularKeyState.reset()
+        keyBindingRecorderState.reset()
         suppressedHanjaModifierKeyCode = nil
     }
 

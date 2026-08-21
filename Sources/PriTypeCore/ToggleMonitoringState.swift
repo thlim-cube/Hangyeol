@@ -268,8 +268,93 @@ enum ShortcutBindingRouter {
             && binding.keyCode == keyCode
     }
 
-    private static func normalizedModifiers(_ modifiers: UInt64) -> UInt64 {
+    static func normalizedModifiers(_ modifiers: UInt64) -> UInt64 {
         CGEventFlags(rawValue: modifiers).intersection(recordedModifierMask).rawValue
+    }
+}
+
+enum KeyBindingRecordingDecision: Equatable {
+    case pending
+    case ignored
+    case recorded(KeyBinding)
+    case cancelled
+    case capsLockBlocked
+}
+
+/// Distinguishes a modifier-only binding from a modifier chord without a timer.
+/// A modifier becomes a standalone binding only when it is released without a
+/// regular key; a regular key records the exact modifiers held at keyDown.
+struct KeyBindingRecorderState {
+    private var pressedModifierKeyCodes: Set<Int64> = []
+    private var modifierOnlyCandidate: Int64?
+
+    mutating func handleModifier(
+        keyCode: Int64,
+        isDown: Bool
+    ) -> KeyBindingRecordingDecision {
+        if keyCode == 63 {
+            return .ignored
+        }
+        if keyCode == 57 {
+            reset()
+            return .capsLockBlocked
+        }
+
+        if isDown {
+            guard pressedModifierKeyCodes.insert(keyCode).inserted else {
+                return .pending
+            }
+            modifierOnlyCandidate = pressedModifierKeyCodes.count == 1
+                ? keyCode
+                : nil
+            return .pending
+        }
+
+        guard pressedModifierKeyCodes.remove(keyCode) != nil else {
+            return .pending
+        }
+        guard pressedModifierKeyCodes.isEmpty,
+              let modifierOnlyCandidate else {
+            return .pending
+        }
+
+        let binding = KeyBinding(
+            keyCode: modifierOnlyCandidate,
+            modifiers: 0,
+            displayName: KeyBinding.generateDisplayName(
+                keyCode: modifierOnlyCandidate,
+                modifiers: 0
+            )
+        )
+        reset()
+        return .recorded(binding)
+    }
+
+    mutating func handleKeyDown(
+        keyCode: Int64,
+        modifiers: UInt64
+    ) -> KeyBindingRecordingDecision {
+        if keyCode == 53 {
+            reset()
+            return .cancelled
+        }
+
+        let normalizedModifiers = ShortcutBindingRouter.normalizedModifiers(modifiers)
+        let binding = KeyBinding(
+            keyCode: keyCode,
+            modifiers: normalizedModifiers,
+            displayName: KeyBinding.generateDisplayName(
+                keyCode: keyCode,
+                modifiers: normalizedModifiers
+            )
+        )
+        reset()
+        return .recorded(binding)
+    }
+
+    mutating func reset() {
+        pressedModifierKeyCodes.removeAll()
+        modifierOnlyCandidate = nil
     }
 }
 

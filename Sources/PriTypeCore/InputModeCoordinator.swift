@@ -1,6 +1,53 @@
 import Foundation
 import Carbon.HIToolbox
 
+/// A physical custom-toggle press is recorded before the event-tap callback hops
+/// to the main queue. Keeping the intent outside any controller lets a short IMK
+/// handoff finish without losing the user's mode change.
+private final class PendingInputModeToggleQueue: @unchecked Sendable {
+    struct Intent {
+        let id: UInt64
+        let source: InputModeCoordinator.ToggleSource
+        let trace: ToggleLatencyTrace
+    }
+
+    private struct Entry {
+        let intent: Intent
+        var didReachMain = false
+    }
+
+    private let lock = NSLock()
+    private var nextID: UInt64 = 0
+    private var entries: [Entry] = []
+
+    func append(source: InputModeCoordinator.ToggleSource, trace: ToggleLatencyTrace) {
+        lock.withLock {
+            nextID &+= 1
+            entries.append(Entry(intent: Intent(
+                id: nextID,
+                source: source,
+                trace: trace
+            )))
+        }
+    }
+
+    func firstForMainProcessing() -> (intent: Intent, shouldMarkMain: Bool)? {
+        lock.withLock {
+            guard !entries.isEmpty else { return nil }
+            let shouldMarkMain = !entries[0].didReachMain
+            entries[0].didReachMain = true
+            return (entries[0].intent, shouldMarkMain)
+        }
+    }
+
+    func remove(id: UInt64) {
+        lock.withLock {
+            guard entries.first?.intent.id == id else { return }
+            entries.removeFirst()
+        }
+    }
+}
+
 /// Coordinates PriType-owned language toggles.
 ///
 /// Custom toggle keys must not select the real macOS ABC input source. Doing so
@@ -24,8 +71,22 @@ public final class InputModeCoordinator: @unchecked Sendable {
 
     private var ownershipTracker = InputModeOwnershipTracker()
     private var ownershipObserverTokens: [NSObjectProtocol] = []
+    private let pendingToggleQueue: PendingInputModeToggleQueue
+    private let activeControllerProvider: () -> PriTypeInputController?
+    private let capsLockOwnershipProvider: () -> Bool
 
-    private init() {}
+    init(
+        activeControllerProvider: @escaping () -> PriTypeInputController? = {
+            PriTypeInputController.sharedController
+        },
+        capsLockOwnershipProvider: @escaping () -> Bool = {
+            ConfigurationManager.shared.capsLockInputSourceSwitchEnabled
+        }
+    ) {
+        pendingToggleQueue = PendingInputModeToggleQueue()
+        self.activeControllerProvider = activeControllerProvider
+        self.capsLockOwnershipProvider = capsLockOwnershipProvider
+    }
 
     /// Start process-wide observation of real ownership and TIS selection
     /// boundaries. Observers only record pending work; they never write mode state
@@ -68,40 +129,82 @@ public final class InputModeCoordinator: @unchecked Sendable {
     }
 
     public func requestToggle(source: ToggleSource, trace: ToggleLatencyTrace) {
+        pendingToggleQueue.append(source: source, trace: trace)
+
         guard Thread.isMainThread else {
             DispatchQueue.main.async {
-                self.requestToggle(source: source, trace: trace)
+                self.drainPendingToggleUsingActiveController()
             }
             return
         }
 
-        trace.mark(.mainExecution)
+        drainPendingToggleUsingActiveController()
+    }
 
-        if PriTypeInputController.sharedController != nil {
+    private func drainPendingToggleUsingActiveController() {
+        assert(Thread.isMainThread, "Custom mode toggles must be drained on the main thread")
+
+        if activeControllerProvider() != nil {
             observePriTypeActivation()
         } else {
             observeCurrentSystemOwnership()
         }
 
-        guard !ConfigurationManager.shared.capsLockInputSourceSwitchEnabled else {
-            DebugLogger.event("toggle.ignored", metadata: [
-                .state("source", source.diagnosticLabel),
-                .state("reason", "caps_lock_owns_switching")
+        guard let controller = activeControllerProvider() else {
+            DebugLogger.event("toggle.deferred", metadata: [
+                .state("reason", "controller_handoff")
             ])
-            trace.mark(.ignored)
             return
         }
 
-        guard let controller = PriTypeInputController.sharedController else {
-            DebugLogger.event("toggle.ignored", metadata: [
-                .state("source", source.diagnosticLabel),
-                .state("reason", "no_active_controller")
-            ])
-            trace.mark(.ignored)
-            return
-        }
+        _ = reconcilePendingToggleIfNeeded(for: controller)
+    }
 
-        controller.performPriTypeModeTransition(source: source, trace: trace)
+    /// Apply every queued physical toggle before the current controller interprets
+    /// its first safe key. A failed/reentrant transaction leaves the head intent in
+    /// place for the next controller or input boundary.
+    @discardableResult
+    func reconcilePendingToggleIfNeeded(for controller: PriTypeInputController) -> Bool {
+        guard activeControllerProvider() === controller else { return false }
+        return reconcilePendingToggleIfNeeded { source, trace in
+            controller.applyPendingPriTypeModeTransition(source: source, trace: trace)
+        }
+    }
+
+    @discardableResult
+    func reconcilePendingToggleIfNeeded(
+        perform: (ToggleSource, ToggleLatencyTrace) -> Bool
+    ) -> Bool {
+        assert(Thread.isMainThread, "Custom mode toggles must be reconciled on the main thread")
+        var appliedAny = false
+
+        while let pending = pendingToggleQueue.firstForMainProcessing() {
+            if pending.shouldMarkMain {
+                pending.intent.trace.mark(.mainExecution)
+            }
+
+            if capsLockOwnershipProvider() {
+                DebugLogger.event("toggle.ignored", metadata: [
+                    .state("source", pending.intent.source.diagnosticLabel),
+                    .state("reason", "caps_lock_owns_switching")
+                ])
+                pending.intent.trace.mark(.ignored)
+                pendingToggleQueue.remove(id: pending.intent.id)
+                continue
+            }
+
+            guard perform(pending.intent.source, pending.intent.trace) else {
+                DebugLogger.event("toggle.deferred", metadata: [
+                    .state("source", pending.intent.source.diagnosticLabel),
+                    .state("reason", "input_boundary_changed")
+                ])
+                return appliedAny
+            }
+
+            pendingToggleQueue.remove(id: pending.intent.id)
+            appliedAny = true
+        }
+        return appliedAny
     }
 
     /// An active IMK callback is stronger evidence than a potentially delayed TIS

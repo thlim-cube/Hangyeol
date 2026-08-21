@@ -348,6 +348,74 @@ struct InputModeOwnershipTests {
         #expect(client.markCalls.count == markCountBefore)
     }
 
+    @Test("A toggle survives field handoff and applies before the first keyDown")
+    @MainActor
+    func toggleSurvivesFieldHandoffBeforeFirstKeyDown() {
+        let coordinator = InputModeCoordinator(
+            activeControllerProvider: { nil },
+            capsLockOwnershipProvider: { false }
+        )
+        DispatchQueue.global().sync {
+            coordinator.requestToggle(source: .customKey)
+        }
+
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.google.Chrome"
+        let composer = makeComposer(store: InputModeStore())
+        let session = InputSession(
+            client: client,
+            context: ClientContext(
+                bundleId: client.bundleID,
+                hasTextInputCapability: true,
+                isLikelyDesktopArea: false,
+                documentAccessSafe: true
+            ),
+            composer: composer
+        )
+        session.markContextStaleForSameClientReactivation()
+        var analyzeCount = 0
+
+        let applied = coordinator.reconcilePendingToggleIfNeeded { source, trace in
+            var didApplyMode = false
+            _ = PriTypeInputController.routeExternalModeTransition(
+                in: session,
+                source: source,
+                trace: trace,
+                analyzeContext: { _ in
+                    analyzeCount += 1
+                    return ClientContext(
+                        bundleId: client.bundleID,
+                        hasTextInputCapability: true,
+                        isLikelyDesktopArea: false,
+                        documentAccessSafe: true
+                    )
+                },
+                shouldPassThroughSecureInput: { _, _ in false },
+                syncRomanKeyboardLayout: { _, _ in },
+                didApplyMode: {
+                    didApplyMode = true
+                }
+            )
+            return didApplyMode
+        }
+
+        #expect(applied)
+        #expect(!coordinator.reconcilePendingToggleIfNeeded { _, _ in
+            Issue.record("The applied toggle must be removed exactly once")
+            return true
+        })
+        #expect(analyzeCount == 1)
+        #expect(composer.inputMode == .english)
+
+        let markCountBeforeInput = client.markCalls.count
+        let firstKeyHandled = composer.handle(
+            TestEventFactory.keyEvent(char: "a", keyCode: 0)!,
+            delegate: session.adapter
+        )
+        #expect(!firstKeyHandled)
+        #expect(client.markCalls.count == markCountBeforeInput)
+    }
+
     private func pendingOwnershipTracker() -> InputModeOwnershipTracker {
         var tracker = InputModeOwnershipTracker()
         _ = tracker.observe(InputModeOwnershipSnapshot(

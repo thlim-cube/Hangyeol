@@ -92,6 +92,25 @@ struct ConfigurationManagerTests {
         #expect(config.englishTextConvenienceFallbackEnabled)
         #expect(UserDefaults.standard.bool(forKey: "com.pritype.englishTextConvenienceFallbackEnabled"))
     }
+
+    @Test("Caps Lock double consonants default on and persist when disabled")
+    func capsLockDoubleConsonantPreferencePersistence() throws {
+        let suiteName = "com.pritype.tests.caps-lock-double-consonants.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let key = "com.pritype.capsLockProducesDoubleConsonants"
+        let config = ConfigurationManager(
+            defaults: defaults,
+            keyBindingDataReader: { _ in nil }
+        )
+
+        #expect(config.capsLockProducesDoubleConsonants)
+        #expect(defaults.object(forKey: key) == nil)
+
+        config.capsLockProducesDoubleConsonants = false
+        #expect(!config.capsLockProducesDoubleConsonants)
+        #expect(defaults.object(forKey: key) as? Bool == false)
+    }
     
     // MARK: - Toggle Key Tests (Legacy)
     

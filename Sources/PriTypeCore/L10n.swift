@@ -79,6 +79,8 @@ public enum L10n {
         public static var respectRomanLayoutSubtitle: String { localized("keyboard.respectRomanLayoutSubtitle") }
         public static var englishConveniences: String { localized("keyboard.englishConveniences") }
         public static var englishConveniencesSubtitle: String { localized("keyboard.englishConveniencesSubtitle") }
+        public static var capsLockDoubleConsonants: String { localized("keyboard.capsLockDoubleConsonants") }
+        public static var capsLockDoubleConsonantsSubtitle: String { localized("keyboard.capsLockDoubleConsonantsSubtitle") }
     }
     
     // MARK: - Toggle Key

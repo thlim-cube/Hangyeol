@@ -95,6 +95,7 @@ struct SettingsView: View {
     @State private var selectedKeyboard = ConfigurationManager.shared.keyboardId
     @State private var respectCurrentRomanKeyboardLayout = ConfigurationManager.shared.respectCurrentRomanKeyboardLayout
     @State private var englishTextConvenienceFallbackEnabled = ConfigurationManager.shared.englishTextConvenienceFallbackEnabled
+    @State private var capsLockProducesDoubleConsonants = ConfigurationManager.shared.capsLockProducesDoubleConsonants
     @State private var toggleKeyBinding = ConfigurationManager.shared.toggleKeyBinding
     @State private var hanjaKeyBinding = ConfigurationManager.shared.hanjaKeyBinding
     @State private var autoUpdateCheckEnabled = ConfigurationManager.shared.autoUpdateCheckEnabled
@@ -159,6 +160,7 @@ struct SettingsView: View {
             selectedKeyboard = ConfigurationManager.shared.keyboardId
             respectCurrentRomanKeyboardLayout = ConfigurationManager.shared.respectCurrentRomanKeyboardLayout
             englishTextConvenienceFallbackEnabled = ConfigurationManager.shared.englishTextConvenienceFallbackEnabled
+            capsLockProducesDoubleConsonants = ConfigurationManager.shared.capsLockProducesDoubleConsonants
             toggleKeyBinding = ConfigurationManager.shared.toggleKeyBinding
             hanjaKeyBinding = ConfigurationManager.shared.hanjaKeyBinding
             autoUpdateCheckEnabled = ConfigurationManager.shared.autoUpdateCheckEnabled
@@ -225,6 +227,17 @@ struct SettingsView: View {
                     icon: "textformat",
                     isOn: $englishTextConvenienceFallbackEnabled
                 )
+
+                Divider()
+                    .opacity(0.2)
+                    .padding(.horizontal, 12)
+
+                SettingsToggleRow(
+                    title: L10n.keyboard.capsLockDoubleConsonants,
+                    subtitle: L10n.keyboard.capsLockDoubleConsonantsSubtitle,
+                    icon: "capslock",
+                    isOn: $capsLockProducesDoubleConsonants
+                )
             }
             .onChange(of: selectedKeyboard) { _, newValue in
                 ConfigurationManager.shared.keyboardId = newValue
@@ -234,6 +247,9 @@ struct SettingsView: View {
             }
             .onChange(of: englishTextConvenienceFallbackEnabled) { _, newValue in
                 ConfigurationManager.shared.englishTextConvenienceFallbackEnabled = newValue
+            }
+            .onChange(of: capsLockProducesDoubleConsonants) { _, newValue in
+                ConfigurationManager.shared.capsLockProducesDoubleConsonants = newValue
             }
 
             CapsLockStatusCard(
@@ -1025,6 +1041,7 @@ struct KeyRecorderRow: View {
     @State private var isHovering = false
     @State private var monitor: Any?
     @State private var pulseAnimation = false
+    @State private var recorderState = KeyBindingRecorderState()
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -1096,71 +1113,104 @@ struct KeyRecorderRow: View {
         }
     }
 
-    @State private var previousFlags: NSEvent.ModifierFlags = []
-
     private func startRecording() {
         isRecording = true
         pulseAnimation = true
-        previousFlags = NSEvent.ModifierFlags(rawValue: 0)
+        recorderState.reset()
+        let suppressor = RightCommandSuppressor.shared
+        if suppressor.isRunning {
+            suppressor.beginKeyRecording { keyCode, modifiers in
+                completeEventTapRecording(keyCode: keyCode, modifiers: modifiers)
+            }
+            return
+        }
+        suppressor.beginKeyRecording(onRecorded: nil)
 
-        // Use local event monitor to capture key events in the settings window
+        // Without an event tap, keep settings usable with an app-local fallback.
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             if event.type == .flagsChanged {
                 let keyCode = Int64(event.keyCode)
-                let currentFlags = event.modifierFlags.intersection([.command, .option, .control, .shift, .capsLock])
-
-                // Detect key DOWN: current flags have MORE modifiers than previous
-                // This prevents capturing on modifier release. Caps Lock is a lock
-                // state, so capture its keyCode directly even when the flag toggles off.
-                let isNewModifier = (!currentFlags.isSubset(of: previousFlags) && !currentFlags.isEmpty) || keyCode == 57
-                previousFlags = currentFlags
-
-                if isNewModifier {
-                    // Fn key (63) is not supported in CGEventTap — ignore it
-                    guard keyCode != 63 else { return event }
-                    guard keyCode != 57 else {
-                        stopRecording()
-                        onCapsLockBlocked()
-                        return nil
-                    }
-                    let newBinding = KeyBinding(
-                        keyCode: keyCode,
-                        modifiers: 0,  // modifier-only binding
-                        displayName: KeyBinding.generateDisplayName(keyCode: keyCode, modifiers: 0)
-                    )
-                    binding = newBinding
-                    stopRecording()
-                    return nil  // Consume event
-                }
-            } else if event.type == .keyDown {
-                // Escape cancels recording
-                if event.keyCode == 53 {
-                    stopRecording()
-                    return nil
-                }
-
-                // Regular key + optional modifiers
-                let keyCode = Int64(event.keyCode)
-                let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift]).rawValue
-                let newBinding = KeyBinding(
+                let eventFlags = event.cgEvent?.flags
+                    ?? CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))
+                let decision = recorderState.handleModifier(
                     keyCode: keyCode,
-                    modifiers: UInt64(modifiers),
-                    displayName: KeyBinding.generateDisplayName(keyCode: keyCode, modifiers: UInt64(modifiers))
+                    isDown: RightCommandSuppressor.modifierKeyIsDownForRecording(
+                        keyCode: keyCode,
+                        eventFlags: eventFlags
+                    )
                 )
-                binding = newBinding
-                stopRecording()
-                return nil  // Consume event
+                return applyRecordingDecision(decision, event: event)
+            } else if event.type == .keyDown {
+                let decision = recorderState.handleKeyDown(
+                    keyCode: Int64(event.keyCode),
+                    modifiers: UInt64(event.modifierFlags.rawValue)
+                )
+                return applyRecordingDecision(decision, event: event)
             }
             return event
         }
     }
 
+    private func completeEventTapRecording(
+        keyCode: Int64,
+        modifiers: UInt64
+    ) {
+        if keyCode == 53 {
+            stopRecording()
+            return
+        }
+        if keyCode == 57 {
+            stopRecording()
+            onCapsLockBlocked()
+            return
+        }
+
+        let normalizedModifiers = ShortcutBindingRouter.normalizedModifiers(modifiers)
+        binding = KeyBinding(
+            keyCode: keyCode,
+            modifiers: normalizedModifiers,
+            displayName: KeyBinding.generateDisplayName(
+                keyCode: keyCode,
+                modifiers: normalizedModifiers
+            )
+        )
+        stopRecording()
+    }
+
+    private func applyRecordingDecision(
+        _ decision: KeyBindingRecordingDecision,
+        event: NSEvent
+    ) -> NSEvent? {
+        switch decision {
+        case .pending:
+            return nil
+        case .ignored:
+            return event
+        case .recorded(let newBinding):
+            binding = newBinding
+            stopRecording()
+            return nil
+        case .cancelled:
+            stopRecording()
+            return nil
+        case .capsLockBlocked:
+            stopRecording()
+            onCapsLockBlocked()
+            return nil
+        }
+    }
+
     private func stopRecording() {
+        let wasRecording = isRecording
         isRecording = false
         pulseAnimation = false
+        recorderState.reset()
         if let monitor = monitor {
             NSEvent.removeMonitor(monitor)
         }
         monitor = nil
+        if wasRecording {
+            RightCommandSuppressor.shared.endKeyRecording()
+        }
     }
 }

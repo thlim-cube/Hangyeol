@@ -37,6 +37,8 @@
 "keyboard.respectRomanLayoutSubtitle" = "영어 모드에서 ABC 대신 최근 사용한 Dvorak, AZERTY 등의 영문 자판 배열을 사용합니다.";
 "keyboard.englishConveniences" = "영어 편의 기능 직접 처리";
 "keyboard.englishConveniencesSubtitle" = "자동 대문자, 스마트 문장부호, 스페이스 두 번으로 마침표 입력을 PriType이 처리합니다. 앱 기능과 중복될 수 있어 기본값은 꺼져 있습니다.";
+"keyboard.capsLockDoubleConsonants" = "Caps Lock으로 쌍자음 입력";
+"keyboard.capsLockDoubleConsonantsSubtitle" = "Caps Lock이 켜져 있으면 Shift 없이도 ㄲ·ㄸ·ㅃ·ㅆ·ㅉ을 입력합니다.";
 
 /* Toggle Key */
 "toggle.title" = "한/영 전환";
@@ -48,7 +50,7 @@
 "keyBinding.title" = "키 설정";
 "keyBinding.toggleKey" = "한/영 전환키";
 "keyBinding.hanjaKey" = "한자 입력키";
-"keyBinding.recording" = "키를 입력하세요...";
+"keyBinding.recording" = "키 또는 조합키를 입력하세요...";
 "keyBinding.change" = "변경";
 "keyBinding.conflict" = "같은 키는 사용할 수 없습니다";
 "keyBinding.conflictRestored" = "같은 키는 사용할 수 없습니다. 기존 설정으로 복원했습니다.";

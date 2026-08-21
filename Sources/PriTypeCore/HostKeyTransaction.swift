@@ -35,17 +35,20 @@ enum DeferredHostKeyTargetPolicy {
 struct DeferredCompositionRetirementGate {
     private static let maxReasonableLocation = 10_000_000
 
-    private let originalMarkedRange: NSRange
+    private let originalMarkedRange: NSRange?
+    private let verificationRange: NSRange?
     private let expectedCaretLocation: Int
     private let targetPolicy: DeferredHostKeyTargetPolicy
     private var stableUnmarkedObservations = 0
 
     var requiresCaretAnchor: Bool {
-        targetPolicy == .caretAnchored
+        targetPolicy == .caretAnchored || originalMarkedRange == nil
     }
 
     var committedTextVerificationRange: NSRange? {
-        targetPolicy == .caretAnchored ? originalMarkedRange : nil
+        targetPolicy == .caretAnchored || originalMarkedRange == nil
+            ? verificationRange
+            : nil
     }
 
     init?(
@@ -59,7 +62,38 @@ struct DeferredCompositionRetirementGate {
               markedRange.location < Self.maxReasonableLocation,
               end < Self.maxReasonableLocation else { return nil }
         originalMarkedRange = markedRange
+        verificationRange = markedRange
         expectedCaretLocation = end
+        self.targetPolicy = targetPolicy
+    }
+
+    /// Some Blink clients expose a valid caret before they expose their live
+    /// marked range. A deferred host key can still target the committed preedit
+    /// precisely: it must appear immediately before that unchanged caret.
+    init?(
+        unavailableMarkedRange markedRange: NSRange,
+        selectedRange: NSRange,
+        expectedCommittedTextLength: Int,
+        targetPolicy: DeferredHostKeyTargetPolicy = .caretAnchored
+    ) {
+        let (selectionEnd, selectionOverflow) = selectedRange.location
+            .addingReportingOverflow(selectedRange.length)
+        guard markedRange.location == NSNotFound || markedRange.length == 0,
+              selectedRange.location != NSNotFound,
+              selectedRange.length == 0,
+              expectedCommittedTextLength > 0,
+              selectedRange.location >= expectedCommittedTextLength,
+              !selectionOverflow,
+              selectedRange.location < Self.maxReasonableLocation,
+              selectionEnd < Self.maxReasonableLocation else { return nil }
+
+        let verificationRange = NSRange(
+            location: selectedRange.location - expectedCommittedTextLength,
+            length: expectedCommittedTextLength
+        )
+        originalMarkedRange = nil
+        self.verificationRange = verificationRange
+        expectedCaretLocation = selectedRange.location
         self.targetPolicy = targetPolicy
     }
 
@@ -68,17 +102,18 @@ struct DeferredCompositionRetirementGate {
         selectedRange: NSRange,
         committedTextIsVisible: Bool? = nil
     ) -> DeferredCompositionRetirementDecision {
-        if targetPolicy == .caretAnchored {
+        if requiresCaretAnchor {
             guard selectedRange.location == expectedCaretLocation,
                   selectedRange.length == 0 else { return .cancel }
         }
 
         if markedRange.location != NSNotFound, markedRange.length > 0 {
             stableUnmarkedObservations = 0
-            return markedRange == originalMarkedRange ? .wait : .cancel
+            let ownedRange = originalMarkedRange ?? verificationRange
+            return markedRange == ownedRange ? .wait : .cancel
         }
 
-        if targetPolicy == .caretAnchored,
+        if committedTextVerificationRange != nil,
            committedTextIsVisible != true {
             stableUnmarkedObservations = 0
             return .wait
@@ -119,15 +154,27 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
         self.events = events
         self.authorization = authorization
         self.postedBoundary = postedBoundary
-        self.expectedCommittedText = expectedCommittedText?
+        let normalizedExpectedCommittedText = expectedCommittedText?
             .precomposedStringWithCanonicalMapping
+        self.expectedCommittedText = normalizedExpectedCommittedText
         let targetPolicy: DeferredHostKeyTargetPolicy = keyCode == KeyCode.forwardDelete
             ? .caretAnchored
             : .compositionOnly
+        let initialMarkedRange = client.markedRange()
         retirementGate = DeferredCompositionRetirementGate(
-            markedRange: client.markedRange(),
+            markedRange: initialMarkedRange,
             targetPolicy: targetPolicy
         )
+        if retirementGate == nil,
+           let normalizedExpectedCommittedText,
+           !normalizedExpectedCommittedText.isEmpty {
+            retirementGate = DeferredCompositionRetirementGate(
+                unavailableMarkedRange: initialMarkedRange,
+                selectedRange: client.selectedRange(),
+                expectedCommittedTextLength: normalizedExpectedCommittedText.utf16.count,
+                targetPolicy: targetPolicy
+            )
+        }
     }
 
     func schedule() {
@@ -215,12 +262,32 @@ enum HostKeyTransaction {
         didPost: @escaping (UInt16) -> Void,
         expectedCommittedText: String?
     ) -> Bool {
+        guard let replay = prepareReplay(
+            client: client,
+            keyCode: keyCode,
+            modifierFlags: modifierFlags,
+            isClientWriteAllowed: isClientWriteAllowed,
+            didPost: didPost,
+            expectedCommittedText: expectedCommittedText
+        ) else { return false }
+        replay.schedule()
+        return true
+    }
+
+    private static func prepareReplay(
+        client: IMKTextInput,
+        keyCode: UInt16,
+        modifierFlags: UInt,
+        isClientWriteAllowed: @escaping () -> Bool,
+        didPost: @escaping (UInt16) -> Void,
+        expectedCommittedText: String?
+    ) -> DeferredHostKeyReplay? {
         guard IOKitManager.hasAccessibilityPermission(),
               isClientWriteAllowed(),
               let events = DeferredHostKeyDelivery.makeEvents(
                   keyCode: keyCode,
                   modifierFlags: modifierFlags
-              ) else { return false }
+              ) else { return nil }
 
         let replay = DeferredHostKeyReplay(
             client: client,
@@ -232,9 +299,7 @@ enum HostKeyTransaction {
             postedBoundary: DeferredHostKeyBoundary(handler: didPost),
             expectedCommittedText: expectedCommittedText
         )
-        guard replay.isArmed else { return false }
-        replay.schedule()
-        return true
+        return replay.isArmed ? replay : nil
     }
 }
 

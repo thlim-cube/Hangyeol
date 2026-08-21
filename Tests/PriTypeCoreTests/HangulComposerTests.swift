@@ -482,6 +482,41 @@ struct HangulComposerTests {
         #expect(delegate.markedText.isEmpty)
     }
 
+    @Test("Blink Shift+Return keeps marked text until replay preparation succeeds")
+    func blinkShiftReturnDoesNotRetireMarkWhenReplayPreparationFails() throws {
+        let (composer, delegate, _) = makeComposer()
+        composer.markKeystroke(
+            bundleId: "com.openai.codex",
+            usesBlinkNativeTextClient: false
+        )
+        _ = composer.handle(
+            try #require(TestEventFactory.keyEvent(char: "r", keyCode: 15)),
+            delegate: delegate
+        )
+        _ = composer.handle(
+            try #require(TestEventFactory.keyEvent(char: "k", keyCode: 40)),
+            delegate: delegate
+        )
+        delegate.hostKeySchedulingSucceeds = false
+        let callCountBeforeReturn = delegate.orderedCalls.count
+
+        let handled = composer.handle(
+            try #require(TestEventFactory.keyEvent(
+                char: "\r",
+                keyCode: KeyCode.return,
+                modifiers: [.shift]
+            )),
+            delegate: delegate
+        )
+
+        #expect(!handled)
+        #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeReturn)) == [
+            "insert:가"
+        ])
+        #expect(delegate.fullText == "가")
+        #expect(delegate.markedText.isEmpty)
+    }
+
     @Test("Capability-selected Blink web mediates Return and Forward Delete")
     func capabilitySelectedBlinkWebMediatesHostKeys() throws {
         for (keyCode, character) in [

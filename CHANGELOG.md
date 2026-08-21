@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.13] - 2026-08-21
+
+### Added
+- Caps Lock이 한글 자음을 쌍자음으로 바꾸는 동작을 설정에서 끌 수 있습니다. 실제 Shift 키를 이용한 쌍자음 입력은 그대로 유지됩니다.
+
+### Fixed
+- 한/영 전환 콜백과 입력 controller 교체가 겹쳐도 전환 의도를 보존하고, 새 필드의 첫 안전한 입력 전에 한 번만 적용합니다.
+- Blink/Codex에서 조합 직후 Shift+Enter 재전달을 준비하지 못한 경우 marked text를 먼저 지워 마지막 한글이 유실되던 문제를 해결했습니다.
+
+## [2.8.12] - 2026-08-21
+
+### Added
+- 설정의 한/영 전환키와 한자 입력키에 `Control + Space` 같은 modifier 조합키를 직접 녹화하고 저장할 수 있습니다. 단일 modifier 키는 기존처럼 키를 눌렀다 놓으면 저장됩니다.
+
+## [2.8.11] - 2026-08-21
+
+### Fixed
+- Codex처럼 Blink의 marked range가 늦게 갱신되는 편집기에서도, 문장 중간의 한글 조합 직후 Forward Delete를 빠르게 누르면 조합 글자 대신 뒤쪽 글자를 일관되게 삭제하도록 보완했습니다.
+
 ## [2.8.9] - 2026-08-20
 
 ### Changed

@@ -288,13 +288,14 @@ public class HangulComposer: @unchecked Sendable {
             // marked range. Capture that range first so the host Return is released
             // only after the composition has actually become ordinary document text.
             let scheduledHostReturn = defersBlinkWebContentReturn
-                && delegate.tryScheduleHostKey(
+                && beginHostKeyTransaction(
                     keyCode: keyCode,
-                    modifierFlags: modifierFlags.rawValue
+                    modifierFlags: modifierFlags.rawValue,
+                    delegate: delegate,
+                    retireMarkedText: {
+                        delegate.setMarkedText("")
+                    }
                 )
-            if defersBlinkWebContentReturn {
-                delegate.setMarkedText("")
-            }
             commitComposition(delegate: delegate)
             if hadComposition
                 && !isBlinkSoftLineBreak
@@ -430,6 +431,23 @@ public class HangulComposer: @unchecked Sendable {
         }
         
         return nil  // Not a special key
+    }
+
+    /// Scheduling returns true only after the replay has an authorization lease,
+    /// event pair, and owned retirement gate. Clear marked text only inside that
+    /// successful preparation boundary.
+    private func beginHostKeyTransaction(
+        keyCode: UInt16,
+        modifierFlags: UInt,
+        delegate: HangulComposerDelegate,
+        retireMarkedText: () -> Void
+    ) -> Bool {
+        guard delegate.tryScheduleHostKey(
+            keyCode: keyCode,
+            modifierFlags: modifierFlags
+        ) else { return false }
+        retireMarkedText()
+        return true
     }
     
     /// Process a single character through the Hangul engine
@@ -577,7 +595,10 @@ public class HangulComposer: @unchecked Sendable {
             return false
         }
         
-        let inputCharacters = characters
+        let inputCharacters = normalizedHangulInputCharacters(
+            characters,
+            modifierFlags: event.modifierFlags
+        )
         
         // Filter: If input contains non-printable characters (e.g., function keys, arrows)
         // This catches Fn+Arrow (Home/End/PageUp/PageDown) and other navigation keys
@@ -604,6 +625,35 @@ public class HangulComposer: @unchecked Sendable {
         
         // If we processed anything, we return true to stop system from handling duplicates.
         return handledAtLeastOnce
+    }
+
+    /// NSEvent characters reflect the combined Caps Lock and Shift state. When
+    /// the user disables Caps Lock double consonants, derive Korean key casing
+    /// from the physical Shift flag alone so Shift+key remains unchanged.
+    private func normalizedHangulInputCharacters(
+        _ characters: String,
+        modifierFlags: NSEvent.ModifierFlags
+    ) -> String {
+        guard modifierFlags.contains(.capsLock),
+              !configuration.capsLockProducesDoubleConsonants else {
+            return characters
+        }
+
+        let usesShift = modifierFlags.contains(.shift)
+        var normalized = ""
+        for scalar in characters.unicodeScalars {
+            let value = scalar.value
+            let normalizedValue: UInt32
+            if (65...90).contains(value) {
+                normalizedValue = usesShift ? value : value + 32
+            } else if (97...122).contains(value) {
+                normalizedValue = usesShift ? value - 32 : value
+            } else {
+                normalizedValue = value
+            }
+            normalized.append(Character(String(Unicode.Scalar(normalizedValue)!)))
+        }
+        return normalized
     }
     
     /// Updates the marked text and commits any finalized text

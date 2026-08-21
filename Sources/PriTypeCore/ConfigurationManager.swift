@@ -249,6 +249,9 @@ public protocol ConfigurationProviding: AnyObject, Sendable {
     /// Whether macOS owns Caps Lock input-source switching.
     var capsLockInputSourceSwitchEnabled: Bool { get }
 
+    /// Whether Caps Lock should act like Shift for Korean double consonants.
+    var capsLockProducesDoubleConsonants: Bool { get }
+
     /// Whether English pass-through should use the user's current Roman layout
     /// instead of forcing the ABC/US layout.
     var respectCurrentRomanKeyboardLayout: Bool { get }
@@ -293,6 +296,9 @@ public extension ConfigurationProviding {
     var autoCapitalizationEnabled: Bool { true }
     var smartQuoteSubstitutionEnabled: Bool { true }
     var smartDashSubstitutionEnabled: Bool { true }
+
+    /// Default preserves PriType's established Caps Lock typing behavior.
+    var capsLockProducesDoubleConsonants: Bool { true }
 }
 
 // MARK: - ConfigurationManager
@@ -343,6 +349,7 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     private var cachedEnglishTextConvenienceFallbackEnabled: Bool
     private var cachedExperimentalDirectInsertion: Bool
     private var cachedRespectCurrentRomanKeyboardLayout: Bool
+    private var cachedCapsLockProducesDoubleConsonants: Bool
 
     private convenience init() {
         self.init(
@@ -373,6 +380,9 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
         self.cachedRespectCurrentRomanKeyboardLayout = defaults.bool(
             forKey: Keys.respectCurrentRomanKeyboardLayout
         )
+        self.cachedCapsLockProducesDoubleConsonants = defaults.object(
+            forKey: Keys.capsLockProducesDoubleConsonants
+        ) == nil || defaults.bool(forKey: Keys.capsLockProducesDoubleConsonants)
         defaults.removeObject(forKey: "com.pritype.autoCapitalize")
         defaults.removeObject(forKey: "com.pritype.doubleSpacePeriod")
         observeSystemPreferenceChanges()
@@ -390,6 +400,7 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
         static let experimentalDirectInsertion = "com.pritype.experimentalDirectInsertion"
         static let respectCurrentRomanKeyboardLayout = "com.pritype.respectCurrentRomanKeyboardLayout"
         static let englishTextConvenienceFallbackEnabled = "com.pritype.englishTextConvenienceFallbackEnabled"
+        static let capsLockProducesDoubleConsonants = "com.pritype.capsLockProducesDoubleConsonants"
     }
 
     private enum SystemTextInputKeys {
@@ -596,6 +607,24 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
         capsLockSwitchState.value
     }
 
+    /// Let the Caps Lock state capitalize Korean layout keys, producing
+    /// ㄲ·ㄸ·ㅃ·ㅆ·ㅉ without holding the physical Shift key. Default ON keeps
+    /// the behavior used by earlier PriType versions.
+    public var capsLockProducesDoubleConsonants: Bool {
+        get {
+            systemTextFeatureLock.withLock { cachedCapsLockProducesDoubleConsonants }
+        }
+        set {
+            let didChange = systemTextFeatureLock.withLock {
+                guard cachedCapsLockProducesDoubleConsonants != newValue else { return false }
+                cachedCapsLockProducesDoubleConsonants = newValue
+                return true
+            }
+            guard didChange else { return }
+            defaults.set(newValue, forKey: Keys.capsLockProducesDoubleConsonants)
+        }
+    }
+
     /// Refresh the cached ownership setting at a known system-change boundary.
     ///
     /// This method may synchronize CFPreferences and therefore must not be
@@ -783,15 +812,20 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
         let refreshedKeyboardId = defaults.string(forKey: Keys.keyboardId) ?? "2"
         let refreshedDirectInsertion = defaults.bool(forKey: Keys.experimentalDirectInsertion)
         let refreshedRomanLayout = defaults.bool(forKey: Keys.respectCurrentRomanKeyboardLayout)
+        let refreshedCapsLockDoubleConsonants = defaults.object(
+            forKey: Keys.capsLockProducesDoubleConsonants
+        ) == nil || defaults.bool(forKey: Keys.capsLockProducesDoubleConsonants)
         return systemTextFeatureLock.withLock {
             guard cachedKeyboardId != refreshedKeyboardId
                     || cachedExperimentalDirectInsertion != refreshedDirectInsertion
-                    || cachedRespectCurrentRomanKeyboardLayout != refreshedRomanLayout else {
+                    || cachedRespectCurrentRomanKeyboardLayout != refreshedRomanLayout
+                    || cachedCapsLockProducesDoubleConsonants != refreshedCapsLockDoubleConsonants else {
                 return false
             }
             cachedKeyboardId = refreshedKeyboardId
             cachedExperimentalDirectInsertion = refreshedDirectInsertion
             cachedRespectCurrentRomanKeyboardLayout = refreshedRomanLayout
+            cachedCapsLockProducesDoubleConsonants = refreshedCapsLockDoubleConsonants
             return true
         }
     }

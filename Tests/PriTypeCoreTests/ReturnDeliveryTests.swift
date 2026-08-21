@@ -199,6 +199,7 @@ struct ReturnDeliveryTests {
             selectedRange: NSRange(location: 3, length: 0),
             committedTextIsVisible: true
         ) == .deliver)
+
     }
 
     @Test("Deferred host key cancels when its marked range or caret changes")
@@ -259,6 +260,92 @@ struct ReturnDeliveryTests {
             selectedRange: NSRange(location: 3, length: 0),
             committedTextIsVisible: true
         ) == .deliver)
+    }
+
+    @Test("Forward Delete uses the caret when Blink delays its marked range")
+    func forwardDeleteUsesCaretFallbackForDelayedMarkedRange() throws {
+        var gate = try #require(DeferredCompositionRetirementGate(
+            unavailableMarkedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: 3, length: 0),
+            expectedCommittedTextLength: 1,
+            targetPolicy: .caretAnchored
+        ))
+
+        #expect(gate.committedTextVerificationRange == NSRange(location: 2, length: 1))
+        #expect(gate.observe(
+            markedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: 3, length: 0),
+            committedTextIsVisible: false
+        ) == .wait)
+        #expect(gate.observe(
+            markedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: 3, length: 0),
+            committedTextIsVisible: true
+        ) == .wait)
+        #expect(gate.observe(
+            markedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: 3, length: 0),
+            committedTextIsVisible: true
+        ) == .deliver)
+
+        #expect(DeferredCompositionRetirementGate(
+            unavailableMarkedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: NSNotFound, length: 0),
+            expectedCommittedTextLength: 1,
+            targetPolicy: .caretAnchored
+        ) == nil)
+
+        var movedCaretGate = try #require(DeferredCompositionRetirementGate(
+            unavailableMarkedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: 3, length: 0),
+            expectedCommittedTextLength: 1,
+            targetPolicy: .caretAnchored
+        ))
+        #expect(movedCaretGate.observe(
+            markedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: 4, length: 0),
+            committedTextIsVisible: true
+        ) == .cancel)
+    }
+
+    @Test("Shift+Return can prepare from the caret while Blink delays its marked range")
+    func returnUsesCaretFallbackForDelayedMarkedRange() throws {
+        var gate = try #require(DeferredCompositionRetirementGate(
+            unavailableMarkedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: 3, length: 0),
+            expectedCommittedTextLength: 1,
+            targetPolicy: .compositionOnly
+        ))
+
+        #expect(gate.committedTextVerificationRange == NSRange(location: 2, length: 1))
+        #expect(gate.requiresCaretAnchor)
+        #expect(gate.observe(
+            markedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: 3, length: 0),
+            committedTextIsVisible: false
+        ) == .wait)
+        #expect(gate.observe(
+            markedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: 3, length: 0),
+            committedTextIsVisible: true
+        ) == .wait)
+        #expect(gate.observe(
+            markedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: 3, length: 0),
+            committedTextIsVisible: true
+        ) == .deliver)
+
+        var movedCaretGate = try #require(DeferredCompositionRetirementGate(
+            unavailableMarkedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: 3, length: 0),
+            expectedCommittedTextLength: 1,
+            targetPolicy: .compositionOnly
+        ))
+        #expect(movedCaretGate.observe(
+            markedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: 4, length: 0),
+            committedTextIsVisible: true
+        ) == .cancel)
     }
 
     @Test("Deferred host Return keeps its replay marker and key shape")

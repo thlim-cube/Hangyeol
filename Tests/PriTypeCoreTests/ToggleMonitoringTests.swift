@@ -526,6 +526,16 @@ struct SuppressedKeyPairTests {
             keyCode: 55,
             eventFlags: leftCommandStillDown
         ))
+
+        let aggregateControlOnly = CGEventFlags.maskControl
+        #expect(RightCommandSuppressor.modifierKeyIsDownForRecording(
+            keyCode: 59,
+            eventFlags: aggregateControlOnly
+        ))
+        #expect(!RightCommandSuppressor.modifierKeyIsDownForRecording(
+            keyCode: 54,
+            eventFlags: leftCommandStillDown
+        ))
     }
 
     @Test("A suppressed modifier never leaves its host-visible sibling family on")
@@ -748,6 +758,56 @@ struct ShortcutBindingRoutingTests {
             hanjaBinding: .defaultHanja,
             priTypeToggleEnabled: true
         ) == .hanja)
+    }
+}
+
+@Suite("Key binding recorder")
+struct KeyBindingRecorderTests {
+    @Test("A regular key records every held shortcut modifier")
+    func recordsControlSpaceChord() {
+        var recorder = KeyBindingRecorderState()
+
+        #expect(recorder.handleModifier(keyCode: 59, isDown: true) == .pending)
+        #expect(recorder.handleKeyDown(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue
+                | CGEventFlags.maskAlphaShift.rawValue
+        ) == .recorded(KeyBinding(
+            keyCode: 49,
+            modifiers: CGEventFlags.maskControl.rawValue,
+            displayName: "Control + Space"
+        )))
+        #expect(recorder.handleModifier(keyCode: 59, isDown: false) == .pending)
+    }
+
+    @Test("A single modifier records only when released")
+    func recordsModifierOnlyOnRelease() {
+        var recorder = KeyBindingRecorderState()
+
+        #expect(recorder.handleModifier(keyCode: 54, isDown: true) == .pending)
+        #expect(recorder.handleModifier(keyCode: 54, isDown: false) == .recorded(.defaultToggle))
+    }
+
+    @Test("Multiple modifiers alone do not create an unsupported binding")
+    func rejectsModifierOnlyChord() {
+        var recorder = KeyBindingRecorderState()
+
+        #expect(recorder.handleModifier(keyCode: 59, isDown: true) == .pending)
+        #expect(recorder.handleModifier(keyCode: 56, isDown: true) == .pending)
+        #expect(recorder.handleModifier(keyCode: 56, isDown: false) == .pending)
+        #expect(recorder.handleModifier(keyCode: 59, isDown: false) == .pending)
+
+        #expect(recorder.handleModifier(keyCode: 54, isDown: true) == .pending)
+        #expect(recorder.handleModifier(keyCode: 54, isDown: false) == .recorded(.defaultToggle))
+    }
+
+    @Test("Escape cancels, Caps Lock is blocked, and Fn is ignored")
+    func handlesRecorderControlKeys() {
+        var recorder = KeyBindingRecorderState()
+
+        #expect(recorder.handleKeyDown(keyCode: 53, modifiers: 0) == .cancelled)
+        #expect(recorder.handleModifier(keyCode: 57, isDown: true) == .capsLockBlocked)
+        #expect(recorder.handleModifier(keyCode: 63, isDown: true) == .ignored)
     }
 }
 

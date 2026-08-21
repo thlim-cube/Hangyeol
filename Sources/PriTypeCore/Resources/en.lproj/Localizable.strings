@@ -37,6 +37,8 @@
 "keyboard.respectRomanLayoutSubtitle" = "Uses your current Roman layout, such as Dvorak or AZERTY, instead of ABC in English mode.";
 "keyboard.englishConveniences" = "Handle English Text Conveniences";
 "keyboard.englishConveniencesSubtitle" = "PriType applies auto-capitalization, smart punctuation, and double-space periods. Off by default to avoid duplicating app features.";
+"keyboard.capsLockDoubleConsonants" = "Use Caps Lock for Double Consonants";
+"keyboard.capsLockDoubleConsonantsSubtitle" = "When Caps Lock is on, type ㄲ, ㄸ, ㅃ, ㅆ, and ㅉ without holding Shift.";
 
 /* Toggle Key */
 "toggle.title" = "Korean/English Toggle";
@@ -48,7 +50,7 @@
 "keyBinding.title" = "Key Settings";
 "keyBinding.toggleKey" = "Toggle Key";
 "keyBinding.hanjaKey" = "Hanja Key";
-"keyBinding.recording" = "Press a key...";
+"keyBinding.recording" = "Press a key or shortcut...";
 "keyBinding.change" = "Change";
 "keyBinding.conflict" = "Cannot use the same key";
 "keyBinding.conflictRestored" = "Cannot use the same key. Restored the previous setting.";

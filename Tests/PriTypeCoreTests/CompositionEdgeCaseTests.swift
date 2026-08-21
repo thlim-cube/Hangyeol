@@ -49,6 +49,41 @@ struct CompositionEdgeCaseTests {
         
         #expect(!delegate.markedText.isEmpty, "ㅉ should produce marked text")
     }
+
+    @Test("Caps Lock double consonants can be disabled without disabling Shift")
+    func capsLockDoubleConsonantPreference() {
+        let configuration = MockConfiguration()
+        let statusBar = MockStatusBar()
+        let composer = HangulComposer(statusBar: statusBar, configuration: configuration)
+        let delegate = MockComposerDelegate()
+        configuration.capsLockProducesDoubleConsonants = false
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "R", keyCode: 15, modifiers: [.capsLock])!,
+            delegate: delegate
+        )
+        #expect(delegate.markedText == "ㄱ")
+
+        composer.reset(delegate: delegate)
+        delegate.markedText = ""
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15, modifiers: [.capsLock, .shift])!,
+            delegate: delegate
+        )
+        #expect(delegate.markedText == "ㄲ")
+    }
+
+    @Test("Caps Lock double consonants remain enabled by default")
+    func capsLockDoubleConsonantDefault() {
+        let (composer, delegate, _) = makeComposer()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "R", keyCode: 15, modifiers: [.capsLock])!,
+            delegate: delegate
+        )
+
+        #expect(delegate.markedText == "ㄲ")
+    }
     
     // MARK: - Complex Jongseong (복합 받침) Tests
     
