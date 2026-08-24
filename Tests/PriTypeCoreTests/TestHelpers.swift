@@ -66,9 +66,11 @@ final class MockComposerDelegate: HangulComposerDelegate {
     var insertTextSucceeds = true
     var replaceTextBeforeCursorSucceeds = true
     var hostKeySchedulingSucceeds = true
+    var dropsNextInsertionAfterExplicitMarkedRetirement = false
     var scheduledHostKeyCodes: [UInt16] = []
     var scheduledHostKeyModifierFlags: [UInt] = []
     var passThroughBackspaceAfterClearingCompositionCallCount = 0
+    private var shouldDropNextInsertion = false
     
     func insertText(_ text: String) {
         _ = tryInsertText(text)
@@ -79,12 +81,21 @@ final class MockComposerDelegate: HangulComposerDelegate {
         insertedTexts.append(text)
         orderedCalls.append("insert:\(text)")
         markedText = ""
+        if shouldDropNextInsertion {
+            shouldDropNextInsertion = false
+            return true
+        }
         fullText.append(text)
         return true
     }
 
     func setMarkedText(_ text: String) {
         orderedCalls.append("mark:\(text)")
+        if dropsNextInsertionAfterExplicitMarkedRetirement,
+           text.isEmpty,
+           !markedText.isEmpty {
+            shouldDropNextInsertion = true
+        }
         markedText = text
         if backspaceCompositionUpdateDepth > 0 {
             markedTextDuringBackspaceUpdates.append(text)
@@ -162,9 +173,11 @@ final class MockComposerDelegate: HangulComposerDelegate {
         insertTextSucceeds = true
         replaceTextBeforeCursorSucceeds = true
         hostKeySchedulingSucceeds = true
+        dropsNextInsertionAfterExplicitMarkedRetirement = false
         scheduledHostKeyCodes = []
         scheduledHostKeyModifierFlags = []
         passThroughBackspaceAfterClearingCompositionCallCount = 0
+        shouldDropNextInsertion = false
     }
 }
 

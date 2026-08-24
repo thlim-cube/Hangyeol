@@ -421,7 +421,7 @@ struct HangulComposerTests {
         #expect(delegate.markedText.isEmpty)
     }
 
-    @Test("Slack Shift+Return clears before commit and defers the soft line break")
+    @Test("Slack Shift+Return commits before deferring the soft line break")
     func slackShiftReturnDefersAfterCommit() throws {
         let (composer, delegate, _) = makeComposer()
         composer.markKeystroke(bundleId: "com.tinyspeck.slackmacgap")
@@ -438,7 +438,7 @@ struct HangulComposerTests {
 
         #expect(handled)
         #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeReturn)) == [
-            "schedule:return", "mark:", "insert:가"
+            "schedule:return", "insert:가"
         ])
         #expect(delegate.fullText == "가")
         #expect(delegate.markedText.isEmpty)
@@ -474,7 +474,7 @@ struct HangulComposerTests {
 
         #expect(handled)
         #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeReturn)) == [
-            "schedule:return", "mark:", "insert:식"
+            "schedule:return", "insert:식"
         ])
         #expect(delegate.fullText == "방식")
         delegate.deliverScheduledReturns()
@@ -515,6 +515,40 @@ struct HangulComposerTests {
         ])
         #expect(delegate.fullText == "가")
         #expect(delegate.markedText.isEmpty)
+    }
+
+    @Test("Chrome Shift+Return commits before retiring Blink marked text")
+    func chromeShiftReturnPreservesCommitWhenExplicitRetirementDropsInsertion() throws {
+        let (composer, delegate, _) = makeComposer()
+        composer.markKeystroke(
+            bundleId: "com.google.Chrome",
+            usesBlinkNativeTextClient: false
+        )
+        for (character, keyCode) in [
+            ("q", UInt16(12)), ("k", UInt16(40)), ("d", UInt16(2)),
+            ("t", UInt16(17)), ("l", UInt16(37)), ("r", UInt16(15))
+        ] {
+            _ = composer.handle(
+                try #require(TestEventFactory.keyEvent(char: character, keyCode: keyCode)),
+                delegate: delegate
+            )
+        }
+        #expect(delegate.fullText + delegate.markedText == "방식")
+        delegate.dropsNextInsertionAfterExplicitMarkedRetirement = true
+
+        let handled = composer.handle(
+            try #require(TestEventFactory.keyEvent(
+                char: "\r",
+                keyCode: KeyCode.return,
+                modifiers: [.shift]
+            )),
+            delegate: delegate
+        )
+
+        #expect(handled)
+        #expect(delegate.fullText == "방식")
+        delegate.deliverScheduledReturns()
+        #expect(delegate.fullText == "방식\n")
     }
 
     @Test("Capability-selected Blink web mediates Return and Forward Delete")
@@ -576,7 +610,7 @@ struct HangulComposerTests {
 
         #expect(handled)
         #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeReturn)) == [
-            "schedule:return", "mark:", "insert:가"
+            "schedule:return", "insert:가"
         ])
         #expect(delegate.scheduledHostKeyCodes == [KeyCode.return])
         #expect(delegate.scheduledHostKeyModifierFlags.count == 1)

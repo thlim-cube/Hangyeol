@@ -73,6 +73,22 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
         )
     }
 
+    func tryPerformHostKeyTransaction(
+        keyCode: UInt16,
+        modifierFlags: UInt,
+        commit: () -> Void
+    ) -> Bool {
+        HostKeyTransaction.perform(
+            client: client,
+            keyCode: keyCode,
+            modifierFlags: modifierFlags,
+            isClientWriteAllowed: clientWriteIsAllowed,
+            didPost: deferredHostKeyBoundaryHandler,
+            expectedCommittedText: hostTransactionMarkedText,
+            commit: commit
+        )
+    }
+
     func setMarkedText(_ text: String) {
         // Default: no-op, subclasses override
     }

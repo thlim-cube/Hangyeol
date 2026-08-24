@@ -45,6 +45,11 @@ public protocol HangulComposerDelegate: AnyObject {
     func tryInsertText(_ text: String) -> Bool
     func tryReplaceTextBeforeCursor(length: Int, with text: String) -> Bool
     func tryScheduleHostKey(keyCode: UInt16, modifierFlags: UInt) -> Bool
+    func tryPerformHostKeyTransaction(
+        keyCode: UInt16,
+        modifierFlags: UInt,
+        commit: () -> Void
+    ) -> Bool
 }
 
 public extension HangulComposerDelegate {
@@ -60,6 +65,19 @@ public extension HangulComposerDelegate {
 
     func tryScheduleHostKey(keyCode: UInt16, modifierFlags: UInt) -> Bool {
         false
+    }
+
+    func tryPerformHostKeyTransaction(
+        keyCode: UInt16,
+        modifierFlags: UInt,
+        commit: () -> Void
+    ) -> Bool {
+        guard tryScheduleHostKey(
+            keyCode: keyCode,
+            modifierFlags: modifierFlags
+        ) else { return false }
+        commit()
+        return true
     }
 
 }

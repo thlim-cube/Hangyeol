@@ -288,15 +288,16 @@ public class HangulComposer: @unchecked Sendable {
             // marked range. Capture that range first so the host Return is released
             // only after the composition has actually become ordinary document text.
             let scheduledHostReturn = defersBlinkWebContentReturn
-                && beginHostKeyTransaction(
+                && delegate.tryPerformHostKeyTransaction(
                     keyCode: keyCode,
                     modifierFlags: modifierFlags.rawValue,
-                    delegate: delegate,
-                    retireMarkedText: {
-                        delegate.setMarkedText("")
+                    commit: {
+                        commitComposition(delegate: delegate)
                     }
                 )
-            commitComposition(delegate: delegate)
+            if !scheduledHostReturn {
+                commitComposition(delegate: delegate)
+            }
             if hadComposition
                 && !isBlinkSoftLineBreak
                 && !defersBlinkWebContentReturn {
@@ -433,23 +434,6 @@ public class HangulComposer: @unchecked Sendable {
         return nil  // Not a special key
     }
 
-    /// Scheduling returns true only after the replay has an authorization lease,
-    /// event pair, and owned retirement gate. Clear marked text only inside that
-    /// successful preparation boundary.
-    private func beginHostKeyTransaction(
-        keyCode: UInt16,
-        modifierFlags: UInt,
-        delegate: HangulComposerDelegate,
-        retireMarkedText: () -> Void
-    ) -> Bool {
-        guard delegate.tryScheduleHostKey(
-            keyCode: keyCode,
-            modifierFlags: modifierFlags
-        ) else { return false }
-        retireMarkedText()
-        return true
-    }
-    
     /// Process a single character through the Hangul engine
     /// - Returns: `true` if the character was processed, `false` if skipped
     private func processCharacter(_ char: Unicode.Scalar, delegate: HangulComposerDelegate) -> Bool {

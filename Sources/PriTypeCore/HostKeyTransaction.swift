@@ -254,6 +254,31 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
 /// Starts one host-owned key transaction while keeping its asynchronous replay
 /// machinery private to this file.
 enum HostKeyTransaction {
+    /// Captures the live Blink composition, commits it canonically, and only then
+    /// starts asynchronous retirement observation. Sending an empty marked-text
+    /// update before `insertText` can make Chromium discard that following commit.
+    static func perform(
+        client: IMKTextInput,
+        keyCode: UInt16,
+        modifierFlags: UInt,
+        isClientWriteAllowed: @escaping () -> Bool,
+        didPost: @escaping (UInt16) -> Void,
+        expectedCommittedText: String?,
+        commit: () -> Void
+    ) -> Bool {
+        guard let replay = prepareReplay(
+            client: client,
+            keyCode: keyCode,
+            modifierFlags: modifierFlags,
+            isClientWriteAllowed: isClientWriteAllowed,
+            didPost: didPost,
+            expectedCommittedText: expectedCommittedText
+        ) else { return false }
+        commit()
+        replay.schedule()
+        return true
+    }
+
     static func schedule(
         client: IMKTextInput,
         keyCode: UInt16,

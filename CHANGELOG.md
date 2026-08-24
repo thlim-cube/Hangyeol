@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.14] - 2026-08-24
+
+### Fixed
+- Chrome 등 Blink 웹 편집기에서 한글 조합 직후 Shift+Enter를 누르면 마지막 조합 글자가 사라지던 문제를 해결했습니다.
+
 ## [2.8.13] - 2026-08-21
 
 ### Added
