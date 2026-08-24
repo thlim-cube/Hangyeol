@@ -3,7 +3,7 @@ import InputMethodKit
 
 /// Synthetic IMK client for session/finalize contract tests. It models only text,
 /// selection, and marked-range effects and never touches a real application.
-final class FakeIMKTextInput: NSObject, IMKTextInput {
+class FakeIMKTextInput: NSObject, IMKTextInput {
     var document = ""
     var markedText = ""
     var selectedRangeValue = NSRange(location: 0, length: 0)

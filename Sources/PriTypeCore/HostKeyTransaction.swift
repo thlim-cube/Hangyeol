@@ -19,6 +19,49 @@ private final class DeferredHostKeyBoundary: @unchecked Sendable {
     }
 }
 
+/// Sendable wrapper used to hand one replay poll to either the live main queue or
+/// a deterministic regression-test driver without exposing replay internals.
+final class DeferredHostKeyPoll: @unchecked Sendable {
+    let run: () -> Void
+
+    init(run: @escaping () -> Void) {
+        self.run = run
+    }
+}
+
+/// Side-effect boundary for deferred replay. Production always uses `.live`;
+/// tests replace only scheduling and event posting while exercising the same gate.
+struct DeferredHostKeyReplayEnvironment: @unchecked Sendable {
+    let canReplay: () -> Bool
+    let makeEvents: (UInt16, UInt) -> DeferredHostKeyDelivery.Events?
+    let scheduleInitial: (DeferredHostKeyPoll) -> Void
+    let scheduleRetry: (DeferredHostKeyPoll) -> Void
+    let postEvent: (CGEvent) -> Void
+
+    static let live = DeferredHostKeyReplayEnvironment(
+        canReplay: { IOKitManager.hasAccessibilityPermission() },
+        makeEvents: { keyCode, modifierFlags in
+            DeferredHostKeyDelivery.makeEvents(
+                keyCode: keyCode,
+                modifierFlags: modifierFlags
+            )
+        },
+        scheduleInitial: { poll in
+            DispatchQueue.main.async {
+                poll.run()
+            }
+        },
+        scheduleRetry: { poll in
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(1)) {
+                poll.run()
+            }
+        },
+        postEvent: { event in
+            event.post(tap: .cghidEventTap)
+        }
+    )
+}
+
 enum DeferredCompositionRetirementDecision: Equatable {
     case wait
     case deliver
@@ -133,6 +176,7 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
     private let authorization: DeferredClientWriteAuthorization
     private let postedBoundary: DeferredHostKeyBoundary
     private let expectedCommittedText: String?
+    private let environment: DeferredHostKeyReplayEnvironment
     private var retirementGate: DeferredCompositionRetirementGate?
     private var pollCount = 0
 
@@ -147,13 +191,15 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
         events: DeferredHostKeyDelivery.Events,
         authorization: DeferredClientWriteAuthorization,
         postedBoundary: DeferredHostKeyBoundary,
-        expectedCommittedText: String?
+        expectedCommittedText: String?,
+        environment: DeferredHostKeyReplayEnvironment
     ) {
         self.client = client
         self.keyCode = keyCode
         self.events = events
         self.authorization = authorization
         self.postedBoundary = postedBoundary
+        self.environment = environment
         let normalizedExpectedCommittedText = expectedCommittedText?
             .precomposedStringWithCanonicalMapping
         self.expectedCommittedText = normalizedExpectedCommittedText
@@ -178,9 +224,9 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
     }
 
     func schedule() {
-        DispatchQueue.main.async { [self] in
+        environment.scheduleInitial(DeferredHostKeyPoll { [self] in
             deliverWhenReady()
-        }
+        })
     }
 
     private func deliverWhenReady() {
@@ -223,9 +269,9 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
                     logSkip("marked_text_not_retired")
                     return
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(1)) { [self] in
+                environment.scheduleRetry(DeferredHostKeyPoll { [self] in
                     deliverWhenReady()
-                }
+                })
                 return
             }
         }
@@ -237,6 +283,7 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
         DeferredHostKeyDelivery.postApprovedReplay(
             events,
             keyCode: keyCode,
+            postEvent: environment.postEvent,
             didPost: postedBoundary.handler
         )
         DebugLogger.event("input.host_key_replay_delivered", metadata: [
@@ -285,7 +332,8 @@ enum HostKeyTransaction {
         modifierFlags: UInt,
         isClientWriteAllowed: @escaping () -> Bool,
         didPost: @escaping (UInt16) -> Void,
-        expectedCommittedText: String?
+        expectedCommittedText: String?,
+        environment: DeferredHostKeyReplayEnvironment = .live
     ) -> Bool {
         guard let replay = prepareReplay(
             client: client,
@@ -293,7 +341,8 @@ enum HostKeyTransaction {
             modifierFlags: modifierFlags,
             isClientWriteAllowed: isClientWriteAllowed,
             didPost: didPost,
-            expectedCommittedText: expectedCommittedText
+            expectedCommittedText: expectedCommittedText,
+            environment: environment
         ) else { return false }
         replay.schedule()
         return true
@@ -305,14 +354,12 @@ enum HostKeyTransaction {
         modifierFlags: UInt,
         isClientWriteAllowed: @escaping () -> Bool,
         didPost: @escaping (UInt16) -> Void,
-        expectedCommittedText: String?
+        expectedCommittedText: String?,
+        environment: DeferredHostKeyReplayEnvironment = .live
     ) -> DeferredHostKeyReplay? {
-        guard IOKitManager.hasAccessibilityPermission(),
+        guard environment.canReplay(),
               isClientWriteAllowed(),
-              let events = DeferredHostKeyDelivery.makeEvents(
-                  keyCode: keyCode,
-                  modifierFlags: modifierFlags
-              ) else { return nil }
+              let events = environment.makeEvents(keyCode, modifierFlags) else { return nil }
 
         let replay = DeferredHostKeyReplay(
             client: client,
@@ -322,7 +369,8 @@ enum HostKeyTransaction {
                 isAllowed: isClientWriteAllowed
             ),
             postedBoundary: DeferredHostKeyBoundary(handler: didPost),
-            expectedCommittedText: expectedCommittedText
+            expectedCommittedText: expectedCommittedText,
+            environment: environment
         )
         return replay.isArmed ? replay : nil
     }

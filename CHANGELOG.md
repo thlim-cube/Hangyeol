@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.15] - 2026-08-24
+
+### Changed
+- Blink에서 문장 중간의 한글 조합 직후 Forward Delete를 빠르게 누르는 회귀 검증이 실제 marked-range retirement와 키 재전달 순서를 통과하도록 강화했습니다.
+
 ## [2.8.14] - 2026-08-24
 
 ### Fixed

@@ -177,6 +177,141 @@ private final class FakeForwardDeleteHost: HangulComposerDelegate {
     }
 }
 
+private final class ManualHostKeyReplayDriver {
+    private(set) var polls: [DeferredHostKeyPoll] = []
+    private(set) var postedEventTypes: [CGEventType] = []
+    private(set) var postedBoundaryCount = 0
+    var onKeyDown: () -> Void = {}
+
+    var environment: DeferredHostKeyReplayEnvironment {
+        DeferredHostKeyReplayEnvironment(
+            canReplay: { true },
+            makeEvents: { keyCode, modifierFlags in
+                DeferredHostKeyDelivery.makeEvents(
+                    keyCode: keyCode,
+                    modifierFlags: modifierFlags
+                )
+            },
+            scheduleInitial: { [weak self] poll in
+                self?.polls.append(poll)
+            },
+            scheduleRetry: { [weak self] poll in
+                self?.polls.append(poll)
+            },
+            postEvent: { [weak self] event in
+                self?.postedEventTypes.append(event.type)
+                if event.type == .keyDown {
+                    self?.onKeyDown()
+                }
+            }
+        )
+    }
+
+    func runNextPoll() throws {
+        let poll = try #require(polls.first)
+        polls.removeFirst()
+        poll.run()
+    }
+
+    func recordBoundary(keyCode: UInt16) {
+        guard keyCode == KeyCode.forwardDelete else { return }
+        postedBoundaryCount += 1
+    }
+}
+
+private final class DelayedBlinkForwardDeleteClient: FakeIMKTextInput {
+    private let exposesLiveMarkedRange: Bool
+    private var markLocation = 2
+    private var pendingCommittedText: String?
+
+    init(exposesLiveMarkedRange: Bool) {
+        self.exposesLiveMarkedRange = exposesLiveMarkedRange
+        super.init()
+        document = "가나다라"
+        selectedRangeValue = NSRange(location: 2, length: 0)
+    }
+
+    override func insertText(_ string: Any!, replacementRange: NSRange) {
+        let text: String
+        if let attributed = string as? NSAttributedString {
+            text = attributed.string
+        } else {
+            text = string as? String ?? ""
+        }
+        insertCalls.append((text, replacementRange))
+        pendingCommittedText = text
+    }
+
+    override func setMarkedText(
+        _ string: Any!,
+        selectionRange: NSRange,
+        replacementRange: NSRange
+    ) {
+        let text: String
+        if let attributed = string as? NSAttributedString {
+            text = attributed.string
+        } else {
+            text = string as? String ?? ""
+        }
+        markCalls.append(text)
+        markedText = text
+        if text.isEmpty {
+            markedRangeValue = NSRange(location: NSNotFound, length: 0)
+        } else {
+            if markedRangeValue.location == NSNotFound {
+                markLocation = selectedRangeValue.location
+            }
+            markedRangeValue = NSRange(location: markLocation, length: text.utf16.count)
+            selectedRangeValue = NSRange(
+                location: markLocation + text.utf16.count,
+                length: 0
+            )
+        }
+    }
+
+    override func markedRange() -> NSRange {
+        exposesLiveMarkedRange
+            ? markedRangeValue
+            : NSRange(location: NSNotFound, length: 0)
+    }
+
+    override func attributedSubstring(from range: NSRange) -> NSAttributedString! {
+        if exposesLiveMarkedRange {
+            return super.attributedSubstring(from: range)
+        }
+        let (end, overflow) = range.location.addingReportingOverflow(range.length)
+        guard range.location != NSNotFound,
+              !overflow,
+              end <= document.utf16.count else { return nil }
+        let units = Array(document.utf16)[range.location..<end]
+        return NSAttributedString(string: String(decoding: units, as: UTF16.self))
+    }
+
+    func promotePendingCommit() throws {
+        let text = try #require(pendingCommittedText)
+        var units = Array(document.utf16)
+        units.insert(contentsOf: text.utf16, at: markLocation)
+        document = String(decoding: units, as: UTF16.self)
+        pendingCommittedText = nil
+        selectedRangeValue = NSRange(
+            location: markLocation + text.utf16.count,
+            length: 0
+        )
+    }
+
+    func retireMarkedText() {
+        markedText = ""
+        markedRangeValue = NSRange(location: NSNotFound, length: 0)
+    }
+
+    func deleteForwardAtCaret() {
+        guard selectedRangeValue.location < document.utf16.count else { return }
+        var units = Array(document.utf16)
+        units.remove(at: selectedRangeValue.location)
+        document = String(decoding: units, as: UTF16.self)
+    }
+}
+
 @Suite("Return exactly-once delivery")
 struct ReturnDeliveryTests {
     @Test("Deferred host key waits for two stable unmarked observations")
@@ -447,6 +582,64 @@ struct ReturnDeliveryTests {
         #expect(host.markedText.isEmpty)
         #expect(host.caretOffset == 3)
         #expect(host.scheduledForwardDeleteCount == 1)
+    }
+
+    @Test(
+        "Fast Blink Forward Delete waits for document promotion before deleting 다",
+        arguments: [true, false]
+    )
+    func blinkForwardDeleteWaitsAcrossMarkedRangeTiming(
+        exposesLiveMarkedRange: Bool
+    ) throws {
+        let client = DelayedBlinkForwardDeleteClient(
+            exposesLiveMarkedRange: exposesLiveMarkedRange
+        )
+        let driver = ManualHostKeyReplayDriver()
+        driver.onKeyDown = client.deleteForwardAtCaret
+        client.setMarkedText(
+            "마",
+            selectionRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
+        )
+        #expect(client.markedText == "마")
+
+        let scheduled = HostKeyTransaction.schedule(
+            client: client,
+            keyCode: KeyCode.forwardDelete,
+            modifierFlags: NSEvent.ModifierFlags.function.rawValue,
+            isClientWriteAllowed: { true },
+            didPost: driver.recordBoundary,
+            expectedCommittedText: client.markedText,
+            environment: driver.environment
+        )
+        client.insertText(
+            "마",
+            replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
+        )
+
+        #expect(scheduled)
+        #expect(client.document == "가나다라")
+        #expect(driver.postedEventTypes.isEmpty)
+
+        try driver.runNextPoll()
+        #expect(client.document == "가나다라")
+        #expect(driver.postedEventTypes.isEmpty)
+
+        try client.promotePendingCommit()
+        try driver.runNextPoll()
+        #expect(client.document == "가나마다라")
+        #expect(driver.postedEventTypes.isEmpty)
+
+        client.retireMarkedText()
+        while driver.postedEventTypes.isEmpty {
+            try driver.runNextPoll()
+        }
+
+        #expect(driver.postedEventTypes == [.keyDown, .keyUp])
+        #expect(driver.postedBoundaryCount == 1)
+        #expect(client.document == "가나마라")
+        #expect(client.markedText.isEmpty)
+        #expect(client.selectedRangeValue == NSRange(location: 3, length: 0))
     }
 
     @Test("Fast later-turn Hangul double-tap keeps both physical keystrokes")
