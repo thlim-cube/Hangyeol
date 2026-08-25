@@ -2,44 +2,41 @@
 # postinstall for PriType.pkg
 
 APP_PATH="/Library/Input Methods/PriType.app"
+APP_EXECUTABLE="$APP_PATH/Contents/MacOS/PriType"
 
-# 1. Remove quarantine attribute (prevents Gatekeeper blocking after update)
-xattr -cr "$APP_PATH" 2>/dev/null || true
+CURRENT_USER=$(/usr/bin/stat -f "%Su" /dev/console 2>/dev/null || true)
+case "$CURRENT_USER" in
+    ""|root|loginwindow)
+        exit 0
+        ;;
+esac
 
-# 2. Force macOS to re-register the input method
-#    Kill the TextInputMenuAgent so it picks up the new bundle
-killall TextInputMenuAgent 2>/dev/null || true
-killall TextInputSwitcher 2>/dev/null || true
-killall keyboardservicesd 2>/dev/null || true
-killall imklaunchagent 2>/dev/null || true
-killall PriType 2>/dev/null || true
-killall PriTypeV2 2>/dev/null || true
-
-# 3. Determine if this is a fresh install or an update before migration.
-IS_UPDATE=false
-CURRENT_USER=$(stat -f "%Su" /dev/console 2>/dev/null || echo "")
-if [ -n "$CURRENT_USER" ]; then
-    USER_HOME=$(eval echo "~$CURRENT_USER")
-    # Check if PriType was previously configured
-    if defaults read "$USER_HOME/Library/Preferences/com.apple.HIToolbox" AppleEnabledInputSources 2>/dev/null | grep -q "pritype"; then
-        IS_UPDATE=true
-    fi
+USER_ID=$(/usr/bin/id -u "$CURRENT_USER" 2>/dev/null || true)
+if [ -z "$USER_ID" ]; then
+    exit 0
 fi
 
-# 4. Launch the new PriType process
-#    macOS InputMethodKit will auto-relaunch if it was previously registered,
-#    but we explicitly launch it to cover first-install, input-source migration,
-#    and re-enable edge cases without relying on optional system scripting runtimes.
-sleep 0.5
-open "$APP_PATH" || true
+run_as_console_user() {
+    /bin/launchctl asuser "$USER_ID" /usr/bin/sudo -H -u "$CURRENT_USER" "$@"
+}
 
-if [ "$IS_UPDATE" = true ]; then
-    # Update: no UI prompt. The installer success screen is enough, and avoiding
-    # osascript prevents macOS from showing Script Editor-style notifications.
-    true
-else
-    # Fresh install: guide the user to add the input source without AppleScript.
-    open "x-apple.systempreferences:com.apple.preference.keyboard?InputSources" || true
+# Stop only PriType processes owned by the logged-in user. The executable may
+# have been relaunched automatically while Installer replaced the bundle.
+/usr/bin/pkill -x -u "$USER_ID" PriType 2>/dev/null || true
+/usr/bin/pkill -x -u "$USER_ID" PriTypeV2 2>/dev/null || true
+
+# Register and enable PriType synchronously in the logged-in user's TIS domain.
+# The installer-only command selects PriType only when that user had no current
+# PriType registration; updates preserve the user's selected input source.
+run_as_console_user "$APP_EXECUTABLE" --post-install-prepare
+PREPARE_STATUS=$?
+
+run_as_console_user /usr/bin/open "$APP_PATH" >/dev/null 2>&1 || true
+
+if [ "$PREPARE_STATUS" -ne 0 ]; then
+    run_as_console_user /usr/bin/open \
+        "x-apple.systempreferences:com.apple.preference.keyboard?InputSources" \
+        >/dev/null 2>&1 || true
 fi
 
 exit 0

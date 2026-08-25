@@ -11,6 +11,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     
     private var hasLaunchedBefore = false
     private var workspaceActivationObserver: NSObjectProtocol?
+    private let shouldShowPostInstallGuidance: Bool
+
+    init(shouldShowPostInstallGuidance: Bool) {
+        self.shouldShowPostInstallGuidance = shouldShowPostInstallGuidance
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         DebugLogger.log("AppDelegate: applicationDidFinishLaunching")
@@ -40,7 +45,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         InputModeCoordinator.shared.startSystemOwnershipMonitoring()
         
         Task.detached(priority: .utility) {
-            InputSourceManager.shared.cleanupStaleInputSources()
+            _ = InputSourceManager.shared.cleanupStaleInputSources()
+        }
+
+        if shouldShowPostInstallGuidance && !IOKitManager.hasAccessibilityPermission() {
+            DispatchQueue.main.async {
+                SettingsWindowController.shared.showSettings()
+            }
         }
         
         // Setup toggle key monitoring
@@ -146,7 +157,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
 // MARK: - Main Entry Point
 
+if PostInstallPreparation.shouldPrepare(arguments: CommandLine.arguments) {
+    let result = InputSourceManager.shared.prepareInstalledInputSource(
+        at: Bundle.main.bundleURL,
+        selectIfUnconfigured: true
+    )
+    PostInstallPreparation.markPending()
+    let enableFailure = result.firstEnableFailure.map(String.init) ?? "none"
+    let selection = result.selectionStatus.map(String.init) ?? "preserved"
+    print(
+        "PriType post-install: registration=\(result.registrationStatus) "
+            + "enableFailure=\(enableFailure) "
+            + "selection=\(selection) "
+            + "ready=\(result.isReady)"
+    )
+    exit(result.isReady ? EXIT_SUCCESS : PostInstallPreparation.failureExitCode)
+}
+
 let app = NSApplication.shared
-let delegate = AppDelegate()
+let delegate = AppDelegate(
+    shouldShowPostInstallGuidance: PostInstallPreparation.consumePending()
+)
 app.delegate = delegate
 app.run()

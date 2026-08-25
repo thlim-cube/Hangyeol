@@ -2,6 +2,89 @@ import Testing
 import Cocoa
 @testable import PriTypeCore
 
+private final class DelayedMarkedRangeClient: FakeIMKTextInput {
+    private let markLocation = 2
+    private var nonemptyUpdateCount = 0
+    private var liveMarkedLength = 0
+    private(set) var orderedHostCalls: [String] = []
+
+    init(initialSelectionLocation: Int = NSNotFound) {
+        super.init()
+        document = "가나다라"
+        selectedRangeValue = NSRange(location: initialSelectionLocation, length: 0)
+    }
+
+    override func setMarkedText(
+        _ string: Any!,
+        selectionRange: NSRange,
+        replacementRange: NSRange
+    ) {
+        let text = (string as? NSAttributedString)?.string
+            ?? (string as? String)
+            ?? ""
+        markCalls.append(text)
+        markedText = text
+        guard !text.isEmpty else {
+            markedRangeValue = NSRange(location: NSNotFound, length: 0)
+            return
+        }
+
+        var units = Array(document.utf16)
+        units.replaceSubrange(
+            markLocation..<(markLocation + liveMarkedLength),
+            with: text.utf16
+        )
+        document = String(decoding: units, as: UTF16.self)
+        liveMarkedLength = text.utf16.count
+
+        nonemptyUpdateCount += 1
+        guard nonemptyUpdateCount > 1 else {
+            markedRangeValue = NSRange(location: NSNotFound, length: 0)
+            selectedRangeValue = NSRange(location: NSNotFound, length: 0)
+            return
+        }
+        markedRangeValue = NSRange(
+            location: markLocation,
+            length: text.utf16.count
+        )
+        selectedRangeValue = NSRange(
+            location: markLocation + text.utf16.count,
+            length: 0
+        )
+    }
+
+    override func insertText(_ string: Any!, replacementRange: NSRange) {
+        let text = (string as? NSAttributedString)?.string
+            ?? (string as? String)
+            ?? ""
+        var units = Array(document.utf16)
+        if replacementRange.location == NSNotFound {
+            orderedHostCalls.append("insert:\(text)")
+            units.replaceSubrange(
+                markLocation..<(markLocation + liveMarkedLength),
+                with: text.utf16
+            )
+            liveMarkedLength = 0
+            selectedRangeValue = NSRange(
+                location: markLocation + text.utf16.count,
+                length: 0
+            )
+        } else {
+            orderedHostCalls.append(
+                "delete:\(replacementRange.location):\(replacementRange.length)"
+            )
+            let end = min(
+                units.count,
+                replacementRange.location + replacementRange.length
+            )
+            units.replaceSubrange(replacementRange.location..<end, with: [])
+        }
+        document = String(decoding: units, as: UTF16.self)
+        markedText = ""
+        markedRangeValue = NSRange(location: NSNotFound, length: 0)
+    }
+}
+
 // MARK: - HostAdapterResolver
 
 /// The delivery-mode decision is the single point where a session picks how
@@ -272,6 +355,44 @@ struct HostAdapterResolverTests {
         #expect(adapter.tryInsertText("마"))
         #expect(adapter.hostTransactionMarkedText == nil)
         #expect(adapter.hostTransactionMarkedRange == nil)
+    }
+
+    @Test("Marked adapter recovers a delayed range before Forward Delete after Backspace")
+    func markedAdapterRecoversDelayedRangeAcrossBackspace() {
+        let cases: [([String], String)] = [
+            (["ㄱ", "가"], "가"),
+            (["ㅁ", "마", "말"], "말"),
+            (["ㅁ", "마", "말", "맑", "말"], "말")
+        ]
+
+        for initialSelection in [NSNotFound, 0] {
+            for (preedits, finalPreedit) in cases {
+                let client = DelayedMarkedRangeClient(
+                    initialSelectionLocation: initialSelection
+                )
+                let adapter = MarkedTextAdapter(
+                    client: client,
+                    hostSurface: .blinkWeb
+                )
+
+                for preedit in preedits {
+                    adapter.setMarkedText(preedit)
+                }
+
+                #expect(adapter.hostTransactionMarkedText == finalPreedit)
+                #expect(adapter.hostTransactionMarkedRange == NSRange(location: 2, length: 1))
+                #expect(adapter.tryPerformHostKeyTransaction(
+                    keyCode: KeyCode.forwardDelete,
+                    modifierFlags: NSEvent.ModifierFlags.function.rawValue,
+                    commit: { adapter.insertText(finalPreedit) }
+                ))
+                #expect(client.orderedHostCalls == [
+                    "insert:\(finalPreedit)",
+                    "delete:3:1"
+                ])
+                #expect(client.document == "가나\(finalPreedit)라")
+            }
+        }
     }
 }
 

@@ -213,7 +213,7 @@ HostSurfaceResolver        capability 우선 surface 분류
 - adapter 선택과 payload·host-key 처리는 `ClientContext.hostSurface`를 다시 bundle로 해석하지 않는다. `blinkWeb`은 canonical marked text와 host-key 중재를 기본으로 하되, 문서 접근이 안전한 명시적 호환 예외(Hermes)는 direct insertion을 유지한다. `blinkNative`는 안전한 explicit range, `finderNonText`는 immediate delivery를 사용한다.
 - 조합 확정은 `InputSession.finalize(reason:)` 밖에 별도 lifecycle 경로를 만들지 않는다.
 - 호스트별 동작은 capability로 표현할 수 없을 때만 `ClientCompatibilityPolicy`에 둔다.
-- 실제 앱에서 확인한 Enter·Shift+Return·Forward Delete 순서는 `HostKeyTransaction` 계약으로 유지한다. Return 계열은 live marked range와 재전달 권한을 먼저 준비하고, 빈 marked-text 갱신 없이 canonical `insertText`로 조합을 확정한 뒤 retirement 감시와 키 재전달을 시작한다. Forward Delete는 adapter가 조합 시작 시점의 소유 range를 보존하고, 조합 확정과 뒤쪽 composed-character range 삭제를 같은 client transaction에서 수행한다.
+- 실제 앱에서 확인한 Enter·Shift+Return·Forward Delete 순서는 `HostKeyTransaction` 계약으로 유지한다. Return 계열은 live marked range와 재전달 권한을 먼저 준비하고, 빈 marked-text 갱신 없이 canonical `insertText`로 조합을 확정한 뒤 retirement 감시와 키 재전달을 시작한다. Forward Delete는 adapter가 조합 시작 시점의 소유 range를 보존하되 첫 range가 지연되거나 임시 caret만 있으면 이후 자모·Backspace 갱신의 실제 marked range로 교정하고, 조합 확정과 뒤쪽 composed-character range 삭제를 같은 client transaction에서 수행한다.
 - 직접 삽입은 live real preedit이 없고 문서 접근만 불안정할 때 marked text로 낮춘다. 이미 live
   preedit을 쓴 뒤 selection을 검증할 수 없으면 삭제 범위를 추측하거나 전체 preedit을 다시
   표시하지 않는다. 마지막으로 검증한 문서 상태를 유지하고 현재 조합 쓰기를 중단한다.
@@ -260,7 +260,8 @@ HostSurfaceResolver        capability 우선 surface 분류
 | **UpdateChecker** | GitHub Releases API를 통해 최신 버전을 확인한다. 24시간 스로틀, 실패 시 다음 실행 시 재시도, 시맨틱 버전 비교(`.numeric`)를 사용한다. |
 | **UpdateNotifier** | `UNUserNotificationCenter`를 사용해 업데이트 알림을 표시한다. 알림 클릭 시 릴리즈 페이지를 연다. |
 | **InputModeCoordinator** | 한/영 전환 조율 계층. custom 전환키 요청과 macOS 소유권 경계를 추적하되 mode를 직접 쓰지 않는다. 소유권 정합화는 pending으로 보관했다가 Secure Input 검사를 통과한 controller의 단일 전환 트랜잭션으로 넘긴다. |
-| **InputSourceManager** | TIS(Text Input Source) API를 사용해 시스템 입력 소스 목록 조회와 stale entry 정리를 담당한다. custom 한/영 전환 hot path에는 참여하지 않는다. |
+| **InputSourceManager** | TIS(Text Input Source) API를 사용해 시스템 입력 소스 목록 조회, 설치 전용 등록·활성화, stale entry 정리를 담당한다. custom 한/영 전환 hot path에는 참여하지 않는다. |
+| **PostInstallPreparation** | 설치 스크립트가 로그인 사용자 권한으로 호출하는 준비 모드와 1회성 설정 안내 상태를 관리한다. 일반 앱 실행과 분리되어 IMK 서버나 키 감시기를 시작하지 않는다. |
 | **CompositionHelpers** | libhangul의 `[UInt32]`(UCSChar) 배열을 Swift `String`으로 변환하고 NFC 정규화(`precomposedStringWithCanonicalMapping`)를 수행하는 유틸리티. |
 | **DebugLogger** | 입력 파이프라인은 DEBUG 전용 `event` API를 사용한다. 이벤트명·필드명·상태값은 `StaticString`이고 값은 bool/count/duration/opaque trace/status code로 제한되어 타이핑 문자, preedit, 문서 내용, bundle ID를 전달할 수 없다. Release에서는 metadata 평가까지 생략되는 no-op이다. |
 | **ToggleLatencyTrace** | DEBUG에서만 물리 전환 요청부터 main 실행·finalize·layout override·mode write·첫 handle까지 monotonic 지연을 구조화해 기록한다. Release에는 clock read, 할당, 로그, 보존 상태가 없다. |
@@ -269,6 +270,27 @@ HostSurfaceResolver        capability 우선 surface 분류
 | **PriTypeConfig** | 전역 상수 정의. 기본 자판 ID(`"2"`, 두벌식), Finder 바탕화면 임계값(50pt), 설정 창 크기, 더블스페이스 임계값(0.45초). |
 | **PriTypeError** | 구조화된 에러 타입. CGEventTap 생성 실패, 접근성 권한 거부, IOHIDManager 오류에 대해 복구 제안(`recoverySuggestion`)을 포함한다. |
 | **AboutInfo** | 앱 메타데이터 및 정보 대화상자. 버전은 `Info.plist`의 `CFBundleShortVersionString`에서 읽는다. |
+
+## 설치 후 적용 흐름
+
+PKG 스크립트는 시스템 전체 프로세스를 이름으로 종료하지 않는다. `preinstall`은 `/dev/console`의 실제 로그인 사용자와 UID를 확인한 뒤 그 사용자가 소유한 PriType 프로세스와 사용자 영역의 중복 번들, 시스템 영역의 레거시 `PriTypeV2.app`만 정리한다. 현재 `/Library/Input Methods/PriType.app`은 지우지 않고 PackageKit의 atomic update 대상으로 남긴다. `postinstall`은 다음 순서로 적용한다.
+
+```text
+postinstall (root)
+  ├─ launchctl asuser + sudo -u <console user>
+  │    └─ PriType --post-install-prepare
+  │         ├─ HIToolbox 세 컬렉션의 stale PriType 항목 동기 정리
+  │         ├─ TISRegisterInputSource(/Library/Input Methods/PriType.app)
+  │         ├─ 부모 입력기 → 한글 mode 순서로 TISEnableInputSource
+  │         ├─ 기존 등록이 없는 첫 설치만 한글 mode 선택
+  │         └─ 설치 안내 pending 기록 후 IMK 초기화 없이 종료
+  └─ 같은 사용자 세션에서 PriType 실행
+       └─ 손쉬운 사용 미허용 시 설정 창과 macOS 승인 요청 표시
+```
+
+기존 설치 판정은 `AppleEnabledInputSources` 하나가 아니라 `AppleEnabledInputSources`, `AppleSelectedInputSources`, `AppleInputSourceHistory`의 정리된 현재 PriType parent/mode를 함께 본다. 따라서 선택 기록에만 남아 있는 정상 업데이트를 신규 설치로 오인하지 않는다. TIS 등록·활성화·첫 선택 중 하나라도 준비되지 않으면 입력 소스 설정을 복구 화면으로 연다.
+
+`TISRegisterInputSource`와 `TISEnableInputSource`는 검증된 입력기 설치 코드에 macOS가 제공하는 표준 등록 경로이며 일반 앱 시작에서는 호출하지 않는다. 입력기 agent를 재시작하거나 HIToolbox에 현재 항목을 직접 추가하지 않는다. 손쉬운 사용 권한(TCC)은 여전히 사용자 승인 경계이므로 설치기가 TCC 데이터베이스를 수정하지 않는다. ABC와 다른 입력 소스도 자동 삭제하지 않으며, 설정의 명시적 `ABC 끄기` 동작만 사용자가 요청했을 때 실행한다.
 
 ## 의존 라이브러리
 

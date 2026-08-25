@@ -1,22 +1,35 @@
 #!/bin/bash
 # preinstall for PriType.pkg
 
-# 1. Kill existing PriType processes first (before deleting)
-#    macOS IMK will auto-relaunch it after postinstall finishes.
-killall PriType 2>/dev/null || true
-killall PriTypeV2 2>/dev/null || true
+CURRENT_USER=$(/usr/bin/stat -f "%Su" /dev/console 2>/dev/null || true)
 
-# 2. Small delay to ensure the process has fully terminated
-sleep 0.5
+case "$CURRENT_USER" in
+    ""|root|loginwindow)
+        CURRENT_USER=""
+        ;;
+esac
 
-# 3. Remove old installations to ensure a clean install
-rm -rf "/Library/Input Methods/PriTypeV2.app"
-rm -rf "/Library/Input Methods/PriType.app"
+if [ -n "$CURRENT_USER" ]; then
+    USER_ID=$(/usr/bin/id -u "$CURRENT_USER" 2>/dev/null || true)
+    USER_HOME=$(/usr/bin/dscl . -read "/Users/$CURRENT_USER" NFSHomeDirectory 2>/dev/null \
+        | /usr/bin/awk '{ print $2 }')
 
-# Remove from all user home directories (in case of previous relocated installs)
-for user_home in /Users/*; do
-    rm -rf "$user_home/Library/Input Methods/PriTypeV2.app"
-    rm -rf "$user_home/Library/Input Methods/PriType.app"
-done
+    if [ -n "$USER_ID" ]; then
+        /usr/bin/pkill -x -u "$USER_ID" PriType 2>/dev/null || true
+        /usr/bin/pkill -x -u "$USER_ID" PriTypeV2 2>/dev/null || true
+    fi
+
+    case "$USER_HOME" in
+        /Users/*)
+            /bin/rm -rf "$USER_HOME/Library/Input Methods/PriType.app"
+            /bin/rm -rf "$USER_HOME/Library/Input Methods/PriTypeV2.app"
+            ;;
+    esac
+fi
+
+# PackageKit performs an atomic update of the current PriType.app bundle. Do
+# not delete it here: removing it creates a registration gap in the user's TIS
+# domain before the replacement bundle is installed.
+/bin/rm -rf "/Library/Input Methods/PriTypeV2.app"
 
 exit 0

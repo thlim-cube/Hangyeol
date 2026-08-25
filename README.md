@@ -45,10 +45,12 @@ PriType은 Swift와 InputMethodKit으로 만든 macOS용 한글 입력기입니�
 
 1. [최신 릴리즈](https://github.com/Meapri/PriType-Swift/releases/latest)에서 `PriType_Release.pkg`를 다운로드합니다.
 2. PKG를 실행해 설치합니다.
-3. `시스템 설정 > 키보드 > 텍스트 입력 > 입력 소스`에서 PriType `한글` 입력 소스를 추가합니다.
-4. PriType 내부의 한/영 모드는 사용자 지정 전환키로 즉시 전환됩니다.
+3. 설치기가 PriType 입력 소스를 현재 사용자에게 추가합니다. 처음 설치할 때는 PriType을 바로 선택하고, 업데이트할 때는 현재 선택한 입력 소스를 유지합니다.
+4. 설치가 끝나면 재시동 없이 PriType 내부의 한/영 모드를 사용자 지정 전환키로 전환할 수 있습니다.
 
-PriType 앱 번들은 기본적으로 `/Library/Input Methods/PriType.app`에 설치됩니다. 기존 `/Library/Input Methods/PriTypeV2.app`은 설치 과정에서 제거됩니다.
+PriType 앱 번들은 기본적으로 `/Library/Input Methods/PriType.app`에 설치됩니다. PackageKit의 원자적 업데이트로 기존 번들의 등록을 유지한 채 교체하고, 현재 로그인한 사용자 세션에서 macOS 표준 TIS API로 새 번들을 등록한 뒤 부모 입력기와 한글 모드를 순서대로 활성화합니다. 입력기 관련 시스템 프로세스를 강제 재시작하지 않으며, 다른 입력 소스와 ABC도 자동으로 삭제하지 않습니다.
+
+macOS 보안 정책상 손쉬운 사용 권한은 설치기가 대신 허용할 수 없습니다. 권한이 없으면 설치 직후 PriType 설정과 macOS 승인 화면을 열어 필요한 단계만 안내합니다. 같은 코드 서명으로 업데이트하는 경우 기존 손쉬운 사용 권한은 유지됩니다.
 
 ## 한/영 전환 설정
 
@@ -63,7 +65,7 @@ ABC에서 PriType로 돌아오면 다음 비보안 입력에서 PriType 내부 �
 
 Caps Lock 입력 소스 전환을 쓰지 않는다면 PriType 설정에서 한/영 전환키를 지정할 수 있습니다. 기본값은 우측 Command입니다.
 
-우측 Command 전환이 동작하지 않으면 `시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용`에서 PriType 권한을 확인한 뒤, 필요하면 권한을 껐다 켜고 Mac을 재시동해 주세요.
+우측 Command 전환이 동작하지 않으면 `시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용`에서 PriType 권한을 확인해 주세요. 설치 직후에도 권한이 갱신되지 않았다면 PriType 항목을 껐다가 다시 켠 뒤 PriType을 다시 여세요.
 
 ## 지원 기능
 
@@ -94,7 +96,7 @@ swift build
 ## 문제 해결
 
 - **입력 소스가 중복으로 보일 때**
-  최신 버전 설치 후 로그아웃/로그인하거나 재시동해 macOS 입력 소스 캐시를 새로 고쳐 주세요.
+  최신 설치기는 현재 사용자의 PriType stale 항목을 정리하고 TIS API로 현재 번들을 다시 등록합니다. 설치 후에도 중복이 남으면 macOS 입력 소스 설정에서 표시된 항목과 PriType 버전을 확인해 이슈에 첨부해 주세요.
 
 - **Caps Lock 전환이 안 될 때**
   macOS 입력 소스 설정에서 Caps Lock 전환 옵션이 켜져 있는지 확인해 주세요. PriType 설정에서 Caps Lock을 직접 전환키로 지정하는 방식은 사용하지 않습니다.

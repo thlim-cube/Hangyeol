@@ -131,8 +131,11 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
 
 /// Standard adapter for canonical marked-text composition display.
 final class MarkedTextAdapter: BaseClientAdapter {
+    private static let maxReasonableLocation = 10_000_000
+
     private var renderedMarkedText = ""
     private var renderedMarkedLocation = NSNotFound
+    private var renderedMarkedLocationIsConfirmed = false
 
     override var hostTransactionMarkedText: String? {
         renderedMarkedText.isEmpty ? nil : renderedMarkedText
@@ -152,18 +155,21 @@ final class MarkedTextAdapter: BaseClientAdapter {
         if didInsert {
             renderedMarkedText = ""
             renderedMarkedLocation = NSNotFound
+            renderedMarkedLocationIsConfirmed = false
         }
         return didInsert
     }
 
     override func setMarkedText(_ text: String) {
         guard canWriteToClient() else { return }
+        recoverRenderedMarkedLocation(for: renderedMarkedText)
         if renderedMarkedText.isEmpty, !text.isEmpty {
             let selection = client.selectedRange()
             renderedMarkedLocation = selection.location != NSNotFound
                 && selection.length == 0
                 ? selection.location
                 : NSNotFound
+            renderedMarkedLocationIsConfirmed = false
         }
         renderedMarkedText = text
         // Canonical marked-text protocol, matching Apple's own input methods:
@@ -180,9 +186,32 @@ final class MarkedTextAdapter: BaseClientAdapter {
             selectionRange: NSRange(location: text.utf16.count, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
         )
+        recoverRenderedMarkedLocation(for: text)
         if text.isEmpty {
             renderedMarkedLocation = NSNotFound
+            renderedMarkedLocationIsConfirmed = false
         }
+    }
+
+    /// Blink can expose neither selection nor marked range on the first preedit
+    /// update, then publish the owned range on a later jamo or Backspace update.
+    /// Keep retrying while the start is not confirmed by a live range; its exact
+    /// length proves that the location belongs to the text this adapter rendered.
+    private func recoverRenderedMarkedLocation(for text: String) {
+        guard !renderedMarkedLocationIsConfirmed,
+              !text.isEmpty else { return }
+        let liveRange = client.markedRange()
+        let (rangeEnd, overflow) = liveRange.location.addingReportingOverflow(
+            liveRange.length
+        )
+        guard liveRange.location != NSNotFound,
+              liveRange.location >= 0,
+              liveRange.location < Self.maxReasonableLocation,
+              liveRange.length == text.utf16.count,
+              !overflow,
+              rangeEnd < Self.maxReasonableLocation else { return }
+        renderedMarkedLocation = liveRange.location
+        renderedMarkedLocationIsConfirmed = true
     }
 }
 

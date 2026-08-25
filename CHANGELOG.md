@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.18] - 2026-08-25
+
+### Changed
+- PKG 설치가 PackageKit의 원자적 앱 교체를 유지한 채, 현재 사용자 세션에서 표준 TIS API로 PriType 번들을 등록하고 부모 입력기와 한글 모드를 순서대로 활성화합니다.
+- 처음 설치해 PriType 등록 기록이 없는 경우 한글 모드를 바로 선택하고, 업데이트에서는 사용자가 선택한 기존 입력 소스를 유지합니다.
+
+### Fixed
+- 설치 전에 현재 `PriType.app`을 삭제해 입력 소스 등록 공백을 만들고, 설치 후 입력기 agent 4개를 강제 재시작해 PriType이 사라지거나 재시동 후에도 전환되지 않던 2.8.17 설치 회귀를 해결했습니다.
+
+## [2.8.17] - 2026-08-25
+
+### Changed
+- PKG 설치가 현재 로그인한 사용자 세션에서 PriType의 stale 입력 소스를 동기 정리하고 Launch Services와 입력 관련 agent를 다시 등록해, 기존 업데이트를 로그아웃이나 재시동 없이 적용합니다.
+- 설치 전후 프로세스 정리를 로그인 사용자의 정확한 PriType 프로세스로 제한하고, 다른 사용자 세션과 다른 입력 소스는 변경하지 않습니다.
+
+### Fixed
+- PriType가 enabled 목록에는 없고 selected/history 목록에만 있는 업데이트를 신규 설치로 오인해 입력 소스 설정을 다시 열던 문제를 해결했습니다.
+- 손쉬운 사용 권한이 없는 설치 직후 PriType 설정을 함께 열어 macOS가 요구하는 사용자 승인 단계를 바로 확인할 수 있습니다.
+- Blink에서 첫 조합 시점의 marked range가 지연되거나 임시 caret을 반환해도 이후 자모·Backspace 갱신에서 실제 소유 range를 회복해, `맑 → Backspace → 말 → Forward Delete`가 `말` 대신 뒤쪽 글자를 삭제합니다.
+
 ## [2.8.16] - 2026-08-24
 
 ### Fixed
