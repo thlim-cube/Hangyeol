@@ -19,6 +19,76 @@ private final class DeferredHostKeyBoundary: @unchecked Sendable {
     }
 }
 
+/// Exact document mutation for a host-owned Forward Delete. The adapter supplies
+/// the composition start it captured before Blink can virtualize or delay its
+/// caret; the following composed character is measured before commit and deleted
+/// at its post-commit range.
+private struct PreparedForwardDeletion {
+    private static let maxProbeLength = 64
+
+    private let client: IMKTextInput
+    private let deletionRange: NSRange?
+
+    static func prepare(
+        client: IMKTextInput,
+        expectedCommittedText: String,
+        expectedMarkedRange: NSRange
+    ) -> PreparedForwardDeletion? {
+        let normalizedExpectedText = expectedCommittedText
+            .precomposedStringWithCanonicalMapping
+        let committedLength = normalizedExpectedText.utf16.count
+        guard !normalizedExpectedText.isEmpty,
+              expectedMarkedRange.location != NSNotFound,
+              expectedMarkedRange.length == committedLength else { return nil }
+
+        let (postCommitCaret, caretOverflow) = expectedMarkedRange.location
+            .addingReportingOverflow(committedLength)
+        guard !caretOverflow else { return nil }
+
+        let markedReadback = client
+            .attributedSubstring(from: expectedMarkedRange)?
+            .string
+            .precomposedStringWithCanonicalMapping
+        let documentIncludesMarkedText = markedReadback == normalizedExpectedText
+        let followingSourceLocation = documentIncludesMarkedText
+            ? postCommitCaret
+            : expectedMarkedRange.location
+        let documentLength = client.length()
+        guard followingSourceLocation <= documentLength else { return nil }
+        guard followingSourceLocation < documentLength else {
+            return PreparedForwardDeletion(client: client, deletionRange: nil)
+        }
+
+        let probeLength = min(
+            Self.maxProbeLength,
+            documentLength - followingSourceLocation
+        )
+        guard probeLength > 0,
+              let followingText = client.attributedSubstring(from: NSRange(
+                  location: followingSourceLocation,
+                  length: probeLength
+              ))?.string,
+              !followingText.isEmpty else { return nil }
+        let composedRange = (followingText as NSString)
+            .rangeOfComposedCharacterSequence(at: 0)
+        guard composedRange.location == 0,
+              composedRange.length > 0 else { return nil }
+
+        return PreparedForwardDeletion(
+            client: client,
+            deletionRange: NSRange(
+                location: postCommitCaret,
+                length: composedRange.length
+            )
+        )
+    }
+
+    func invoke() {
+        guard let deletionRange else { return }
+        client.insertText("", replacementRange: deletionRange)
+    }
+}
+
 /// Sendable wrapper used to hand one replay poll to either the live main queue or
 /// a deterministic regression-test driver without exposing replay internals.
 final class DeferredHostKeyPoll: @unchecked Sendable {
@@ -74,13 +144,13 @@ enum DeferredHostKeyTargetPolicy {
 }
 
 /// Waits until the exact composition targeted by a host-owned key has retired.
-/// Forward Delete additionally pins the caret and verifies document promotion.
+/// Forward Delete accepts both caret shapes Blink reports around an active
+/// preedit, then verifies which one contains the committed text.
 struct DeferredCompositionRetirementGate {
     private static let maxReasonableLocation = 10_000_000
 
     private let originalMarkedRange: NSRange?
-    private let verificationRange: NSRange?
-    private let expectedCaretLocation: Int
+    private let caretTargets: [(location: Int, verificationRange: NSRange)]
     private let targetPolicy: DeferredHostKeyTargetPolicy
     private var stableUnmarkedObservations = 0
 
@@ -88,10 +158,12 @@ struct DeferredCompositionRetirementGate {
         targetPolicy == .caretAnchored || originalMarkedRange == nil
     }
 
-    var committedTextVerificationRange: NSRange? {
-        targetPolicy == .caretAnchored || originalMarkedRange == nil
-            ? verificationRange
-            : nil
+    func committedTextVerificationRange(for selectedRange: NSRange) -> NSRange? {
+        guard targetPolicy == .caretAnchored || originalMarkedRange == nil,
+              selectedRange.length == 0 else { return nil }
+        return caretTargets.first {
+            $0.location == selectedRange.location
+        }?.verificationRange
     }
 
     init?(
@@ -105,14 +177,14 @@ struct DeferredCompositionRetirementGate {
               markedRange.location < Self.maxReasonableLocation,
               end < Self.maxReasonableLocation else { return nil }
         originalMarkedRange = markedRange
-        verificationRange = markedRange
-        expectedCaretLocation = end
+        caretTargets = [(location: end, verificationRange: markedRange)]
         self.targetPolicy = targetPolicy
     }
 
     /// Some Blink clients expose a valid caret before they expose their live
-    /// marked range. A deferred host key can still target the committed preedit
-    /// precisely: it must appear immediately before that unchanged caret.
+    /// marked range. Depending on renderer timing, that caret can be either the
+    /// preedit start or its visual end. Keep both candidates, then let document
+    /// promotion prove the one that owns the committed text.
     init?(
         unavailableMarkedRange markedRange: NSRange,
         selectedRange: NSRange,
@@ -125,18 +197,34 @@ struct DeferredCompositionRetirementGate {
               selectedRange.location != NSNotFound,
               selectedRange.length == 0,
               expectedCommittedTextLength > 0,
-              selectedRange.location >= expectedCommittedTextLength,
               !selectionOverflow,
               selectedRange.location < Self.maxReasonableLocation,
               selectionEnd < Self.maxReasonableLocation else { return nil }
 
-        let verificationRange = NSRange(
-            location: selectedRange.location - expectedCommittedTextLength,
+        let (advancedCaret, advancedCaretOverflow) = selectedRange.location
+            .addingReportingOverflow(expectedCommittedTextLength)
+        guard !advancedCaretOverflow,
+              advancedCaret < Self.maxReasonableLocation else { return nil }
+        let advancedCaretRange = NSRange(
+            location: selectedRange.location,
             length: expectedCommittedTextLength
         )
+        var targets: [(location: Int, verificationRange: NSRange)] = []
+        if selectedRange.location >= expectedCommittedTextLength {
+            targets.append((
+                location: selectedRange.location,
+                verificationRange: NSRange(
+                    location: selectedRange.location - expectedCommittedTextLength,
+                    length: expectedCommittedTextLength
+                )
+            ))
+        }
+        targets.append((
+            location: advancedCaret,
+            verificationRange: advancedCaretRange
+        ))
         originalMarkedRange = nil
-        self.verificationRange = verificationRange
-        expectedCaretLocation = selectedRange.location
+        caretTargets = targets
         self.targetPolicy = targetPolicy
     }
 
@@ -146,17 +234,19 @@ struct DeferredCompositionRetirementGate {
         committedTextIsVisible: Bool? = nil
     ) -> DeferredCompositionRetirementDecision {
         if requiresCaretAnchor {
-            guard selectedRange.location == expectedCaretLocation,
-                  selectedRange.length == 0 else { return .cancel }
+            guard committedTextVerificationRange(for: selectedRange) != nil else {
+                return .cancel
+            }
         }
 
         if markedRange.location != NSNotFound, markedRange.length > 0 {
             stableUnmarkedObservations = 0
-            let ownedRange = originalMarkedRange ?? verificationRange
-            return markedRange == ownedRange ? .wait : .cancel
+            let ownsMarkedRange = originalMarkedRange == markedRange
+                || caretTargets.contains { $0.verificationRange == markedRange }
+            return ownsMarkedRange ? .wait : .cancel
         }
 
-        if committedTextVerificationRange != nil,
+        if committedTextVerificationRange(for: selectedRange) != nil,
            committedTextIsVisible != true {
             stableUnmarkedObservations = 0
             return .wait
@@ -237,8 +327,13 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
 
         if var gate = retirementGate {
             let markedRange = client.markedRange()
+            let selectedRange = gate.requiresCaretAnchor
+                ? client.selectedRange()
+                : NSRange(location: NSNotFound, length: 0)
             let committedTextIsVisible: Bool?
-            if let verificationRange = gate.committedTextVerificationRange,
+            if let verificationRange = gate.committedTextVerificationRange(
+                for: selectedRange
+            ),
                markedRange.location == NSNotFound || markedRange.length == 0,
                let expectedCommittedText {
                 committedTextIsVisible = client
@@ -248,9 +343,6 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
             } else {
                 committedTextIsVisible = nil
             }
-            let selectedRange = gate.requiresCaretAnchor
-                ? client.selectedRange()
-                : NSRange(location: NSNotFound, length: 0)
             let decision = gate.observe(
                 markedRange: markedRange,
                 selectedRange: selectedRange,
@@ -311,8 +403,27 @@ enum HostKeyTransaction {
         isClientWriteAllowed: @escaping () -> Bool,
         didPost: @escaping (UInt16) -> Void,
         expectedCommittedText: String?,
+        expectedMarkedRange: NSRange? = nil,
         commit: () -> Void
     ) -> Bool {
+        if keyCode == KeyCode.forwardDelete,
+           let expectedCommittedText,
+           !expectedCommittedText.isEmpty,
+           let expectedMarkedRange,
+           isClientWriteAllowed(),
+           let deletion = PreparedForwardDeletion.prepare(
+               client: client,
+               expectedCommittedText: expectedCommittedText,
+               expectedMarkedRange: expectedMarkedRange
+           ) {
+            commit()
+            guard isClientWriteAllowed() else { return true }
+            deletion.invoke()
+            didPost(keyCode)
+            DebugLogger.event("input.host_key_range_delete_delivered")
+            return true
+        }
+
         guard let replay = prepareReplay(
             client: client,
             keyCode: keyCode,

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.16] - 2026-08-24
+
+### Fixed
+- Chrome, Codex, Slack에서 문장 중간의 한글 조합 직후 Forward Delete를 빠르게 눌러도, adapter가 보존한 조합 range로 현재 글자를 확정하고 뒤쪽 글자만 같은 트랜잭션에서 삭제합니다.
+
 ## [2.8.15] - 2026-08-24
 
 ### Changed

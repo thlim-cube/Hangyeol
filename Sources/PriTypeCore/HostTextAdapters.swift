@@ -24,6 +24,10 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
     /// Non-marked adapters do not expose a document-promotion proof.
     var hostTransactionMarkedText: String? { nil }
 
+    /// PriType-owned marked range captured before the host can report a delayed
+    /// or virtual caret. Only canonical marked-text adapters expose this range.
+    var hostTransactionMarkedRange: NSRange? { nil }
+
     init(client: IMKTextInput, hostSurface: HostSurface) {
         self.client = client
         self.hostSurface = hostSurface
@@ -85,6 +89,7 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
             isClientWriteAllowed: clientWriteIsAllowed,
             didPost: deferredHostKeyBoundaryHandler,
             expectedCommittedText: hostTransactionMarkedText,
+            expectedMarkedRange: hostTransactionMarkedRange,
             commit: commit
         )
     }
@@ -127,21 +132,39 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
 /// Standard adapter for canonical marked-text composition display.
 final class MarkedTextAdapter: BaseClientAdapter {
     private var renderedMarkedText = ""
+    private var renderedMarkedLocation = NSNotFound
 
     override var hostTransactionMarkedText: String? {
         renderedMarkedText.isEmpty ? nil : renderedMarkedText
+    }
+
+    override var hostTransactionMarkedRange: NSRange? {
+        guard renderedMarkedLocation != NSNotFound,
+              !renderedMarkedText.isEmpty else { return nil }
+        return NSRange(
+            location: renderedMarkedLocation,
+            length: renderedMarkedText.utf16.count
+        )
     }
 
     override func tryInsertText(_ text: String) -> Bool {
         let didInsert = super.tryInsertText(text)
         if didInsert {
             renderedMarkedText = ""
+            renderedMarkedLocation = NSNotFound
         }
         return didInsert
     }
 
     override func setMarkedText(_ text: String) {
         guard canWriteToClient() else { return }
+        if renderedMarkedText.isEmpty, !text.isEmpty {
+            let selection = client.selectedRange()
+            renderedMarkedLocation = selection.location != NSNotFound
+                && selection.length == 0
+                ? selection.location
+                : NSNotFound
+        }
         renderedMarkedText = text
         // Canonical marked-text protocol, matching Apple's own input methods:
         // set the marked text directly with replacementRange = NSNotFound (an
@@ -157,6 +180,9 @@ final class MarkedTextAdapter: BaseClientAdapter {
             selectionRange: NSRange(location: text.utf16.count, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
         )
+        if text.isEmpty {
+            renderedMarkedLocation = NSNotFound
+        }
     }
 }
 

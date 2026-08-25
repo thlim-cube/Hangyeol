@@ -221,11 +221,16 @@ private final class ManualHostKeyReplayDriver {
 
 private final class DelayedBlinkForwardDeleteClient: FakeIMKTextInput {
     private let exposesLiveMarkedRange: Bool
+    private let selectionTracksMarkedText: Bool
     private var markLocation = 2
     private var pendingCommittedText: String?
 
-    init(exposesLiveMarkedRange: Bool) {
+    init(
+        exposesLiveMarkedRange: Bool,
+        selectionTracksMarkedText: Bool = true
+    ) {
         self.exposesLiveMarkedRange = exposesLiveMarkedRange
+        self.selectionTracksMarkedText = selectionTracksMarkedText
         super.init()
         document = "가나다라"
         selectedRangeValue = NSRange(location: 2, length: 0)
@@ -262,10 +267,12 @@ private final class DelayedBlinkForwardDeleteClient: FakeIMKTextInput {
                 markLocation = selectedRangeValue.location
             }
             markedRangeValue = NSRange(location: markLocation, length: text.utf16.count)
-            selectedRangeValue = NSRange(
-                location: markLocation + text.utf16.count,
-                length: 0
-            )
+            if selectionTracksMarkedText {
+                selectedRangeValue = NSRange(
+                    location: markLocation + text.utf16.count,
+                    length: 0
+                )
+            }
         }
     }
 
@@ -309,6 +316,52 @@ private final class DelayedBlinkForwardDeleteClient: FakeIMKTextInput {
         var units = Array(document.utf16)
         units.remove(at: selectedRangeValue.location)
         document = String(decoding: units, as: UTF16.self)
+    }
+}
+
+private final class RangeForwardDeleteClient: FakeIMKTextInput {
+    private var markLocation = 2
+    private(set) var orderedHostCalls: [String] = []
+
+    init(followingText: String = "다") {
+        super.init()
+        document = "가나마\(followingText)라"
+        markedText = "마"
+        markedRangeValue = NSRange(location: markLocation, length: 1)
+        selectedRangeValue = NSRange(location: markLocation + 1, length: 0)
+    }
+
+    override func insertText(_ string: Any!, replacementRange: NSRange) {
+        let text = (string as? NSAttributedString)?.string
+            ?? (string as? String)
+            ?? ""
+        if replacementRange.location != NSNotFound,
+           replacementRange.length > 0 {
+            orderedHostCalls.append(
+                "delete:\(replacementRange.location):\(replacementRange.length)"
+            )
+            var units = Array(document.utf16)
+            let end = min(
+                units.count,
+                replacementRange.location + replacementRange.length
+            )
+            units.removeSubrange(replacementRange.location..<end)
+            document = String(decoding: units, as: UTF16.self)
+            return
+        }
+        orderedHostCalls.append("insert:\(text)")
+        var units = Array(document.utf16)
+        units.replaceSubrange(
+            markLocation..<(markLocation + markedRangeValue.length),
+            with: text.utf16
+        )
+        document = String(decoding: units, as: UTF16.self)
+        selectedRangeValue = NSRange(
+            location: markLocation + text.utf16.count,
+            length: 0
+        )
+        markedText = ""
+        markedRangeValue = NSRange(location: NSNotFound, length: 0)
     }
 }
 
@@ -406,7 +459,12 @@ struct ReturnDeliveryTests {
             targetPolicy: .caretAnchored
         ))
 
-        #expect(gate.committedTextVerificationRange == NSRange(location: 2, length: 1))
+        #expect(gate.committedTextVerificationRange(
+            for: NSRange(location: 3, length: 0)
+        ) == NSRange(location: 2, length: 1))
+        #expect(gate.committedTextVerificationRange(
+            for: NSRange(location: 4, length: 0)
+        ) == NSRange(location: 3, length: 1))
         #expect(gate.observe(
             markedRange: NSRange(location: NSNotFound, length: 0),
             selectedRange: NSRange(location: 3, length: 0),
@@ -430,6 +488,16 @@ struct ReturnDeliveryTests {
             targetPolicy: .caretAnchored
         ) == nil)
 
+        let documentStartGate = try #require(DeferredCompositionRetirementGate(
+            unavailableMarkedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: 0, length: 0),
+            expectedCommittedTextLength: 1,
+            targetPolicy: .caretAnchored
+        ))
+        #expect(documentStartGate.committedTextVerificationRange(
+            for: NSRange(location: 1, length: 0)
+        ) == NSRange(location: 0, length: 1))
+
         var movedCaretGate = try #require(DeferredCompositionRetirementGate(
             unavailableMarkedRange: NSRange(location: NSNotFound, length: 0),
             selectedRange: NSRange(location: 3, length: 0),
@@ -438,7 +506,7 @@ struct ReturnDeliveryTests {
         ))
         #expect(movedCaretGate.observe(
             markedRange: NSRange(location: NSNotFound, length: 0),
-            selectedRange: NSRange(location: 4, length: 0),
+            selectedRange: NSRange(location: 5, length: 0),
             committedTextIsVisible: true
         ) == .cancel)
     }
@@ -452,7 +520,9 @@ struct ReturnDeliveryTests {
             targetPolicy: .compositionOnly
         ))
 
-        #expect(gate.committedTextVerificationRange == NSRange(location: 2, length: 1))
+        #expect(gate.committedTextVerificationRange(
+            for: NSRange(location: 3, length: 0)
+        ) == NSRange(location: 2, length: 1))
         #expect(gate.requiresCaretAnchor)
         #expect(gate.observe(
             markedRange: NSRange(location: NSNotFound, length: 0),
@@ -478,7 +548,7 @@ struct ReturnDeliveryTests {
         ))
         #expect(movedCaretGate.observe(
             markedRange: NSRange(location: NSNotFound, length: 0),
-            selectedRange: NSRange(location: 4, length: 0),
+            selectedRange: NSRange(location: 5, length: 0),
             committedTextIsVisible: true
         ) == .cancel)
     }
@@ -640,6 +710,160 @@ struct ReturnDeliveryTests {
         #expect(client.document == "가나마라")
         #expect(client.markedText.isEmpty)
         #expect(client.selectedRangeValue == NSRange(location: 3, length: 0))
+    }
+
+    @Test(
+        "Chrome, Codex, Slack Forward Delete survives a preedit-start caret",
+        arguments: [
+            "com.google.Chrome",
+            "com.openai.codex",
+            "com.tinyspeck.slackmacgap"
+        ]
+    )
+    func blinkHostsForwardDeleteAfterLaggingCaret(bundleID: String) throws {
+        let client = DelayedBlinkForwardDeleteClient(
+            exposesLiveMarkedRange: false,
+            selectionTracksMarkedText: false
+        )
+        client.bundleID = bundleID
+        let driver = ManualHostKeyReplayDriver()
+        driver.onKeyDown = client.deleteForwardAtCaret
+        client.setMarkedText(
+            "마",
+            selectionRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
+        )
+
+        let scheduled = HostKeyTransaction.schedule(
+            client: client,
+            keyCode: KeyCode.forwardDelete,
+            modifierFlags: NSEvent.ModifierFlags.function.rawValue,
+            isClientWriteAllowed: { true },
+            didPost: driver.recordBoundary,
+            expectedCommittedText: client.markedText,
+            environment: driver.environment
+        )
+        client.insertText(
+            "마",
+            replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
+        )
+
+        #expect(scheduled)
+        try driver.runNextPoll()
+        try client.promotePendingCommit()
+        client.retireMarkedText()
+        for _ in 0..<3 where driver.postedEventTypes.isEmpty {
+            try driver.runNextPoll()
+        }
+
+        #expect(driver.postedEventTypes == [.keyDown, .keyUp])
+        #expect(driver.postedBoundaryCount == 1)
+        #expect(client.document == "가나마라")
+        #expect(client.selectedRangeValue == NSRange(location: 3, length: 0))
+    }
+
+    @Test(
+        "Chrome, Codex, Slack commit and Forward Delete share one host range transaction",
+        arguments: [
+            "com.google.Chrome",
+            "com.openai.codex",
+            "com.tinyspeck.slackmacgap"
+        ]
+    )
+    func blinkHostsUseAtomicForwardDeleteRange(bundleID: String) {
+        let client = RangeForwardDeleteClient()
+        client.bundleID = bundleID
+        var boundaryCount = 0
+
+        let handled = HostKeyTransaction.perform(
+            client: client,
+            keyCode: KeyCode.forwardDelete,
+            modifierFlags: NSEvent.ModifierFlags.function.rawValue,
+            isClientWriteAllowed: { true },
+            didPost: { keyCode in
+                if keyCode == KeyCode.forwardDelete { boundaryCount += 1 }
+            },
+            expectedCommittedText: "마",
+            expectedMarkedRange: NSRange(location: 2, length: 1),
+            commit: {
+                client.insertText(
+                    "마",
+                    replacementRange: NSRange(
+                        location: NSNotFound,
+                        length: NSNotFound
+                    )
+                )
+            }
+        )
+
+        #expect(handled)
+        #expect(client.orderedHostCalls == [
+            "insert:마",
+            "delete:3:1"
+        ])
+        #expect(client.document == "가나마라")
+        #expect(client.selectedRangeValue == NSRange(location: 3, length: 0))
+        #expect(boundaryCount == 1)
+    }
+
+    @Test("Forward Delete removes one composed character after the committed mark")
+    func forwardDeleteMeasuresFollowingComposedCharacter() {
+        let client = RangeForwardDeleteClient(followingText: "😀")
+
+        let handled = HostKeyTransaction.perform(
+            client: client,
+            keyCode: KeyCode.forwardDelete,
+            modifierFlags: NSEvent.ModifierFlags.function.rawValue,
+            isClientWriteAllowed: { true },
+            didPost: { _ in },
+            expectedCommittedText: "마",
+            expectedMarkedRange: NSRange(location: 2, length: 1),
+            commit: {
+                client.insertText(
+                    "마",
+                    replacementRange: NSRange(
+                        location: NSNotFound,
+                        length: NSNotFound
+                    )
+                )
+            }
+        )
+
+        #expect(handled)
+        #expect(client.orderedHostCalls == ["insert:마", "delete:3:2"])
+        #expect(client.document == "가나마라")
+    }
+
+    @Test("Forward Delete never mutates a field whose lease changed during commit")
+    func forwardDeleteStopsAfterCommitReentry() {
+        let client = RangeForwardDeleteClient()
+        var clientWriteIsAllowed = true
+        var boundaryCount = 0
+
+        let handled = HostKeyTransaction.perform(
+            client: client,
+            keyCode: KeyCode.forwardDelete,
+            modifierFlags: NSEvent.ModifierFlags.function.rawValue,
+            isClientWriteAllowed: { clientWriteIsAllowed },
+            didPost: { _ in boundaryCount += 1 },
+            expectedCommittedText: "마",
+            expectedMarkedRange: NSRange(location: 2, length: 1),
+            commit: {
+                client.insertText(
+                    "마",
+                    replacementRange: NSRange(
+                        location: NSNotFound,
+                        length: NSNotFound
+                    )
+                )
+                clientWriteIsAllowed = false
+            }
+        )
+
+        #expect(handled)
+        #expect(client.orderedHostCalls == ["insert:마"])
+        #expect(client.document == "가나마다라")
+        #expect(boundaryCount == 0)
     }
 
     @Test("Fast later-turn Hangul double-tap keeps both physical keystrokes")

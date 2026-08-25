@@ -394,23 +394,28 @@ public class HangulComposer: @unchecked Sendable {
                 && lastInputHostSurface == .blinkWeb
                 && modifierFlags.intersection(hostOwnedDeleteModifiers).isEmpty
 
-            // Blink can acknowledge insertText before the renderer retires its
-            // marked range. Arm the host key first, then let the adapter release it
-            // only after that exact range has disappeared and the caret is stable.
-            let scheduledHostDelete = defersBlinkWebContentDelete
-                && delegate.tryScheduleHostKey(
+            // Blink can expose two caret shapes while composing. The adapter keeps
+            // the owned mark start so commit and following-range deletion can run
+            // as one transaction without racing renderer retirement.
+            let performedHostDeleteTransaction = defersBlinkWebContentDelete
+                && delegate.tryPerformHostKeyTransaction(
                     keyCode: keyCode,
-                    modifierFlags: modifierFlags.rawValue
+                    modifierFlags: modifierFlags.rawValue,
+                    commit: { [self] in
+                        commitComposition(delegate: delegate)
+                    }
                 )
-            commitComposition(delegate: delegate)
-            localTextBuffer = ""
 
-            if scheduledHostDelete {
+            if performedHostDeleteTransaction {
+                localTextBuffer = ""
                 DebugLogger.event("input.forward_delete", metadata: [
-                    .state("action", "commit_then_defer_until_mark_retired")
+                    .state("action", "atomic_commit_then_delete_following_range")
                 ])
                 return true
             }
+
+            commitComposition(delegate: delegate)
+            localTextBuffer = ""
             return false
         }
 

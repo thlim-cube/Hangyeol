@@ -213,7 +213,7 @@ HostSurfaceResolver        capability 우선 surface 분류
 - adapter 선택과 payload·host-key 처리는 `ClientContext.hostSurface`를 다시 bundle로 해석하지 않는다. `blinkWeb`은 canonical marked text와 host-key 중재를 기본으로 하되, 문서 접근이 안전한 명시적 호환 예외(Hermes)는 direct insertion을 유지한다. `blinkNative`는 안전한 explicit range, `finderNonText`는 immediate delivery를 사용한다.
 - 조합 확정은 `InputSession.finalize(reason:)` 밖에 별도 lifecycle 경로를 만들지 않는다.
 - 호스트별 동작은 capability로 표현할 수 없을 때만 `ClientCompatibilityPolicy`에 둔다.
-- 실제 앱에서 확인한 Enter·Shift+Return·Forward Delete 순서는 `HostKeyTransaction` 계약으로 유지한다. Return 계열은 live marked range와 재전달 권한을 먼저 준비하고, 빈 marked-text 갱신 없이 canonical `insertText`로 조합을 확정한 뒤 retirement 감시와 키 재전달을 시작한다.
+- 실제 앱에서 확인한 Enter·Shift+Return·Forward Delete 순서는 `HostKeyTransaction` 계약으로 유지한다. Return 계열은 live marked range와 재전달 권한을 먼저 준비하고, 빈 marked-text 갱신 없이 canonical `insertText`로 조합을 확정한 뒤 retirement 감시와 키 재전달을 시작한다. Forward Delete는 adapter가 조합 시작 시점의 소유 range를 보존하고, 조합 확정과 뒤쪽 composed-character range 삭제를 같은 client transaction에서 수행한다.
 - 직접 삽입은 live real preedit이 없고 문서 접근만 불안정할 때 marked text로 낮춘다. 이미 live
   preedit을 쓴 뒤 selection을 검증할 수 없으면 삭제 범위를 추측하거나 전체 preedit을 다시
   표시하지 않는다. 마지막으로 검증한 문서 상태를 유지하고 현재 조합 쓰기를 중단한다.
@@ -241,7 +241,7 @@ HostSurfaceResolver        capability 우선 surface 분류
 | **InputSession** | client·composer·context·adapter·dedup·focus-loss observer의 단일 소유자. session/lifecycle 조합 종료를 `finalize(reason:)`로 모으되 delivery별 안전한 확정 방식을 선택한다. |
 | **HostAdapterResolver** | `ClientContext.hostSurface`를 `markedText` / `directInsertion` / `immediate` 중 하나로 변환하고 해당 adapter를 생성하는 단일 결정 지점. Capability로 확정된 `blinkWeb`은 실험 설정과 무관하게 canonical marked text를 기본으로 하며, 문서 접근이 안전한 명시적 호환 예외(Hermes)만 direct insertion을 유지한다. |
 | **HostTextAdapters** | `MarkedTextAdapter`(canonical marked text), `DirectInsertionAdapter`(실험: 실제 텍스트 in-place rewrite), `ImmediateModeAdapter`(Finder 비텍스트 영역)를 제공한다. |
-| **HostKeyTransaction** | Blink 조합 확정과 Return·Shift+Return·Forward Delete를 하나의 호스트 트랜잭션으로 묶는다. Return 계열은 조합 폐기와 session lease를, Forward Delete는 그에 더해 정확한 caret·range를 확인한 뒤 CGEvent를 재전달한다. |
+| **HostKeyTransaction** | Blink 조합 확정과 Return·Shift+Return·Forward Delete를 하나의 호스트 트랜잭션으로 묶는다. Return 계열은 조합 폐기와 session lease를 확인한 뒤 CGEvent를 재전달한다. Forward Delete는 adapter가 보존한 PriType 소유 range와 다음 composed character를 확인한 뒤 canonical commit과 explicit range 삭제를 연속 수행한다. |
 | **MarkedTextPayload** | Blink web에는 plain `NSString`, native/WebKit에는 clear-underline attribute가 있는 marked text를 만든다. macOS 26은 IME 밑줄 속성을 시스템 스타일로 재생성하므로 밑줄 없는 입력은 직접 삽입 모드에서만 가능하다. |
 | **CursorRectResolver** | 한자 후보창 좌표 전략 체인(firstRect → attributes → 캐시 → AX → 마우스)과 좌표 유효성 검증. |
 | **ClientContextDetector** | IMK client IPC로 capability snapshot을 수집한다. 정책 결정을 직접 소유하지 않는다. |

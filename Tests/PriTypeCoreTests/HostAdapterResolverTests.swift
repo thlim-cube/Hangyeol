@@ -264,11 +264,14 @@ struct HostAdapterResolverTests {
             hostSurface: .blinkWeb
         )
 
+        client.selectedRangeValue = NSRange(location: 2, length: 0)
         adapter.setMarkedText("마")
         #expect(adapter.hostTransactionMarkedText == "마")
+        #expect(adapter.hostTransactionMarkedRange == NSRange(location: 2, length: 1))
 
         #expect(adapter.tryInsertText("마"))
         #expect(adapter.hostTransactionMarkedText == nil)
+        #expect(adapter.hostTransactionMarkedRange == nil)
     }
 }
 

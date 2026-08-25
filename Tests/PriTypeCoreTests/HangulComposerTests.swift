@@ -666,11 +666,18 @@ struct HangulComposerTests {
         #expect(delegate.markedText.isEmpty)
     }
 
-    @Test("Blink web Forward Delete waits for the committed mark to retire")
-    func blinkWebForwardDeleteWaitsForMarkedRetirement() throws {
+    @Test(
+        "Chrome, Codex, Slack Forward Delete uses one commit transaction",
+        arguments: [
+            "com.google.Chrome",
+            "com.openai.codex",
+            "com.tinyspeck.slackmacgap"
+        ]
+    )
+    func blinkWebForwardDeleteWaitsForMarkedRetirement(bundleID: String) throws {
         let (composer, delegate, _) = makeComposer()
         composer.markKeystroke(
-            bundleId: "com.google.Chrome",
+            bundleId: bundleID,
             usesBlinkNativeTextClient: false
         )
         _ = composer.handle(
