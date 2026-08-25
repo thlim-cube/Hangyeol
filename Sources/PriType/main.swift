@@ -11,10 +11,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     
     private var hasLaunchedBefore = false
     private var workspaceActivationObserver: NSObjectProtocol?
-    private let shouldShowPostInstallGuidance: Bool
+    private let shouldShowSettingsAfterInstall: Bool
 
-    init(shouldShowPostInstallGuidance: Bool) {
-        self.shouldShowPostInstallGuidance = shouldShowPostInstallGuidance
+    init(shouldShowSettingsAfterInstall: Bool) {
+        self.shouldShowSettingsAfterInstall = shouldShowSettingsAfterInstall
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -48,7 +48,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             _ = InputSourceManager.shared.cleanupStaleInputSources()
         }
 
-        if shouldShowPostInstallGuidance && !IOKitManager.hasAccessibilityPermission() {
+        if shouldShowSettingsAfterInstall {
             DispatchQueue.main.async {
                 SettingsWindowController.shared.showSettings()
             }
@@ -176,7 +176,7 @@ if PostInstallPreparation.shouldPrepare(arguments: CommandLine.arguments) {
 
 let app = NSApplication.shared
 let delegate = AppDelegate(
-    shouldShowPostInstallGuidance: PostInstallPreparation.consumePending()
+    shouldShowSettingsAfterInstall: PostInstallPreparation.consumePending()
 )
 app.delegate = delegate
 app.run()

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.19] - 2026-08-25
+
+### Fixed
+- 기존 손쉬운 사용 권한이 유지된 업데이트에서도 설치 직후 PriType 설정 창을 정확히 한 번 표시하도록, 설치 완료 안내와 권한 요청 조건을 분리했습니다.
+
 ## [2.8.18] - 2026-08-25
 
 ### Changed

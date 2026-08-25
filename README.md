@@ -45,7 +45,7 @@ PriType은 Swift와 InputMethodKit으로 만든 macOS용 한글 입력기입니�
 
 1. [최신 릴리즈](https://github.com/Meapri/PriType-Swift/releases/latest)에서 `PriType_Release.pkg`를 다운로드합니다.
 2. PKG를 실행해 설치합니다.
-3. 설치기가 PriType 입력 소스를 현재 사용자에게 추가합니다. 처음 설치할 때는 PriType을 바로 선택하고, 업데이트할 때는 현재 선택한 입력 소스를 유지합니다.
+3. 설치기가 PriType 입력 소스를 현재 사용자에게 추가하고 설정 창을 한 번 엽니다. 처음 설치할 때는 PriType을 바로 선택하고, 업데이트할 때는 현재 선택한 입력 소스를 유지합니다.
 4. 설치가 끝나면 재시동 없이 PriType 내부의 한/영 모드를 사용자 지정 전환키로 전환할 수 있습니다.
 
 PriType 앱 번들은 기본적으로 `/Library/Input Methods/PriType.app`에 설치됩니다. PackageKit의 원자적 업데이트로 기존 번들의 등록을 유지한 채 교체하고, 현재 로그인한 사용자 세션에서 macOS 표준 TIS API로 새 번들을 등록한 뒤 부모 입력기와 한글 모드를 순서대로 활성화합니다. 입력기 관련 시스템 프로세스를 강제 재시작하지 않으며, 다른 입력 소스와 ABC도 자동으로 삭제하지 않습니다.

@@ -285,7 +285,8 @@ postinstall (root)
   │         ├─ 기존 등록이 없는 첫 설치만 한글 mode 선택
   │         └─ 설치 안내 pending 기록 후 IMK 초기화 없이 종료
   └─ 같은 사용자 세션에서 PriType 실행
-       └─ 손쉬운 사용 미허용 시 설정 창과 macOS 승인 요청 표시
+       ├─ 설치 pending을 소비해 설정 창을 한 번 표시
+       └─ 손쉬운 사용 미허용 시 별도로 macOS 승인 요청 표시
 ```
 
 기존 설치 판정은 `AppleEnabledInputSources` 하나가 아니라 `AppleEnabledInputSources`, `AppleSelectedInputSources`, `AppleInputSourceHistory`의 정리된 현재 PriType parent/mode를 함께 본다. 따라서 선택 기록에만 남아 있는 정상 업데이트를 신규 설치로 오인하지 않는다. TIS 등록·활성화·첫 선택 중 하나라도 준비되지 않으면 입력 소스 설정을 복구 화면으로 연다.

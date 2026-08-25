@@ -70,4 +70,16 @@ struct InstallerSessionContractTests {
         #expect(!source.contains("eval "))
         #expect(!source.contains("sleep "))
     }
+
+    @Test("Installed app presents settings independently of Accessibility permission")
+    func installedAppAlwaysPresentsSettings() throws {
+        let source = try String(
+            contentsOf: repoRoot
+                .appendingPathComponent("Sources/PriType/main.swift"),
+            encoding: .utf8
+        )
+
+        #expect(source.contains("if shouldShowSettingsAfterInstall {"))
+        #expect(!source.contains("&& !IOKitManager.hasAccessibilityPermission()"))
+    }
 }
