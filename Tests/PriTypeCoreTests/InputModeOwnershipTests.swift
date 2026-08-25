@@ -434,6 +434,61 @@ struct InputModeOwnershipTests {
 struct ProcessWideInputOwnershipTests {
     private final class Owner {}
 
+    @Test("Controller claims a delivered keyDown before resolving its input session")
+    func controllerWiresKeyDownOwnershipBeforeSessionResolution() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let controllerURL = repoRoot
+            .appendingPathComponent("Sources/PriTypeCore/PriTypeInputController.swift")
+        let source = try String(contentsOf: controllerURL, encoding: .utf8)
+        let policyUse = try #require(source.range(of: "InputBoundaryOwnershipPolicy.requiresClaim("))
+        let sessionResolution = try #require(source.range(
+            of: "guard let session = ensureSession(for: client) else { return false }"
+        ))
+
+        #expect(policyUse.lowerBound < sessionResolution.lowerBound)
+        #expect(!source.contains("guard Self.sharedController == nil,"))
+    }
+
+    @Test("A first keyDown claims ownership even while the previous owner remains visible")
+    func keyDownClaimsAcrossDelayedControllerHandoff() {
+        let registry = ActiveOwnerHandoffRegistry<Owner>()
+        let previous = Owner()
+        let incoming = Owner()
+        var retiredOwner: Owner?
+
+        registry.claim(previous) { _ in }
+
+        #expect(InputBoundaryOwnershipPolicy.requiresClaim(
+            candidate: incoming,
+            currentOwner: registry.owner
+        ))
+        let acquired = registry.claim(incoming) { retiring in
+            retiredOwner = retiring
+        }
+
+        #expect(acquired)
+        #expect(retiredOwner === previous)
+        #expect(registry.owner === incoming)
+        #expect(!InputBoundaryOwnershipPolicy.requiresClaim(
+            candidate: incoming,
+            currentOwner: registry.owner
+        ))
+
+        let composer = HangulComposer(
+            statusBar: MockStatusBar(),
+            configuration: MockConfiguration(),
+            inputModeStore: InputModeStore(initialMode: .korean)
+        )
+        let delegate = MockComposerDelegate()
+        let firstKeyDown = TestEventFactory.keyEvent(char: "r", keyCode: 15)!
+
+        #expect(composer.handle(firstKeyDown, delegate: delegate))
+        #expect(delegate.markedText == "ㄱ")
+    }
+
     @Test("Claim retires the previous owner before publishing the next owner")
     func claimOrdersRetirementBeforeReplacement() {
         let registry = ActiveOwnerHandoffRegistry<Owner>()

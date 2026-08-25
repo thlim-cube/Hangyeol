@@ -1,5 +1,17 @@
 import Foundation
 
+enum InputBoundaryOwnershipPolicy {
+    /// Receiving a real keyDown is stronger evidence of the current IMK target than
+    /// a delayed deactivate callback. A previous non-nil owner must not make that
+    /// key pass through to the host as raw Roman text.
+    static func requiresClaim<Owner: AnyObject>(
+        candidate: Owner,
+        currentOwner: Owner?
+    ) -> Bool {
+        currentOwner !== candidate
+    }
+}
+
 /// Tracks one process-wide active owner and retires it before installing a different
 /// owner. InputMethodKit creates a controller per client input session, so controller
 /// instance storage alone cannot enforce this ordering.

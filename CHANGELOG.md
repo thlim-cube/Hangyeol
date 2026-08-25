@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.20] - 2026-08-25
+
+### Fixed
+- 탭·앱·필드 전환 직후 이전 IMK controller의 해제가 늦어져도, 실제 첫 `keyDown`을 받은 controller가 안전하게 소유권을 인계받아 한글 상태의 첫 1~2개 키가 영문으로 통과하지 않도록 했습니다.
+
 ## [2.8.19] - 2026-08-25
 
 ### Fixed

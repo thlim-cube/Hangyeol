@@ -867,18 +867,20 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             )
         }
 
-        if Self.sharedController !== self {
-            guard Self.sharedController == nil,
-                  claimProcessActiveController(incomingClient: client) else {
+        guard event.type == .keyDown else {
+            return false
+        }
+
+        if InputBoundaryOwnershipPolicy.requiresClaim(
+            candidate: self,
+            currentOwner: Self.sharedController
+        ) {
+            guard claimProcessActiveController(incomingClient: client) else {
                 DebugLogger.event("input.handle_ignored", metadata: [
-                    .state("reason", "inactive_controller")
+                    .state("reason", "superseded_controller")
                 ])
                 return false
             }
-        }
-
-        guard event.type == .keyDown else {
-            return false
         }
 
         #if DEBUG
