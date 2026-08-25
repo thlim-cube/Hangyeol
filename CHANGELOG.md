@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.22] - 2026-08-26
+
+### Fixed
+- Chrome·Confluence의 새 controller activation에서 이전 Blink web client proxy가 새 field를 가리킬 때, 이전 조합 문자열이 새 field에 확정되어 `제ㅇ`처럼 복사되거나 한글 입력이 중단되던 문제를 수정했습니다.
+
 ## [2.8.21] - 2026-08-25
 
 ### Fixed

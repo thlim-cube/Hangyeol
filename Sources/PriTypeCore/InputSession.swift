@@ -611,7 +611,11 @@ final class InputSession: @unchecked Sendable {
     /// the old controller's potentially late `deactivateServer` callback.
     func prepareForControllerHandoff(fieldIdentityMayHaveChanged: Bool) {
         composer.dismissHanjaCandidates()
-        if fieldIdentityMayHaveChanged {
+        // Blink web client proxies follow the focused field even when IMK supplies
+        // a distinct client object. Once another controller activates, the retiring
+        // proxy is no longer a safe target for committing its old preedit.
+        if fieldIdentityMayHaveChanged
+            || context.hostSurface == .blinkWeb {
             markContextStale()
         }
         finalize(reason: .sessionReplacement)

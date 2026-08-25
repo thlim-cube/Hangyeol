@@ -1358,6 +1358,72 @@ struct InputSessionFinalizeTests {
         #expect(client.document == "가")
     }
 
+    @Test("A Blink activation handoff cannot write the old preedit into the newly focused field")
+    func blinkActivationHandoffIsWriteFree() {
+        let oldClient = FakeIMKTextInput()
+        oldClient.bundleID = "com.google.Chrome"
+        let oldComposer = HangulComposer(
+            statusBar: MockStatusBar(),
+            configuration: MockConfiguration()
+        )
+        let oldSession = InputSession(
+            client: oldClient,
+            context: context(bundleId: oldClient.bundleID, documentAccessSafe: true),
+            composer: oldComposer
+        )
+        _ = oldSession.prepareForNonSecureClientWrites()
+        _ = oldComposer.handle(
+            TestEventFactory.keyEvent(char: "w", keyCode: 13)!,
+            delegate: oldSession.adapter
+        )
+        _ = oldComposer.handle(
+            TestEventFactory.keyEvent(char: "p", keyCode: 35)!,
+            delegate: oldSession.adapter
+        )
+        #expect(oldClient.markedText == "제")
+
+        let newlyFocusedClient = FakeIMKTextInput()
+        newlyFocusedClient.bundleID = "com.google.Chrome"
+        oldClient.onInsertText = {
+            newlyFocusedClient.document.append(oldClient.insertCalls.last?.0 ?? "")
+        }
+        let retirement = PriTypeInputController.captureSessionRetirementSnapshot(
+            session: oldSession
+        )
+
+        #expect(PriTypeInputController.retireSessionForControllerHandoff(
+            retirement,
+            currentSession: { oldSession },
+            fieldIdentityMayHaveChanged: false
+        ) {})
+
+        #expect(oldClient.insertCalls.isEmpty)
+        #expect(newlyFocusedClient.document.isEmpty)
+        #expect(!oldComposer.hasActiveComposition)
+        #expect(oldSession.contextNeedsRefresh)
+
+        let incomingComposer = HangulComposer(
+            statusBar: MockStatusBar(),
+            configuration: MockConfiguration()
+        )
+        let incomingSession = InputSession(
+            client: newlyFocusedClient,
+            context: context(
+                bundleId: newlyFocusedClient.bundleID,
+                documentAccessSafe: true
+            ),
+            composer: incomingComposer
+        )
+        _ = incomingSession.prepareForNonSecureClientWrites()
+        _ = incomingComposer.handle(
+            TestEventFactory.keyEvent(char: "d", keyCode: 2)!,
+            delegate: incomingSession.adapter
+        )
+
+        #expect(newlyFocusedClient.document.isEmpty)
+        #expect(newlyFocusedClient.markedText == "ㅇ")
+    }
+
     @Test("A keyDown-time handoff cannot write the old preedit into the newly focused field")
     func lateInputBoundaryHandoffIsWriteFree() {
         let oldClient = FakeIMKTextInput()
