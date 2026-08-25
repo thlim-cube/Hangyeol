@@ -54,7 +54,7 @@ activateServer
 
 ```
 keyDown ──► PriTypeInputController.handle()
-              1. active owner claim         ← 지연된 deactivate보다 실제 keyDown을 우선해 controller 인계
+              1. active owner claim         ← 늦은 keyDown 인계는 이전 client write를 폐기한 뒤 owner 교체
               2. ensureSession(client)      ← 클라이언트 변경/포커스 복귀 시 컨텍스트 재분석
               3. 중복 keyDown 억제           ← 동일 물리 이벤트 2회 전달 호스트(예: KakaoTalk) 방어, 전 모드 공통
               4. markKeystroke(bundleId)    ← 한자 cross-app 검증용
@@ -87,7 +87,7 @@ keyDown ──► PriTypeInputController.handle()
 과거 KakaoTalk 계열 버그(stranded preedit, 마지막 글자 유실, 이모티콘 팝업 깜빡임)는 session/lifecycle 종료 이벤트마다 commit 시퀀스가 조금씩 달랐던 데서 왔다. 현재는 앱 비활성·controller 교체·마우스 commit·mode/layout 변경 같은 외부 경계가 `InputSession.finalize(reason:)` 하나로 수렴한다. Return·Space·Arrow처럼 한 keyDown 안에서 끝나는 일반 조합은 `HangulComposer`가 현재 adapter로 확정한다. 현재 field generation이 비보안으로 확인된 경우에만 marked-text 경로에서 `replacementRange = NSNotFound`인 canonical 1-op commit을 사용하며, stale·미확인 generation은 client write 없이 engine·adapter·후보 상태를 폐기한다. 직접 삽입 경로는 이미 문서에 있는 실제 텍스트를 재삽입하지 않고 엔진만 flush하며, PriType가 만든 stale marked fallback도 같은 generation의 소유권이 확인된 경우에만 정리한다.
 
 - 포커스 상실: 세션이 소유한 `NSWorkspace` 비활성 옵저버가 IMK `deactivateServer`보다 먼저 finalize한다(네이티브 호스트가 이미 resign한 뒤의 insertText는 무시되기 때문). 옵저버는 세션 자신의 앱과만 비교하며, `deactivateServer`에서 반드시 disarm해 stale 옵저버가 이후 세션의 조합을 엉뚱한 클라이언트로 흘리는 것을 막는다.
-- controller 교체: 새 controller의 `activateServer`가 이전 controller의 늦은 `deactivateServer`보다 먼저 올 수 있다. 반대로 `activateServer` 인계가 늦어도 실제 `keyDown` callback을 받은 controller가 이전 owner를 먼저 retire하고 소유권을 확보한 뒤 입력을 처리한다. 새 owner를 공개하기 전에 이전 session을 `.sessionReplacement`로 finalize하고 옵저버를 해제하며, 늦게 도착한 이전 controller의 release는 새 owner를 지우지 못한다.
+- controller 교체: 새 controller의 `activateServer`가 이전 controller의 늦은 `deactivateServer`보다 먼저 올 수 있다. 이 activation 경계에서는 이전 host가 아직 조합 확정을 받을 수 있으므로 `.sessionReplacement`로 finalize한 뒤 새 owner를 공개한다. 반대로 실제 `keyDown`이 먼저 도착했다면 포커스는 이미 새 field에 있으므로 이전 IMK client proxy의 write lease를 폐기하고 engine만 retire한 뒤 owner를 교체한다. 이 둘을 섞으면 이전 조합이 새 field에 중복 삽입되거나 client write 재진입으로 claim이 취소될 수 있다. 늦게 도착한 이전 controller의 release는 새 owner를 지우지 못한다.
 - 마우스 클릭: `flagsChanged`를 포함한 입력기는 InputMethodKit의 기본 외부-click commit 대상이 아니므로 mouse-down mask와 `IMKMouseHandling` callback을 명시적으로 등록한다. marked range 밖 클릭 또는 marked range가 없는 직접 삽입 클릭만 finalize하고, 실제 caret 이동은 호스트에 통과시킨다.
 - 직접 삽입(실험) 모드: 조합 글자가 실제 텍스트인 동안은 재삽입 없이 엔진만 flush한다. 문서 접근 실패로 marked text에 fallback한 상태는 canonical marked finalize를 사용하고, PriType가 소유한 잔여 marked range만 안전하게 정리한다.
 

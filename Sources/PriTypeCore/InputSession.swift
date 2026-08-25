@@ -617,6 +617,13 @@ final class InputSession: @unchecked Sendable {
         finalize(reason: .sessionReplacement)
     }
 
+    /// A keyDown can expose a new IMK controller only after focus has already moved.
+    /// At that point the old client proxy may address the new field, so revoke its
+    /// write lease before retiring instead of trying to commit through that proxy.
+    func prepareForLateInputBoundaryHandoff() {
+        prepareForControllerHandoff(fieldIdentityMayHaveChanged: true)
+    }
+
     func finishControllerHandoff() {
         disarmFocusLossFinalizer()
         markContextStale()

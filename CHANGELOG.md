@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.21] - 2026-08-25
+
+### Fixed
+- Chrome 등에서 포커스 이동 뒤 늦게 도착한 첫 `keyDown`이 이전 field의 조합을 새 field에 확정해 `나나`로 중복되거나, controller 인계 실패로 영문·분리 자모가 입력되던 문제를 수정했습니다.
+- 입력 소스 메뉴의 `PriType 설정...`과 `PriType 정보`를 InputMethodKit command-dispatch 경로로 연결해 회색 비활성 항목으로 표시되던 문제를 수정했습니다.
+
 ## [2.8.20] - 2026-08-25
 
 ### Fixed

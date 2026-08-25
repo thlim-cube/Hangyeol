@@ -1358,6 +1358,79 @@ struct InputSessionFinalizeTests {
         #expect(client.document == "가")
     }
 
+    @Test("A keyDown-time handoff cannot write the old preedit into the newly focused field")
+    func lateInputBoundaryHandoffIsWriteFree() {
+        let oldClient = FakeIMKTextInput()
+        oldClient.bundleID = "com.google.Chrome"
+        let oldComposer = HangulComposer(
+            statusBar: MockStatusBar(),
+            configuration: MockConfiguration()
+        )
+        let oldSession = InputSession(
+            client: oldClient,
+            context: context(bundleId: oldClient.bundleID, documentAccessSafe: true),
+            composer: oldComposer
+        )
+        _ = oldSession.prepareForNonSecureClientWrites()
+        _ = oldComposer.handle(
+            TestEventFactory.keyEvent(char: "s", keyCode: 1)!,
+            delegate: oldSession.adapter
+        )
+        _ = oldComposer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: oldSession.adapter
+        )
+        #expect(oldClient.markedText == "나")
+
+        let newlyFocusedClient = FakeIMKTextInput()
+        newlyFocusedClient.bundleID = "com.google.Chrome"
+        oldClient.onInsertText = {
+            newlyFocusedClient.document.append(oldClient.insertCalls.last?.0 ?? "")
+        }
+        let retirement = PriTypeInputController.captureSessionRetirementSnapshot(
+            session: oldSession
+        )
+        var cleanupCount = 0
+
+        #expect(PriTypeInputController.retireSessionForLateInputBoundaryHandoff(
+            retirement,
+            currentSession: { oldSession }
+        ) {
+            cleanupCount += 1
+        })
+
+        #expect(oldClient.insertCalls.isEmpty)
+        #expect(newlyFocusedClient.document.isEmpty)
+        #expect(!oldComposer.hasActiveComposition)
+        #expect(oldSession.contextNeedsRefresh)
+        #expect(cleanupCount == 1)
+
+        let incomingComposer = HangulComposer(
+            statusBar: MockStatusBar(),
+            configuration: MockConfiguration()
+        )
+        let incomingSession = InputSession(
+            client: newlyFocusedClient,
+            context: context(
+                bundleId: newlyFocusedClient.bundleID,
+                documentAccessSafe: true
+            ),
+            composer: incomingComposer
+        )
+        _ = incomingSession.prepareForNonSecureClientWrites()
+        _ = incomingComposer.handle(
+            TestEventFactory.keyEvent(char: "s", keyCode: 1)!,
+            delegate: incomingSession.adapter
+        )
+        _ = incomingComposer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: incomingSession.adapter
+        )
+
+        #expect(newlyFocusedClient.document.isEmpty)
+        #expect(newlyFocusedClient.markedText == "나")
+    }
+
     @Test(
         "Invalid selection after a real preedit fails closed without duplicate text",
         arguments: [NSNotFound, 20_000_000]

@@ -23,6 +23,11 @@ import Carbon.HIToolbox
 /// ```
 @objc(PriTypeInputController)
 public class PriTypeInputController: IMKInputController, @unchecked Sendable {
+    private enum ControllerHandoffBoundary {
+        case activation
+        case lateKeyDown
+    }
+
     private static let forcedRomanKeyboardLayoutID = resolveForcedRomanKeyboardLayoutID()
     private static let romanKeyboardLayoutCandidates = [
         "com.apple.keylayout.ABC",
@@ -289,6 +294,26 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         }
     }
 
+    /// A keyDown-time claim is later than an activation claim: focus is already in
+    /// the incoming field and an old IMK client proxy can write there. Retire the old
+    /// session only after revoking its client-write lease.
+    @discardableResult
+    static func retireSessionForLateInputBoundaryHandoff(
+        _ snapshot: SessionRetirementSnapshot?,
+        currentSession: () -> InputSession?,
+        retireController: () -> Void
+    ) -> Bool {
+        guard let snapshot else { return false }
+        snapshot.session.prepareForLateInputBoundaryHandoff()
+        return finishSessionRetirement(
+            snapshot,
+            currentSession: currentSession()
+        ) {
+            snapshot.session.finishControllerHandoff()
+            retireController()
+        }
+    }
+
     /// Complete process-wide retirement only if a reentrant activation did not
     /// replace the session while the old host accepted its focus-loss commit.
     private func retireAfterAppFocusLoss(_ retiredSession: InputSession) {
@@ -307,17 +332,26 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
     /// process-wide ownership only after retiring the previous controller while its
     /// host still accepts the composition commit.
     @discardableResult
-    private func claimProcessActiveController(incomingClient: IMKTextInput?) -> Bool {
+    private func claimProcessActiveController(
+        incomingClient: IMKTextInput?,
+        boundary: ControllerHandoffBoundary
+    ) -> Bool {
         let acquired = Self.activeControllerRegistry.claim(self) { previous in
             previous.publishHanjaShortcutSessionState(.unknown)
-            previous.retireForControllerHandoff(incomingClient: incomingClient)
+            previous.retireForControllerHandoff(
+                incomingClient: incomingClient,
+                boundary: boundary
+            )
         }
         guard acquired else { return false }
         publishHanjaShortcutSessionState(.unknown)
         return true
     }
 
-    private func retireForControllerHandoff(incomingClient: IMKTextInput?) {
+    private func retireForControllerHandoff(
+        incomingClient: IMKTextInput?,
+        boundary: ControllerHandoffBoundary
+    ) {
         Self.prepareForActivationDuringSessionRetirement(sessionRetirementInProgress)
         let mayReuseField = incomingClient.map { session?.matches($0) == true } ?? true
         let finishControllerHandoff = { [self] in
@@ -337,12 +371,22 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
                 sessionRetirementInProgress = enclosingRetirement
             }
         }
-        _ = Self.retireSessionForControllerHandoff(
-            retirement,
-            currentSession: { self.session },
-            fieldIdentityMayHaveChanged: mayReuseField
-        ) {
-            finishControllerHandoff()
+        switch boundary {
+        case .activation:
+            _ = Self.retireSessionForControllerHandoff(
+                retirement,
+                currentSession: { self.session },
+                fieldIdentityMayHaveChanged: mayReuseField
+            ) {
+                finishControllerHandoff()
+            }
+        case .lateKeyDown:
+            _ = Self.retireSessionForLateInputBoundaryHandoff(
+                retirement,
+                currentSession: { self.session }
+            ) {
+                finishControllerHandoff()
+            }
         }
     }
 
@@ -679,7 +723,10 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
         // handoff. Once the claim completes, this controller republishes unknown.
         Self.sharedController?.publishHanjaShortcutSessionState(.unknown)
         super.activateServer(sender)
-        guard claimProcessActiveController(incomingClient: sender as? IMKTextInput) else {
+        guard claimProcessActiveController(
+            incomingClient: sender as? IMKTextInput,
+            boundary: .activation
+        ) else {
             DebugLogger.event("input.activation_aborted", metadata: [
                 .state("reason", "newer_owner")
             ])
@@ -875,7 +922,10 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
             candidate: self,
             currentOwner: Self.sharedController
         ) {
-            guard claimProcessActiveController(incomingClient: client) else {
+            guard claimProcessActiveController(
+                incomingClient: client,
+                boundary: .lateKeyDown
+            ) else {
                 DebugLogger.event("input.handle_ignored", metadata: [
                     .state("reason", "superseded_controller")
                 ])
@@ -1232,24 +1282,38 @@ public class PriTypeInputController: IMKInputController, @unchecked Sendable {
 
     /// Returns custom menu for the input method (shown in system input source menu)
     override public func menu() -> NSMenu! {
-        let menu = NSMenu()
+        Self.makeInputMethodMenu()
+    }
 
-        // Settings
-        let settingsItem = NSMenuItem(title: "PriType 설정...", action: #selector(openSettings(_:)), keyEquivalent: "")
-        settingsItem.target = self
+    /// TextInputMenuAgent does not invoke an item target captured from the input
+    /// method process. Keep targets nil so InputMethodKit can route selectors through
+    /// `doCommandBySelector`, and disable AppKit's local responder-chain validation.
+    static func makeInputMethodMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let settingsItem = NSMenuItem(
+            title: "PriType 설정...",
+            action: #selector(IMKInputController.showPreferences(_:)),
+            keyEquivalent: ""
+        )
+        settingsItem.target = nil
         menu.addItem(settingsItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        // About
-        let aboutItem = NSMenuItem(title: "PriType 정보", action: #selector(showAbout(_:)), keyEquivalent: "")
-        aboutItem.target = self
+        let aboutItem = NSMenuItem(
+            title: "PriType 정보",
+            action: #selector(showAbout(_:)),
+            keyEquivalent: ""
+        )
+        aboutItem.target = nil
         menu.addItem(aboutItem)
 
         return menu
     }
 
-    @objc private func openSettings(_ sender: Any?) {
+    override public func showPreferences(_ sender: Any!) {
         DebugLogger.event("ui.settings_opened")
         DispatchQueue.main.async {
             SettingsWindowController.shared.showSettings()

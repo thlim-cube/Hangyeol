@@ -444,11 +444,13 @@ struct ProcessWideInputOwnershipTests {
             .appendingPathComponent("Sources/PriTypeCore/PriTypeInputController.swift")
         let source = try String(contentsOf: controllerURL, encoding: .utf8)
         let policyUse = try #require(source.range(of: "InputBoundaryOwnershipPolicy.requiresClaim("))
+        let lateHandoff = try #require(source.range(of: "boundary: .lateKeyDown"))
         let sessionResolution = try #require(source.range(
             of: "guard let session = ensureSession(for: client) else { return false }"
         ))
 
         #expect(policyUse.lowerBound < sessionResolution.lowerBound)
+        #expect(lateHandoff.lowerBound < sessionResolution.lowerBound)
         #expect(!source.contains("guard Self.sharedController == nil,"))
     }
 
