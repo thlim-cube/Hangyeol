@@ -11,6 +11,17 @@ struct PostInstallPreparationTests {
         #expect(!PostInstallPreparation.shouldPrepare(arguments: ["Hangyeol", "--unrelated"]))
     }
 
+    @Test("Recognizes only the private signed-app launch probe argument")
+    func recognizesLaunchProbeArgument() {
+        #expect(PostInstallPreparation.shouldRunLaunchProbe(
+            arguments: ["Hangyeol", "--verify-launch"]
+        ))
+        #expect(!PostInstallPreparation.shouldRunLaunchProbe(arguments: ["Hangyeol"]))
+        #expect(!PostInstallPreparation.shouldRunLaunchProbe(
+            arguments: ["Hangyeol", "--post-install-prepare"]
+        ))
+    }
+
     @Test("Pending setup is consumed exactly once")
     func consumesPendingSetupOnce() throws {
         let suiteName = "PostInstallPreparationTests.\(UUID().uuidString)"
@@ -58,6 +69,13 @@ struct InstallerSessionContractTests {
         )
     }
 
+    private func repositoryFile(named name: String) throws -> String {
+        try String(
+            contentsOf: repoRoot.appendingPathComponent(name),
+            encoding: .utf8
+        )
+    }
+
     @Test("Preinstall migrates only the console user's current and retired product")
     func preinstallIsUserScoped() throws {
         let source = try script(named: "preinstall")
@@ -70,8 +88,13 @@ struct InstallerSessionContractTests {
         #expect(source.contains("pkill -x -u"))
         #expect(source.contains("AppleSelectedInputSources"))
         #expect(source.contains("HangyeolInstalledBeforeInstall"))
+        #expect(source.contains("defaults write com.thlim.inputmethod.Hangyeol"))
+        #expect(source.contains(Misordered3xIdentity.bundleID))
+        #expect(source.contains("com.meapri.hangyeol.inputmethod"))
         #expect(source.contains(Legacy2xIdentity.bundleID))
         #expect(source.contains("/Library/Input Methods/PriType.app"))
+        #expect(source.contains("/Library/Input Methods/Hangyeol.localized"))
+        #expect(source.contains("pkgutil --forget com.meapri.hangyeol"))
         #expect(source.contains("pkgutil --forget com.meapri.PriTypeV2"))
         #expect(source.contains("tccutil reset Accessibility"))
         #expect(source.contains("2.8.24|2.8.25"))
@@ -99,6 +122,38 @@ struct InstallerSessionContractTests {
         #expect(!source.contains("killall"))
         #expect(!source.contains("eval "))
         #expect(!source.contains("sleep "))
+    }
+
+    @Test("Signing paths do not attach the restricted InputMethodKit entitlement")
+    func signingOmitsRestrictedInputMethodEntitlement() throws {
+        let signingScripts = [
+            "build_local.sh",
+            "install.sh",
+            "build_debug.sh",
+            "build_release.sh",
+            "distribute.sh"
+        ]
+
+        for scriptName in signingScripts {
+            let source = try repositoryFile(named: scriptName)
+            #expect(
+                !source.contains("Hangyeol.entitlements"),
+                "\(scriptName) must not create a signature that macOS terminates before launch"
+            )
+        }
+    }
+
+    @Test("Packaging replaces the retired identifier at the canonical bundle path")
+    func packagingAllowsIdentifierMigrationWithoutRelocation() throws {
+        for scriptName in ["build_local.sh", "build_debug.sh", "build_release.sh"] {
+            let source = try repositoryFile(named: scriptName)
+            let analyzeRange = try #require(source.range(of: "pkgbuild --analyze"))
+            let strictIdentifierRange = try #require(
+                source.range(of: "BundleHasStrictIdentifier -bool NO")
+            )
+
+            #expect(analyzeRange.lowerBound < strictIdentifierRange.lowerBound)
+        }
     }
 
     @Test("Installed app presents settings independently of Accessibility permission")

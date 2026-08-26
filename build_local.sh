@@ -44,19 +44,20 @@ if [ -z "$SIGNING_IDENTITY" ]; then
 fi
 
 codesign --force --options runtime --timestamp=none \
-    --entitlements Hangyeol.entitlements \
     --sign "$SIGNING_IDENTITY" "$APP_BUNDLE"
 find "$APP_BUNDLE" -name '._*' -delete
 xattr -cr "$APP_BUNDLE" 2>/dev/null || true
 codesign --verify --strict --verbose=2 "$APP_BUNDLE"
+"$MACOS_DIR/$APP_NAME" --verify-launch
 
 pkgbuild --analyze --root "$PAYLOAD_DIR" "$COMPONENT_PLIST"
 plutil -replace 0.BundleIsRelocatable -bool NO "$COMPONENT_PLIST"
+plutil -replace 0.BundleHasStrictIdentifier -bool NO "$COMPONENT_PLIST"
 pkgbuild --root "$PAYLOAD_DIR" \
     --component-plist "$COMPONENT_PLIST" \
     --install-location "/Library/Input Methods" \
     --scripts Packaging/scripts \
-    --identifier "com.meapri.hangyeol" \
+    --identifier "com.thlim.hangyeol" \
     --version "$APP_VERSION" \
     "$RAW_PKG"
 
@@ -84,7 +85,7 @@ fi
 codesign --verify --strict --verbose=2 "$EXPANDED_APP"
 SIGNATURE_DETAILS=$(codesign -dv --verbose=4 "$EXPANDED_APP" 2>&1)
 case "$SIGNATURE_DETAILS" in
-    *"Identifier=com.meapri.hangyeol.inputmethod"*)
+    *"Identifier=com.thlim.inputmethod.Hangyeol"*)
         ;;
     *)
         echo "Packaged app has an unexpected signing identifier." >&2

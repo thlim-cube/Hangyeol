@@ -74,7 +74,6 @@ fi
 
 echo "Using App Identity: $APP_SIGN_IDENTITY"
 codesign --force --options runtime --timestamp \
-    --entitlements Hangyeol.entitlements \
     --sign "$APP_SIGN_IDENTITY" "$PAYLOAD_DIR/$APP_BUNDLE"
 find "$PAYLOAD_DIR/$APP_BUNDLE" -name '._*' -delete
 xattr -cr "$PAYLOAD_DIR/$APP_BUNDLE" 2>/dev/null || true
@@ -89,8 +88,9 @@ echo "[4/6] Building the PKG installer..."
 # Disable relocation by generating a component plist
 echo "Generating component plist to disable relocation..."
 pkgbuild --analyze --root "$PAYLOAD_DIR" "$COMPONENT_PLIST"
-# Use plutil to change BundleIsRelocatable to false for the first item
+# Keep the canonical input-method path while replacing retired identifiers.
 plutil -replace 0.BundleIsRelocatable -bool NO "$COMPONENT_PLIST"
+plutil -replace 0.BundleHasStrictIdentifier -bool NO "$COMPONENT_PLIST"
 
 PKG_SIGN_IDENTITY=""
 # Try to find Developer ID Installer first
@@ -109,7 +109,7 @@ pkgbuild --root "$PAYLOAD_DIR" \
          --component-plist "$COMPONENT_PLIST" \
          --install-location "$INSTALL_DIR" \
          --scripts "Packaging/scripts" \
-         --identifier "com.meapri.hangyeol" \
+         --identifier "com.thlim.hangyeol" \
          --version "$PKG_VERSION" \
          "$RAW_PKG"
 

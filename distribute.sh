@@ -40,7 +40,6 @@ mv build_dist "$APP_BUNDLE"
 echo "==== 2. Code Signing ===="
 echo "Signing with $SIGNING_IDENTITY..."
 codesign --force --options runtime --timestamp \
-    --entitlements Hangyeol.entitlements \
     --sign "$SIGNING_IDENTITY" "$APP_BUNDLE"
 
 echo "==== 3. Verifying Signature ===="

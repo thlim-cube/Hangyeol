@@ -3,6 +3,11 @@ import InputMethodKit
 import Cocoa
 import HangyeolCore
 
+if PostInstallPreparation.shouldRunLaunchProbe(arguments: CommandLine.arguments) {
+    exit(EXIT_SUCCESS)
+}
+
+_ = Legacy3xSettingsMigration.migrateInstalledPreferences()
 _ = Legacy2xSettingsMigration.migrateInstalledPreferences()
 
 let kConnectionName = ProductIdentity.connectionName

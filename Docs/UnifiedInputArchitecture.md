@@ -60,7 +60,7 @@ CGEventTap / IOKit  ──(키 감지만)──►  InputModeCoordinator   (정�
 
 ### 2.1 단일 소스 등록 (영어 가짜 모드 미등록)
 
-`Info.plist`는 `ComponentInputModeDict` 아래 **단일 모드** `com.meapri.hangyeol.inputmethod`만 등록한다
+`Info.plist`는 `ComponentInputModeDict` 아래 **단일 모드** `com.thlim.inputmethod.Hangyeol`만 등록한다
 (`tsInputModeScriptKey = smKorean`). 별도의 `...english` 가짜 모드는 등록하지 않는다.
 
 과거 RollbackPlan은 Korean/English 두 가짜 모드 등록을 제안했지만 채택하지 않는다. 이유:

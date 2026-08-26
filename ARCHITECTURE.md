@@ -131,7 +131,7 @@ flowchart TD
 | macOS 실제 입력 소스 | macOS TIS | custom 전환키에서는 건드리지 않는다. Caps Lock 경로에서만 시스템이 소유한다. |
 | 영어 레이아웃 | IMK session | `overrideKeyboardWithKeyboardNamed`로 ABC/US 계열 layout을 요청한다. |
 
-Hangyeol의 `ComponentInputModeDict`는 단일 mode `com.meapri.hangyeol.inputmethod`만 등록한다. 내부 한/영 상태는 process-global `InputModeStore`가 소유하고 각 session의 `HangulComposer`가 이를 읽는다. custom 전환키는 실제 Apple `ABC` source나 별도 English input mode를 선택하지 않는다.
+Hangyeol의 `ComponentInputModeDict`는 단일 mode `com.thlim.inputmethod.Hangyeol`만 등록한다. 내부 한/영 상태는 process-global `InputModeStore`가 소유하고 각 session의 `HangulComposer`가 이를 읽는다. custom 전환키는 실제 Apple `ABC` source나 별도 English input mode를 선택하지 않는다.
 
 ## 한자 후보창 좌표 결정
 
@@ -274,7 +274,7 @@ HostSurfaceResolver        capability 우선 surface 분류
 
 ## 설치 후 적용 흐름
 
-PKG 스크립트는 시스템 전체 프로세스를 이름으로 종료하지 않는다. `preinstall`은 `/dev/console`의 실제 로그인 사용자와 UID를 확인한 뒤 그 사용자가 소유한 한결·2.x 프로세스와 사용자 영역의 중복 번들, 시스템 영역의 2.x 번들만 정리한다. 현재 `/Library/Input Methods/Hangyeol.app`은 지우지 않고 PackageKit의 atomic update 대상으로 남긴다. `postinstall`은 다음 순서로 적용한다.
+PKG 스크립트는 시스템 전체 프로세스를 이름으로 종료하지 않는다. `preinstall`은 `/dev/console`의 실제 로그인 사용자와 UID를 확인한 뒤 그 사용자가 소유한 한결·2.x 프로세스와 사용자 영역의 중복 번들, 시스템 영역의 2.x 번들만 정리한다. 현재 `/Library/Input Methods/Hangyeol.app`은 지우지 않고 PackageKit의 atomic update 대상으로 남긴다. 컴포넌트 패키지는 `BundleHasStrictIdentifier=false`로 생성해 이전 `com.meapri` 및 잘못 배치된 `com.thlim.hangyeol.inputmethod` 번들도 같은 표준 경로에서 `com.thlim.inputmethod.Hangyeol`로 교체하며, 식별자 불일치로 만들어졌던 `Hangyeol.localized` 잔여 경로는 preinstall에서 정리한다. 설치된 앱은 Dock 아이콘 없이 설정 창을 열 수 있도록 `LSUIElement=true`로 실행된다. `postinstall`은 다음 순서로 적용한다.
 
 ```text
 postinstall (root)
@@ -416,7 +416,6 @@ Hangyeol/
 │       ├── preinstall              # 설치 전 기존 번들 정리
 │       └── postinstall             # 설치 후 스크립트
 ├── Info.plist                      # IMK 설정
-├── Hangyeol.entitlements            # com.apple.inputmethod.kit
 ├── build_release.sh                # 임시 payload에서 릴리즈 빌드+서명+패키징
 └── Package.swift                   # SPM 매니페스트
 ```

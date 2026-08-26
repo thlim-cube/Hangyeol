@@ -10,7 +10,7 @@ Hangyeol이 보내는 **모든** 속성 페이로드 — `underlineStyle 0 + .cl
 `single + alpha 1/255`, `NSMarkedClauseSegment` 1~9(전체 TSM hilite 카테고리),
 속성 없는 문자열 — 13종 전부가 앱에는 동일한 `NSUnderline=2 + 액센트 블루`로
 재생성되어 도착했다. 즉 macOS 26에서는 어떤 IME도 marked text 밑줄을 숨길 수 없고,
-밑줄 없는 입력은 직접 삽입 모드(`com.meapri.hangyeol.experimentalDirectInsertion`)가 유일하다.
+밑줄 없는 입력은 직접 삽입 모드(`com.thlim.hangyeol.experimentalDirectInsertion`)가 유일하다.
 
 ## 사용법
 

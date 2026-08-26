@@ -40,6 +40,8 @@ if [ -n "$CURRENT_USER" ]; then
         if run_as_console_user /usr/bin/defaults read \
             com.apple.HIToolbox AppleSelectedInputSources 2>/dev/null \
             | /usr/bin/grep -q \
+                -e "com.thlim.inputmethod.Hangyeol" \
+                -e "com.thlim.hangyeol.inputmethod" \
                 -e "com.meapri.hangyeol.inputmethod" \
                 -e "com.pritype.inputmethod.v2"; then
             HANGYEOL_WAS_SELECTED=true
@@ -56,17 +58,22 @@ if [ -n "$CURRENT_USER" ]; then
                 ;;
         esac
 
-        run_as_console_user /usr/bin/defaults write com.meapri.hangyeol.inputmethod \
+        run_as_console_user /usr/bin/defaults write com.thlim.inputmethod.Hangyeol \
             HangyeolSelectedBeforeInstall -bool "$HANGYEOL_WAS_SELECTED" || true
-        run_as_console_user /usr/bin/defaults write com.meapri.hangyeol.inputmethod \
+        run_as_console_user /usr/bin/defaults write com.thlim.inputmethod.Hangyeol \
             HangyeolInstalledBeforeInstall -bool "$HANGYEOL_WAS_INSTALLED" || true
 
         /usr/bin/pkill -x -u "$USER_ID" Hangyeol 2>/dev/null || true
         /usr/bin/pkill -x -u "$USER_ID" PriType 2>/dev/null || true
         /usr/bin/pkill -x -u "$USER_ID" PriTypeV2 2>/dev/null || true
 
-        # The 3.0 bundle has a new identity, so the old Accessibility grant is
-        # neither reusable nor useful. Remove only that retired product grant.
+        # Retired bundle identities cannot reuse their Accessibility grants.
+        # Remove only those old product grants; the current identity remains a
+        # user-controlled TCC decision.
+        run_as_console_user /usr/bin/tccutil reset Accessibility \
+            com.thlim.hangyeol.inputmethod >/dev/null 2>&1 || true
+        run_as_console_user /usr/bin/tccutil reset Accessibility \
+            com.meapri.hangyeol.inputmethod >/dev/null 2>&1 || true
         run_as_console_user /usr/bin/tccutil reset Accessibility \
             com.pritype.inputmethod.v2 >/dev/null 2>&1 || true
     fi
@@ -86,6 +93,8 @@ fi
 # receipts are removed explicitly so they cannot appear as duplicate products.
 /bin/rm -rf "/Library/Input Methods/PriType.app"
 /bin/rm -rf "/Library/Input Methods/PriTypeV2.app"
+/bin/rm -rf "/Library/Input Methods/Hangyeol.localized"
+/usr/sbin/pkgutil --forget com.meapri.hangyeol >/dev/null 2>&1 || true
 /usr/sbin/pkgutil --forget com.meapri.PriTypeV2 >/dev/null 2>&1 || true
 /usr/sbin/pkgutil --forget com.pritype.inputmethod.v2.pkg >/dev/null 2>&1 || true
 

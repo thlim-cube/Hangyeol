@@ -1,4 +1,4 @@
 /* Localized versions of Info.plist keys */
 "CFBundleName" = "한결";
 "CFBundleDisplayName" = "한결";
-"com.meapri.hangyeol.inputmethod" = "한결";
+"com.thlim.inputmethod.Hangyeol" = "한결";

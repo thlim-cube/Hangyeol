@@ -62,7 +62,6 @@ xattr -cr "$PAYLOAD_DIR/$APP_BUNDLE" 2>/dev/null || true
 
 echo "[3/6] Code Signing the .app bundle..."
 codesign --force --options runtime --timestamp \
-  --entitlements Hangyeol.entitlements \
   --sign "$APP_SIGN" "$PAYLOAD_DIR/$APP_BUNDLE"
 find "$PAYLOAD_DIR/$APP_BUNDLE" -name '._*' -delete
 xattr -cr "$PAYLOAD_DIR/$APP_BUNDLE" 2>/dev/null || true
@@ -76,12 +75,13 @@ PKG_VERSION="${APP_VERSION}-debug"
 echo "[4/6] Building the PKG installer..."
 pkgbuild --analyze --root "$PAYLOAD_DIR" "$COMPONENT_PLIST"
 plutil -replace 0.BundleIsRelocatable -bool NO "$COMPONENT_PLIST"
+plutil -replace 0.BundleHasStrictIdentifier -bool NO "$COMPONENT_PLIST"
 
 pkgbuild --root "$PAYLOAD_DIR" \
          --component-plist "$COMPONENT_PLIST" \
          --install-location "$INSTALL_DIR" \
          --scripts "Packaging/scripts" \
-         --identifier "com.meapri.hangyeol" \
+         --identifier "com.thlim.hangyeol" \
          --version "$PKG_VERSION" \
          "$RAW_PKG"
 

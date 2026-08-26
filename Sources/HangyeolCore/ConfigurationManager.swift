@@ -307,7 +307,7 @@ public extension ConfigurationProviding {
 ///
 /// `ConfigurationManager` provides a centralized interface for accessing and
 /// modifying user preferences. All settings are automatically persisted using
-/// `UserDefaults` with the `com.meapri.hangyeol` prefix.
+/// `UserDefaults` with the `com.thlim.hangyeol` prefix.
 ///
 /// ## Usage
 /// ```swift
@@ -795,7 +795,7 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     /// When ON, the in-progress syllable is delivered as REAL text on probe-verified,
     /// non-denylisted hosts instead of marked text. This is a research
     /// vehicle. Enable via Settings or:
-    ///   defaults write com.meapri.hangyeol.inputmethod com.meapri.hangyeol.experimentalDirectInsertion -bool YES
+    ///   defaults write com.thlim.inputmethod.Hangyeol com.thlim.hangyeol.experimentalDirectInsertion -bool YES
     public var experimentalDirectInsertion: Bool {
         get {
             systemTextFeatureLock.withLock { cachedExperimentalDirectInsertion }

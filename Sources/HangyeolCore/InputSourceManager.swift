@@ -516,7 +516,9 @@ public final class InputSourceManager: @unchecked Sendable {
         removeAppleKoreanInputModes: Bool,
         allowsHangyeolParentEntry: Bool
     ) -> Bool {
-        if (source["Bundle ID"] as? String) == Legacy2xIdentity.bundleID {
+        if (source["Bundle ID"] as? String) == Misordered3xIdentity.bundleID
+            || (source["Bundle ID"] as? String) == Legacy3xIdentity.bundleID
+            || (source["Bundle ID"] as? String) == Legacy2xIdentity.bundleID {
             return true
         }
 

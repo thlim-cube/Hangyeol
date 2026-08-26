@@ -2,6 +2,7 @@ import Foundation
 
 public enum PostInstallPreparation {
     public static let argument = "--post-install-prepare"
+    public static let launchProbeArgument = "--verify-launch"
     public static let failureExitCode: Int32 = 10
 
     private static let pendingSetupKey = "HangyeolPendingPostInstallSetup"
@@ -10,6 +11,10 @@ public enum PostInstallPreparation {
 
     public static func shouldPrepare(arguments: [String]) -> Bool {
         arguments.dropFirst().contains(argument)
+    }
+
+    public static func shouldRunLaunchProbe(arguments: [String]) -> Bool {
+        arguments.dropFirst().contains(launchProbeArgument)
     }
 
     public static func markPending(in defaults: UserDefaults = .standard) {

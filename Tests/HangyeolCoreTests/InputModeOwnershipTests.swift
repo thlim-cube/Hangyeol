@@ -18,7 +18,7 @@ struct InputModeOwnershipTests {
     @Test("Exact Hangyeol source ID is classified as Hangyeol")
     func exactHangyeolSourceIDClassification() {
         #expect(SelectedInputSourceClassifier.classify(
-            inputSourceID: "com.meapri.hangyeol.inputmethod",
+            inputSourceID: "com.thlim.inputmethod.Hangyeol",
             bundleID: nil
         ) == .hangyeol)
     }
@@ -26,15 +26,15 @@ struct InputModeOwnershipTests {
     @Test("Alternate mode ID from the Hangyeol bundle is classified as Hangyeol")
     func alternateHangyeolModeIDClassification() {
         #expect(SelectedInputSourceClassifier.classify(
-            inputSourceID: "com.meapri.hangyeol.inputmethod.alternate",
-            bundleID: "com.meapri.hangyeol.inputmethod"
+            inputSourceID: "com.thlim.inputmethod.Hangyeol.alternate",
+            bundleID: "com.thlim.inputmethod.Hangyeol"
         ) == .hangyeol)
     }
 
     @Test("Alternate mode ID from another bundle remains other")
     func alternateModeIDFromAnotherBundleClassification() {
         #expect(SelectedInputSourceClassifier.classify(
-            inputSourceID: "com.meapri.hangyeol.inputmethod.alternate",
+            inputSourceID: "com.thlim.inputmethod.Hangyeol.alternate",
             bundleID: "com.example.inputmethod"
         ) == .other)
     }

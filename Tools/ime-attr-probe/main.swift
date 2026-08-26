@@ -7,7 +7,7 @@ import AppKit
 // repeatedly. Results: window + /tmp/ime_attr_probe/probe2.log
 
 let logPath = "/tmp/ime_attr_probe/probe2.log"
-let imeDomain = "com.meapri.hangyeol.inputmethod" as CFString
+let imeDomain = "com.thlim.inputmethod.Hangyeol" as CFString
 let expKey = "PreeditStyleExperiment" as CFString
 var logLines: [String] = []
 let t0 = Date()

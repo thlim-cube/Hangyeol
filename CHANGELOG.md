@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-08-27
+
+### Changed
+- 앱·입력 소스 ID를 macOS가 신규 입력기로 분류하는 `com.thlim.inputmethod.Hangyeol`로 변경하고, 설정 prefix와 설치 패키지 ID는 `com.thlim.hangyeol`로 통일했습니다.
+- 기존 `com.meapri` 3.0.x와 잘못 배치된 `com.thlim.hangyeol.inputmethod`의 설정·입력 소스 등록은 설치 시 새 식별자로 한 번 이전·정리합니다.
+
+### Fixed
+- 3.0 로컬 패키지의 Apple Development 서명에 허용되지 않은 InputMethodKit entitlement가 포함되어, macOS가 앱을 실행 전에 종료하고 입력 소스를 등록하지 못하던 문제를 해결했습니다.
+- 모든 서명 경로에서 해당 entitlement를 제거하고, 로컬 패키징 중 실제 서명된 실행 파일이 시작되는지 확인하는 무상태 launch probe를 추가했습니다.
+- 제품명이 `inputmethod` 앞에 온 3.0 식별자를 TIS가 신규 입력기로 분류하지 않아 입력 소스 목록에 나타나지 않던 문제를 수정했습니다.
+- 리뉴얼 전 한결과 온글·구름에서 검증된 `LSUIElement` 실행 계약을 복원해 Dock 아이콘 없이 설정 창을 유지합니다.
+- 식별자 변경 설치에서 PackageKit이 새 앱을 `Hangyeol.localized` 아래로 재배치하던 문제를 없애고, 기존 번들을 표준 `/Library/Input Methods/Hangyeol.app` 경로에서 원자적으로 교체하도록 수정했습니다.
+
 ## [3.0.1] - 2026-08-26
 
 ### Fixed

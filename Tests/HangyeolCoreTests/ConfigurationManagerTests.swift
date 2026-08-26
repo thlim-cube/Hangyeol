@@ -23,14 +23,14 @@ struct ConfigurationManagerTests {
         ConfigurationManager.shared.keyboardId = "3"
         #expect(ConfigurationManager.shared.keyboardId == "3")
         
-        let stored = UserDefaults.standard.string(forKey: "com.meapri.hangyeol.keyboardId")
+        let stored = UserDefaults.standard.string(forKey: "com.thlim.hangyeol.keyboardId")
         #expect(stored == "3")
     }
 
     @Test("Roman keyboard layout preference defaults to forced ABC/US and persists")
     func romanKeyboardLayoutPreferencePersistence() {
         let defaults = UserDefaults.standard
-        let key = "com.meapri.hangyeol.respectCurrentRomanKeyboardLayout"
+        let key = "com.thlim.hangyeol.respectCurrentRomanKeyboardLayout"
         let original = defaults.object(forKey: key)
         defer {
             if let original {
@@ -90,15 +90,15 @@ struct ConfigurationManagerTests {
 
         config.englishTextConvenienceFallbackEnabled = true
         #expect(config.englishTextConvenienceFallbackEnabled)
-        #expect(UserDefaults.standard.bool(forKey: "com.meapri.hangyeol.englishTextConvenienceFallbackEnabled"))
+        #expect(UserDefaults.standard.bool(forKey: "com.thlim.hangyeol.englishTextConvenienceFallbackEnabled"))
     }
 
     @Test("Caps Lock double consonants default on and persist when disabled")
     func capsLockDoubleConsonantPreferencePersistence() throws {
-        let suiteName = "com.meapri.hangyeol.tests.caps-lock-double-consonants.\(UUID().uuidString)"
+        let suiteName = "com.thlim.hangyeol.tests.caps-lock-double-consonants.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let key = "com.meapri.hangyeol.capsLockProducesDoubleConsonants"
+        let key = "com.thlim.hangyeol.capsLockProducesDoubleConsonants"
         let config = ConfigurationManager(
             defaults: defaults,
             keyBindingDataReader: { _ in nil }
@@ -268,15 +268,15 @@ struct ConfigurationManagerTests {
 
     @Test("Binding prewarm resolves both persisted values and keeps hot-path reads in memory")
     func keyBindingPrewarmKeepsHotPathInMemory() throws {
-        let suiteName = "com.meapri.hangyeol.tests.key-binding-prewarm.\(UUID().uuidString)"
+        let suiteName = "com.thlim.hangyeol.tests.key-binding-prewarm.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        defaults.set(ToggleKey.controlSpace.rawValue, forKey: "com.meapri.hangyeol.toggleKey")
+        defaults.set(ToggleKey.controlSpace.rawValue, forKey: "com.thlim.hangyeol.toggleKey")
         let storedHanja = KeyBinding(keyCode: 105, modifiers: 0, displayName: "F13")
         defaults.set(
             try JSONEncoder().encode(storedHanja),
-            forKey: "com.meapri.hangyeol.hanjaKeyBinding"
+            forKey: "com.thlim.hangyeol.hanjaKeyBinding"
         )
 
         let probe = BindingDataReadProbe(defaults: defaults)
@@ -293,10 +293,10 @@ struct ConfigurationManagerTests {
 
         // Change persistent values behind the cache. A callback-style read must
         // retain the prewarmed snapshot without touching UserDefaults again.
-        defaults.set(ToggleKey.rightCommand.rawValue, forKey: "com.meapri.hangyeol.toggleKey")
+        defaults.set(ToggleKey.rightCommand.rawValue, forKey: "com.thlim.hangyeol.toggleKey")
         defaults.set(
             try JSONEncoder().encode(KeyBinding.defaultHanja),
-            forKey: "com.meapri.hangyeol.hanjaKeyBinding"
+            forKey: "com.thlim.hangyeol.hanjaKeyBinding"
         )
         for _ in 0..<1_000 {
             #expect(config.toggleKeyBinding == ToggleKey.controlSpace.asKeyBinding)
@@ -314,14 +314,14 @@ struct ConfigurationManagerTests {
         #expect(probe.readCount == 2)
         #expect(try JSONDecoder().decode(
             KeyBinding.self,
-            from: #require(defaults.data(forKey: "com.meapri.hangyeol.toggleKeyBinding"))
+            from: #require(defaults.data(forKey: "com.thlim.hangyeol.toggleKeyBinding"))
         ) == updatedToggle)
     }
 
     @Test("System text features refresh as one snapshot and keep getters memory-only")
     @MainActor
     func systemTextFeatureSnapshotRefresh() throws {
-        let suiteName = "com.meapri.hangyeol.tests.system-text-features.\(UUID().uuidString)"
+        let suiteName = "com.thlim.hangyeol.tests.system-text-features.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -506,7 +506,7 @@ private final class InputPolicyReadCountingDefaults: UserDefaults, @unchecked Se
     }
 
     override func string(forKey defaultName: String) -> String? {
-        if defaultName == "com.meapri.hangyeol.keyboardId" {
+        if defaultName == "com.thlim.hangyeol.keyboardId" {
             return countLock.withLock {
                 storedKeyboardIdReadCount += 1
                 return storedSimulatedKeyboardId
@@ -516,13 +516,13 @@ private final class InputPolicyReadCountingDefaults: UserDefaults, @unchecked Se
     }
 
     override func bool(forKey defaultName: String) -> Bool {
-        if defaultName == "com.meapri.hangyeol.experimentalDirectInsertion" {
+        if defaultName == "com.thlim.hangyeol.experimentalDirectInsertion" {
             return countLock.withLock {
                 storedReadCount += 1
                 return storedSimulatedExperimentalDirectInsertion
             }
         }
-        if defaultName == "com.meapri.hangyeol.respectCurrentRomanKeyboardLayout" {
+        if defaultName == "com.thlim.hangyeol.respectCurrentRomanKeyboardLayout" {
             return countLock.withLock {
                 storedRespectCurrentRomanLayoutReadCount += 1
                 return storedSimulatedRespectCurrentRomanLayout

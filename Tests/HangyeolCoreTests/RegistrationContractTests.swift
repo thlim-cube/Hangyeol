@@ -46,13 +46,13 @@ struct RegistrationContractTests {
         let list = modes(info)
         #expect(list.count == 1, "expected exactly 1 input mode, got \(list.count)")
 
-        let korean = list["com.meapri.hangyeol.inputmethod"] as? [String: Any]
+        let korean = list["com.thlim.inputmethod.Hangyeol"] as? [String: Any]
         #expect(korean?["tsInputModeScriptKey"] as? String == "smKorean")
-        #expect(list["com.meapri.hangyeol.inputmethod.english"] == nil)
+        #expect(list["com.thlim.inputmethod.Hangyeol.english"] == nil)
 
         let comp = info["ComponentInputModeDict"] as? [String: Any]
         let visible = comp?["tsVisibleInputModeOrderedArrayKey"] as? [String]
-        #expect(visible == ["com.meapri.hangyeol.inputmethod"])
+        #expect(visible == ["com.thlim.inputmethod.Hangyeol"])
     }
 
     @Test("Advertises system Caps Lock switching without an English child mode")
@@ -81,10 +81,17 @@ struct RegistrationContractTests {
         #expect(info["InputMethodConnectionName"] as? String == ProductIdentity.connectionName)
         #expect(info["InputMethodServerControllerClass"] as? String == "HangyeolInputController")
         #expect(info["CFBundleName"] as? String == ProductIdentity.systemName)
-        #expect(info["CFBundleShortVersionString"] as? String == "3.0.1")
-        #expect(info["CFBundleVersion"] as? String == "84")
+        #expect(info["CFBundleShortVersionString"] as? String == "3.0.2")
+        #expect(info["CFBundleVersion"] as? String == "85")
         let repertoire = info["tsInputMethodCharacterRepertoireKey"] as? [String]
         #expect(repertoire == ["Hang"], "single-mode registration must declare Hang only")
+    }
+
+    @Test("Runs as a UIElement input method without a Dock icon")
+    func inputMethodRunsAsUIElement() throws {
+        let info = try loadInfoPlist()
+        #expect(info["LSUIElement"] as? Bool == true)
+        #expect(info["LSBackgroundOnly"] == nil)
     }
 
     @Test("Input source icons are mode-specific template images")
@@ -94,7 +101,7 @@ struct RegistrationContractTests {
         #expect(info["tsInputMethodIconFileKey"] as? String == "icon.tiff")
 
         let list = modes(info)
-        let korean = list["com.meapri.hangyeol.inputmethod"] as? [String: Any]
+        let korean = list["com.thlim.inputmethod.Hangyeol"] as? [String: Any]
 
         #expect(korean?["TISIconIsTemplate"] as? Bool == true)
         #expect(korean?["tsInputModeMenuIconFileKey"] as? String == "input-ko.tiff")

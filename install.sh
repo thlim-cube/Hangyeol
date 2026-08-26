@@ -60,7 +60,6 @@ fi
 if [ -n "$SIGNING_IDENTITY" ]; then
     echo "Signing with identity: $SIGNING_IDENTITY"
     codesign --force --options runtime --timestamp=none \
-        --entitlements Hangyeol.entitlements \
         --sign "$SIGNING_IDENTITY" "$APP_BUNDLE"
     echo "Signing complete."
 else
