@@ -1,14 +1,13 @@
 .build/
 .DS_Store
 *.xcodeproj/
-PriType.iconset/
+Hangyeol.iconset/
 Assets.xcassets/
 test_icon*.pdf
 icon_*.png
 candidate_icon.png
 *.zip
-PriTypeV2.app/
-PriType.app/
+Hangyeol.app/
 
 # Build artifacts
 *.pkg
@@ -21,14 +20,13 @@ Packaging/Payload/
 
 # Temporary files
 /test*.swift
-PriTypeV2_components.plist
-PriType_components.plist
+Hangyeol_components.plist
 
 # Log & crash files (may contain local paths)
 *.log
 crash_logs.txt
 oslog.txt
-pritype_logs.txt
+hangyeol_logs.txt
 *.crash
 *.ips
 

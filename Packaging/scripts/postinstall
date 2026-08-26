@@ -1,8 +1,8 @@
 #!/bin/bash
-# postinstall for PriType.pkg
+# postinstall for Hangyeol.pkg
 
-APP_PATH="/Library/Input Methods/PriType.app"
-APP_EXECUTABLE="$APP_PATH/Contents/MacOS/PriType"
+APP_PATH="/Library/Input Methods/Hangyeol.app"
+APP_EXECUTABLE="$APP_PATH/Contents/MacOS/Hangyeol"
 
 CURRENT_USER=$(/usr/bin/stat -f "%Su" /dev/console 2>/dev/null || true)
 case "$CURRENT_USER" in
@@ -20,14 +20,15 @@ run_as_console_user() {
     /bin/launchctl asuser "$USER_ID" /usr/bin/sudo -H -u "$CURRENT_USER" "$@"
 }
 
-# Stop only PriType processes owned by the logged-in user. The executable may
+# Stop only Hangyeol processes owned by the logged-in user. The executable may
 # have been relaunched automatically while Installer replaced the bundle.
+/usr/bin/pkill -x -u "$USER_ID" Hangyeol 2>/dev/null || true
 /usr/bin/pkill -x -u "$USER_ID" PriType 2>/dev/null || true
 /usr/bin/pkill -x -u "$USER_ID" PriTypeV2 2>/dev/null || true
 
-# Register and enable PriType synchronously in the logged-in user's TIS domain.
-# The installer-only command selects PriType only when that user had no current
-# PriType registration; updates preserve the user's selected input source.
+# Register and enable Hangyeol synchronously in the logged-in user's TIS domain.
+# The installer-only command selects Hangyeol only when that user had no current
+# Hangyeol registration; updates preserve the user's selected input source.
 run_as_console_user "$APP_EXECUTABLE" --post-install-prepare
 PREPARE_STATUS=$?
 

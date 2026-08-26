@@ -34,7 +34,7 @@ jobs:
         fi
 
         INFO_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Info.plist)
-        INFO_CHANNEL=$(/usr/libexec/PlistBuddy -c "Print :PriTypeReleaseChannel" Info.plist)
+        INFO_CHANNEL=$(/usr/libexec/PlistBuddy -c "Print :HangyeolReleaseChannel" Info.plist)
 
         if [ "$INFO_VERSION" != "$EXPECTED_INFO_VERSION" ]; then
           echo "Tag version $TAG_VERSION expects Info.plist version $EXPECTED_INFO_VERSION, found $INFO_VERSION" >&2
@@ -93,9 +93,9 @@ jobs:
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
-        name: "PriType ${{ steps.version.outputs.VERSION }}"
+        name: "Hangyeol ${{ steps.version.outputs.VERSION }}"
         generate_release_notes: true
-        files: PriType_Release.pkg
+        files: Hangyeol_Release.pkg
     
     - name: Cleanup
       if: always()

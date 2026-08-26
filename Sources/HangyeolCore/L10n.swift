@@ -1,0 +1,164 @@
+import Foundation
+
+/// Localization strings accessor for Hangyeol
+///
+/// Provides type-safe access to localized strings from Localizable.strings.
+///
+/// ## Usage
+/// ```swift
+/// Text(L10n.keyboard.title)
+/// Text(L10n.toggle.rightCommand)
+/// ```
+public enum L10n {
+    
+    /// Returns the bundle containing localized resources
+    /// Uses robust fallback logic for both development and distribution environments
+    private static let bundle: Bundle = {
+        // 1. Try to find the SPM resource bundle in app's Resources directory (distribution)
+        if let resourceURL = Bundle.main.resourceURL,
+           let resourceBundle = Bundle(url: resourceURL.appendingPathComponent("Hangyeol_HangyeolCore.bundle")) {
+            return resourceBundle
+        }
+        
+        // 2. Try Bundle.module for SPM development environment
+        #if SWIFT_PACKAGE
+        return Bundle.module
+        #else
+        // 3. Fallback to main bundle (localization files directly in Resources)
+        return Bundle.main
+        #endif
+    }()
+    
+    /// Helper to get localized string
+    private static func localized(_ key: String) -> String {
+        NSLocalizedString(key, bundle: bundle, comment: "")
+    }
+    
+    // MARK: - Settings
+    
+    public enum settings {
+        public static var title: String { localized("settings.title") }
+        public static var footer: String { localized("settings.footer") }
+    }
+
+    // MARK: - Legacy Status API Compatibility
+
+    public enum status {
+        public static var inputHealth: String { localized("status.inputHealth") }
+        public static var ready: String { localized("status.ready") }
+        public static var starting: String { localized("status.starting") }
+        public static var fallbackActive: String { localized("status.fallbackActive") }
+        public static var needsAttention: String { localized("status.needsAttention") }
+        public static var secureInputActive: String { localized("status.secureInputActive") }
+        public static var currentMode: String { localized("status.currentMode") }
+        public static var korean: String { localized("status.korean") }
+        public static var english: String { localized("status.english") }
+        public static var monitor: String { localized("status.monitor") }
+        public static var monitorLimitations: String { localized("status.monitorLimitations") }
+        public static var monitorStarting: String { localized("status.monitorStarting") }
+        public static var monitorWaitingForPermission: String { localized("status.monitorWaitingForPermission") }
+        public static var monitorUnavailable: String { localized("status.monitorUnavailable") }
+        public static var permissionRequired: String { localized("status.permissionRequired") }
+        public static var systemSecureInput: String { localized("status.systemSecureInput") }
+        public static var active: String { localized("status.active") }
+        public static var inactive: String { localized("status.inactive") }
+        public static var unsupportedIOKitToggleBinding: String { localized("status.unsupportedIOKitToggleBinding") }
+        public static var unsupportedIOKitHanjaBinding: String { localized("status.unsupportedIOKitHanjaBinding") }
+        public static var iokitOpenFailed: String { localized("status.iokitOpenFailed") }
+    }
+    
+    // MARK: - Keyboard Layout
+    
+    public enum keyboard {
+        public static var title: String { localized("keyboard.title") }
+        public static var twoSet: String { localized("keyboard.2set") }
+        public static var threeSet390: String { localized("keyboard.3set390") }
+        public static var twoSetOld: String { localized("keyboard.2setOld") }
+        public static var threeSetOld: String { localized("keyboard.3setOld") }
+        public static var respectRomanLayout: String { localized("keyboard.respectRomanLayout") }
+        public static var respectRomanLayoutSubtitle: String { localized("keyboard.respectRomanLayoutSubtitle") }
+        public static var englishConveniences: String { localized("keyboard.englishConveniences") }
+        public static var englishConveniencesSubtitle: String { localized("keyboard.englishConveniencesSubtitle") }
+        public static var capsLockDoubleConsonants: String { localized("keyboard.capsLockDoubleConsonants") }
+        public static var capsLockDoubleConsonantsSubtitle: String { localized("keyboard.capsLockDoubleConsonantsSubtitle") }
+    }
+    
+    // MARK: - Toggle Key
+    
+    public enum toggle {
+        public static var title: String { localized("toggle.title") }
+        public static var rightCommand: String { localized("toggle.rightCmd") }
+        public static var controlSpace: String { localized("toggle.ctrlSpace") }
+        public static var description: String { localized("toggle.description") }
+    }
+    
+    // MARK: - Key Binding
+    
+    public enum keyBinding {
+        public static var title: String { localized("keyBinding.title") }
+        public static var toggleKey: String { localized("keyBinding.toggleKey") }
+        public static var hanjaKey: String { localized("keyBinding.hanjaKey") }
+        public static var recording: String { localized("keyBinding.recording") }
+        public static var change: String { localized("keyBinding.change") }
+        public static var conflict: String { localized("keyBinding.conflict") }
+        public static var conflictRestored: String { localized("keyBinding.conflictRestored") }
+        public static var reset: String { localized("keyBinding.reset") }
+        public static var capsLockSummary: String { localized("keyBinding.capsLockSummary") }
+        public static var capsLockStatusTitle: String { localized("keyBinding.capsLockStatusTitle") }
+        public static var capsLockStatusOn: String { localized("keyBinding.capsLockStatusOn") }
+        public static var capsLockStatusOff: String { localized("keyBinding.capsLockStatusOff") }
+        public static var capsLockOnDescription: String { localized("keyBinding.capsLockOnDescription") }
+        public static var capsLockOffDescription: String { localized("keyBinding.capsLockOffDescription") }
+        public static var disabledByCapsLock: String { localized("keyBinding.disabledByCapsLock") }
+        public static var managedByMacOS: String { localized("keyBinding.managedByMacOS") }
+        public static var capsLockBlockedTitle: String { localized("keyBinding.capsLockBlockedTitle") }
+        public static var capsLockBlockedMessage: String { localized("keyBinding.capsLockBlockedMessage") }
+        public static var capsLockOpenSettings: String { localized("keyBinding.capsLockOpenSettings") }
+    }
+    
+    // MARK: - About
+    
+    public enum about {
+        public static var title: String { localized("about.title") }
+        public static var description: String { localized("about.description") }
+        public static var version: String { localized("about.version") }
+    }
+    
+    // MARK: - App
+    
+    public enum app {
+        public static var name: String { localized("app.name") }
+        public static var copyright: String { localized("app.copyright") }
+        public static var quit: String { localized("app.quit") }
+    }
+    
+    // MARK: - Update
+    
+    public enum update {
+        public static var title: String { localized("update.title") }
+        public static var checkButton: String { localized("update.checkButton") }
+        public static var checking: String { localized("update.checking") }
+        public static var upToDate: String { localized("update.upToDate") }
+        public static var available: String { localized("update.available") }
+        public static var download: String { localized("update.download") }
+        public static var error: String { localized("update.error") }
+        public static var notificationTitle: String { localized("update.notificationTitle") }
+        public static var notificationBody: String { localized("update.notificationBody") }
+        public static var autoCheck: String { localized("update.autoCheck") }
+    }
+    
+    // MARK: - System
+    
+    public enum system {
+        public static var title: String { localized("system.title") }
+        public static var accessibility: String { localized("system.accessibility") }
+        public static var accessibilityGranted: String { localized("system.accessibilityGranted") }
+        public static var accessibilityRequest: String { localized("system.accessibilityRequest") }
+        public static var accessibilitySubtitle: String { localized("system.accessibilitySubtitle") }
+        public static var removeABC: String { localized("system.removeABC") }
+        public static var removeABCSubtitle: String { localized("system.removeABCSubtitle") }
+        public static var removeABCButton: String { localized("system.removeABCButton") }
+        public static var removeABCSuccess: String { localized("system.removeABCSuccess") }
+        public static var removeABCFailed: String { localized("system.removeABCFailed") }
+    }
+}

@@ -5,30 +5,30 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>PriType</string>
+	<string>Hangyeol</string>
 	<key>CFBundleExecutable</key>
-	<string>PriType</string>
+	<string>Hangyeol</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.pritype.inputmethod.v2</string>
+	<string>com.meapri.hangyeol.inputmethod</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>PriType</string>
+	<string>Hangyeol</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.8.26</string>
+	<string>3.0.0</string>
 	<key>CFBundleVersion</key>
-	<string>82</string>
+	<string>83</string>
 	<key>ComponentInputModeDict</key>
 	<dict>
 		<key>tsInputModeListKey</key>
 		<dict>
-			<key>com.pritype.inputmethod.v2</key>
+			<key>com.meapri.hangyeol.inputmethod</key>
 			<dict>
 				<key>TISIconIsTemplate</key>
 				<true/>
@@ -44,16 +44,16 @@
 		</dict>
 		<key>tsVisibleInputModeOrderedArrayKey</key>
 		<array>
-			<string>com.pritype.inputmethod.v2</string>
+			<string>com.meapri.hangyeol.inputmethod</string>
 		</array>
 	</dict>
 	<key>InputMethodConnectionName</key>
-	<string>PriType_InputString_v2</string>
+	<string>Hangyeol_InputString</string>
 	<key>InputMethodServerControllerClass</key>
-	<string>PriTypeInputController</string>
+	<string>HangyeolInputController</string>
 	<key>LSUIElement</key>
 	<true/>
-	<key>PriTypeReleaseChannel</key>
+	<key>HangyeolReleaseChannel</key>
 	<string>stable</string>
 	<key>TICapsLockLanguageSwitchCapable</key>
 	<true/>

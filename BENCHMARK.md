@@ -1,16 +1,16 @@
 # 벤치마크
 
-`swift run -c release PriTypeBenchmark`로 측정했다.
+`swift run -c release HangyeolBenchmark`로 측정했다.
 
 | 항목 | 값 |
 | --- | --- |
-| PriType | v2.7.4 stable |
+| Hangyeol | v2.7.4 stable |
 | 빌드 | Release |
 | 배포 타깃 | macOS 14.0+ (`LC_BUILD_VERSION minos 14.0`) |
 | 측정 환경 | Apple M5 Pro, 48GB RAM |
 | OS | macOS 26.5 (25F71) |
 | Swift | Apple Swift 6.3.2 |
-| 벤치마크 소스 | `Sources/PriTypeBenchmark/main.swift` |
+| 벤치마크 소스 | `Sources/HangyeolBenchmark/main.swift` |
 
 ## 요약
 
@@ -132,4 +132,4 @@ libhangul은 preedit 문자를 초성 자모(Choseong Jamo, U+1100~U+1112)로 �
 - 순차 검색 안전성
 - 동시 검색 안전성
 - 커서 좌표 유효성 판별
-- PriTypeBenchmark 실행 파일의 macOS 최소 버전 `14.0` 확인
+- HangyeolBenchmark 실행 파일의 macOS 최소 버전 `14.0` 확인

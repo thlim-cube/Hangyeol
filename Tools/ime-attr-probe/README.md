@@ -6,15 +6,15 @@ NSTextInputClient 프로브. macOS 업데이트 후 `MarkedTextPayload`의
 
 ## 측정 결과 (macOS 26, 2026-06)
 
-PriType이 보내는 **모든** 속성 페이로드 — `underlineStyle 0 + .clear`,
+Hangyeol이 보내는 **모든** 속성 페이로드 — `underlineStyle 0 + .clear`,
 `single + alpha 1/255`, `NSMarkedClauseSegment` 1~9(전체 TSM hilite 카테고리),
 속성 없는 문자열 — 13종 전부가 앱에는 동일한 `NSUnderline=2 + 액센트 블루`로
 재생성되어 도착했다. 즉 macOS 26에서는 어떤 IME도 marked text 밑줄을 숨길 수 없고,
-밑줄 없는 입력은 직접 삽입 모드(`com.pritype.experimentalDirectInsertion`)가 유일하다.
+밑줄 없는 입력은 직접 삽입 모드(`com.meapri.hangyeol.experimentalDirectInsertion`)가 유일하다.
 
 ## 사용법
 
-PriType 디버그 빌드는 `PreeditStyleExperiment` UserDefaults 키를 읽지 않는다
+Hangyeol 디버그 빌드는 `PreeditStyleExperiment` UserDefaults 키를 읽지 않는다
 (실험 스위치는 측정 완료 후 제거됨). 재측정하려면 `MarkedTextPayload.value`에
 임시로 실험 분기를 되살리거나, 이 프로브의 variants 배열이 거치는
 `CFPreferencesSetValue` 키를 IME가 읽도록 다시 연결할 것.

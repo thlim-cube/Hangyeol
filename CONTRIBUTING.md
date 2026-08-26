@@ -1,6 +1,6 @@
-# Contributing to PriType-Swift
+# Contributing to Hangyeol
 
-Thank you for your interest in contributing to PriType-Swift! This document provides guidelines for contributing to the project.
+Thank you for your interest in contributing to Hangyeol! This document provides guidelines for contributing to the project.
 
 ## Development Setup
 
@@ -11,14 +11,14 @@ Thank you for your interest in contributing to PriType-Swift! This document prov
 
 ### Building
 ```bash
-git clone https://github.com/your-org/PriType-Swift.git
-cd PriType-Swift
+git clone https://github.com/your-org/Hangyeol.git
+cd Hangyeol
 swift build
 ```
 
 ### Running Tests
 ```bash
-swift run PriTypeVerify
+swift run HangyeolVerify
 ```
 
 ## Code Style
@@ -36,7 +36,7 @@ swift run PriTypeVerify
 ## Pull Request Process
 
 1. **Fork** the repository and create your branch from `main`
-2. **Test** your changes with `swift run PriTypeVerify`
+2. **Test** your changes with `swift run HangyeolVerify`
 3. **Update** documentation if you're changing public APIs
 4. **Update** CHANGELOG.md under `[Unreleased]` section
 5. **Submit** your PR with a clear description
@@ -47,7 +47,7 @@ Please include:
 - macOS version
 - Steps to reproduce
 - Expected vs actual behavior
-- Debug logs (if applicable, from `~/Library/Logs/PriType/`)
+- Debug logs (if applicable, from `~/Library/Logs/Hangyeol/`)
 
 ## License
 

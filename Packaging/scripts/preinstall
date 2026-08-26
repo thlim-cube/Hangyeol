@@ -1,5 +1,5 @@
 #!/bin/bash
-# preinstall for PriType.pkg
+# preinstall for Hangyeol.pkg
 
 CURRENT_USER=$(/usr/bin/stat -f "%Su" /dev/console 2>/dev/null || true)
 
@@ -19,49 +19,74 @@ if [ -n "$CURRENT_USER" ]; then
             /bin/launchctl asuser "$USER_ID" /usr/bin/sudo -H -u "$CURRENT_USER" "$@"
         }
 
-        INSTALLED_VERSION=$(/usr/libexec/PlistBuddy \
-            -c "Print :CFBundleShortVersionString" \
+        INSTALLED_VERSION=""
+        HANGYEOL_WAS_INSTALLED=false
+        for installed_info_plist in \
+            "/Library/Input Methods/Hangyeol.app/Contents/Info.plist" \
             "/Library/Input Methods/PriType.app/Contents/Info.plist" \
-            2>/dev/null || true)
+            "/Library/Input Methods/PriTypeV2.app/Contents/Info.plist"; do
+            if [ -f "$installed_info_plist" ]; then
+                HANGYEOL_WAS_INSTALLED=true
+                INSTALLED_VERSION=$(/usr/libexec/PlistBuddy \
+                    -c "Print :CFBundleShortVersionString" \
+                    "$installed_info_plist" 2>/dev/null || true)
+                break
+            fi
+        done
 
         # PackageKit can fall back to ABC while it replaces the selected input
         # method. Capture the user's real pre-update selection before stopping
-        # PriType so postinstall can restore it without hijacking ABC users.
+        # Hangyeol so postinstall can restore it without hijacking ABC users.
         if run_as_console_user /usr/bin/defaults read \
             com.apple.HIToolbox AppleSelectedInputSources 2>/dev/null \
-            | /usr/bin/grep -q "com.pritype.inputmethod.v2"; then
-            PRI_TYPE_WAS_SELECTED=true
+            | /usr/bin/grep -q \
+                -e "com.meapri.hangyeol.inputmethod" \
+                -e "com.pritype.inputmethod.v2"; then
+            HANGYEOL_WAS_SELECTED=true
         else
-            PRI_TYPE_WAS_SELECTED=false
+            HANGYEOL_WAS_SELECTED=false
         fi
 
-        # 2.8.24 and 2.8.25 could leave an enabled PriType registration behind
+        # 2.8.24 and 2.8.25 could leave an enabled Hangyeol registration behind
         # while falling back to ABC. Recover those known broken installations
         # once; later updates continue to preserve an intentional ABC choice.
         case "$INSTALLED_VERSION" in
             2.8.24|2.8.25)
-                PRI_TYPE_WAS_SELECTED=true
+                HANGYEOL_WAS_SELECTED=true
                 ;;
         esac
 
-        run_as_console_user /usr/bin/defaults write com.pritype.inputmethod.v2 \
-            PriTypeSelectedBeforeInstall -bool "$PRI_TYPE_WAS_SELECTED" || true
+        run_as_console_user /usr/bin/defaults write com.meapri.hangyeol.inputmethod \
+            HangyeolSelectedBeforeInstall -bool "$HANGYEOL_WAS_SELECTED" || true
+        run_as_console_user /usr/bin/defaults write com.meapri.hangyeol.inputmethod \
+            HangyeolInstalledBeforeInstall -bool "$HANGYEOL_WAS_INSTALLED" || true
 
+        /usr/bin/pkill -x -u "$USER_ID" Hangyeol 2>/dev/null || true
         /usr/bin/pkill -x -u "$USER_ID" PriType 2>/dev/null || true
         /usr/bin/pkill -x -u "$USER_ID" PriTypeV2 2>/dev/null || true
+
+        # The 3.0 bundle has a new identity, so the old Accessibility grant is
+        # neither reusable nor useful. Remove only that retired product grant.
+        run_as_console_user /usr/bin/tccutil reset Accessibility \
+            com.pritype.inputmethod.v2 >/dev/null 2>&1 || true
     fi
 
     case "$USER_HOME" in
         /Users/*)
+            /bin/rm -rf "$USER_HOME/Library/Input Methods/Hangyeol.app"
             /bin/rm -rf "$USER_HOME/Library/Input Methods/PriType.app"
             /bin/rm -rf "$USER_HOME/Library/Input Methods/PriTypeV2.app"
             ;;
     esac
 fi
 
-# PackageKit performs an atomic update of the current PriType.app bundle. Do
+# PackageKit performs an atomic update of the current Hangyeol.app bundle. Do
 # not delete it here: removing it creates a registration gap in the user's TIS
-# domain before the replacement bundle is installed.
+# domain before the replacement bundle is installed. Retired 2.x bundles and
+# receipts are removed explicitly so they cannot appear as duplicate products.
+/bin/rm -rf "/Library/Input Methods/PriType.app"
 /bin/rm -rf "/Library/Input Methods/PriTypeV2.app"
+/usr/sbin/pkgutil --forget com.meapri.PriTypeV2 >/dev/null 2>&1 || true
+/usr/sbin/pkgutil --forget com.pritype.inputmethod.v2.pkg >/dev/null 2>&1 || true
 
 exit 0

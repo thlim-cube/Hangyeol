@@ -11,10 +11,10 @@
 │  └─────────────┘                    └───────┬────────┘  │
 │                                             │            │
 │  ┌──────────────────────────────────────────┼─────────┐  │
-│  │ PriType.app                              │         │  │
+│  │ Hangyeol.app                              │         │  │
 │  │                                          ▼         │  │
 │  │  ┌──────────────────────┐ 세션관리 ┌───────────┐   │  │
-│  │  │ PriTypeInputController│ ──────► │InputSession│   │  │
+│  │  │ HangyeolInputController│ ──────► │InputSession│   │  │
 │  │  │ (IMKInputController) │         │(finalize 단일)│ │  │
 │  │  └──────────────────────┘         └─────┬─────┘   │  │
 │  │                                          │adapter  │  │
@@ -53,7 +53,7 @@ activateServer
 키 입력·한/영 전환·조합 종료는 client를 소유한 `InputSession`을 중심으로 연결된다.
 
 ```
-keyDown ──► PriTypeInputController.handle()
+keyDown ──► HangyeolInputController.handle()
               1. active owner claim         ← 늦은 keyDown 인계는 이전 client write를 폐기한 뒤 owner 교체
               2. ensureSession(client)      ← 클라이언트 변경/포커스 복귀 시 컨텍스트 재분석
               3. 중복 keyDown 억제           ← 동일 물리 이벤트 2회 전달 호스트(예: KakaoTalk) 방어, 전 모드 공통
@@ -70,13 +70,13 @@ keyDown ──► PriTypeInputController.handle()
               • deactivateServer     — IMK 포커스 전환 (fallback, 멱등)
               • mouseCommit          — 조합 영역 외 클릭
               • modeTransition       — 사용자 한/영 전환키
-              • inputSourceOwnership — macOS 소유권 활성화/ABC→PriType 복귀
+              • inputSourceOwnership — macOS 소유권 활성화/ABC→Hangyeol 복귀
               • keyboardLayoutChange — 두벌식/세벌식 전환
               • sessionReplacement   — 새 controller/client가 먼저 활성화
               • deliveryModeChange   — marked/direct 정책 변경
 ```
 
-1. macOS가 키 이벤트를 `PriTypeInputController.handle()`에 전달한다.
+1. macOS가 키 이벤트를 `HangyeolInputController.handle()`에 전달한다.
 2. `ensureSession()`이 클라이언트·`ClientContext`·delivery 어댑터·중복키 상태·포커스 안전망을 묶은 `InputSession`을 반환한다. 세션을 만들거나 context가 바뀔 때 `HostAdapterResolver`가 어댑터를 결정한다(같은 클라이언트면 세션을 재사용하고, 다르면 재분석 후 교체한다).
 3. Secure Input·중복 keyDown 판정을 통과한 현재 field generation만 client write를 승인한 뒤 `HangulComposer.handle()`에 위임한다.
 4. `HangulComposer`는 libhangul-swift의 `ThreadSafeHangulInputContext`로 한글 조합을 수행하고, 확정 문자열(commit)을 먼저 `insertText`로 전달한 뒤 새 조합 문자열(preedit)을 `setMarkedText`로 전달한다. 이 순서를 뒤집으면 호스트의 오래된 caret에 preedit이 남고 직접 삽입 범위도 어긋날 수 있으므로 바꾸지 않는다.
@@ -84,12 +84,12 @@ keyDown ──► PriTypeInputController.handle()
 
 ### 세션 경계 조합 종료 단일 경로 (InputSession.finalize)
 
-과거 KakaoTalk 계열 버그(stranded preedit, 마지막 글자 유실, 이모티콘 팝업 깜빡임)는 session/lifecycle 종료 이벤트마다 commit 시퀀스가 조금씩 달랐던 데서 왔다. 현재는 앱 비활성·controller 교체·마우스 commit·mode/layout 변경 같은 외부 경계가 `InputSession.finalize(reason:)` 하나로 수렴한다. Return·Space·Arrow처럼 한 keyDown 안에서 끝나는 일반 조합은 `HangulComposer`가 현재 adapter로 확정한다. 현재 field generation이 비보안으로 확인된 경우에만 marked-text 경로에서 `replacementRange = NSNotFound`인 canonical 1-op commit을 사용하며, stale·미확인 generation은 client write 없이 engine·adapter·후보 상태를 폐기한다. 직접 삽입 경로는 이미 문서에 있는 실제 텍스트를 재삽입하지 않고 엔진만 flush하며, PriType가 만든 stale marked fallback도 같은 generation의 소유권이 확인된 경우에만 정리한다.
+과거 KakaoTalk 계열 버그(stranded preedit, 마지막 글자 유실, 이모티콘 팝업 깜빡임)는 session/lifecycle 종료 이벤트마다 commit 시퀀스가 조금씩 달랐던 데서 왔다. 현재는 앱 비활성·controller 교체·마우스 commit·mode/layout 변경 같은 외부 경계가 `InputSession.finalize(reason:)` 하나로 수렴한다. Return·Space·Arrow처럼 한 keyDown 안에서 끝나는 일반 조합은 `HangulComposer`가 현재 adapter로 확정한다. 현재 field generation이 비보안으로 확인된 경우에만 marked-text 경로에서 `replacementRange = NSNotFound`인 canonical 1-op commit을 사용하며, stale·미확인 generation은 client write 없이 engine·adapter·후보 상태를 폐기한다. 직접 삽입 경로는 이미 문서에 있는 실제 텍스트를 재삽입하지 않고 엔진만 flush하며, Hangyeol이 만든 stale marked fallback도 같은 generation의 소유권이 확인된 경우에만 정리한다.
 
 - 포커스 상실: 세션이 소유한 `NSWorkspace` 비활성 옵저버가 IMK `deactivateServer`보다 먼저 finalize한다(네이티브 호스트가 이미 resign한 뒤의 insertText는 무시되기 때문). 옵저버는 세션 자신의 앱과만 비교하며, `deactivateServer`에서 반드시 disarm해 stale 옵저버가 이후 세션의 조합을 엉뚱한 클라이언트로 흘리는 것을 막는다.
 - controller 교체: 새 controller의 `activateServer`가 이전 controller의 늦은 `deactivateServer`보다 먼저 올 수 있다. AppKit host의 activation 경계에서는 이전 host가 아직 조합 확정을 받을 수 있으므로 `.sessionReplacement`로 finalize한 뒤 새 owner를 공개한다. Blink web host의 IMK client proxy는 distinct client여도 이미 새 field를 따라갈 수 있으므로 activation 경계에서도 write lease를 폐기하고 engine만 retire한다. 실제 `keyDown`이 먼저 도착한 경우에도 포커스는 이미 새 field에 있으므로 같은 write-free 인계를 사용한다. 이 경계를 잘못 판단하면 이전 조합이 새 field에 중복 삽입되거나 client write 재진입으로 claim이 취소될 수 있다. 늦게 도착한 이전 controller의 release는 새 owner를 지우지 못한다.
 - 마우스 클릭: `flagsChanged`를 포함한 입력기는 InputMethodKit의 기본 외부-click commit 대상이 아니므로 mouse-down mask와 `IMKMouseHandling` callback을 명시적으로 등록한다. marked range 밖 클릭 또는 marked range가 없는 직접 삽입 클릭만 finalize하고, 실제 caret 이동은 호스트에 통과시킨다.
-- 직접 삽입(실험) 모드: 조합 글자가 실제 텍스트인 동안은 재삽입 없이 엔진만 flush한다. 문서 접근 실패로 marked text에 fallback한 상태는 canonical marked finalize를 사용하고, PriType가 소유한 잔여 marked range만 안전하게 정리한다.
+- 직접 삽입(실험) 모드: 조합 글자가 실제 텍스트인 동안은 재삽입 없이 엔진만 flush한다. 문서 접근 실패로 marked text에 fallback한 상태는 canonical marked finalize를 사용하고, Hangyeol이 소유한 잔여 marked range만 안전하게 정리한다.
 
 ## 한/영 전환 흐름
 
@@ -97,14 +97,14 @@ keyDown ──► PriTypeInputController.handle()
 
 regular/combo 한자 바인딩은 `HanjaShortcutSessionState`가 `nonsecure`일 때만 down/repeat/up 쌍을 소비하고, `secure` 또는 `unknown`이면 전체 쌍을 host로 통과시킨다. modifier-only 한자키는 전역 단축키 계약을 유지하되 controller의 Secure Input 게이트가 후보 조회를 중단한다.
 
-현재 한/영 전환 구조의 정식 명세는 [UnifiedInputArchitecture.md](Docs/UnifiedInputArchitecture.md)다. 핵심은 custom 전환키 경로에서 실제 ABC 입력 소스를 선택하지 않고, PriType 내부 mode 전환을 단일 트랜잭션으로 처리하는 것이다. 이 경로에서는 PriType 단일 입력 소스가 IMK 세션을 계속 소유하고, 영어 기본 설정은 조합 없이 raw key를 그대로 pass-through한다. 전환 요청은 stale session context를 먼저 갱신하며, Secure Input이면 client를 건드리지 않고 내부 mode만 바꾼 뒤 Roman layout 동기화를 다음 비보안 입력 직전까지 미룬다. Caps Lock 기반 실제 입력 소스 전환은 macOS가 소유한다.
+현재 한/영 전환 구조의 정식 명세는 [UnifiedInputArchitecture.md](Docs/UnifiedInputArchitecture.md)다. 핵심은 custom 전환키 경로에서 실제 ABC 입력 소스를 선택하지 않고, Hangyeol 내부 mode 전환을 단일 트랜잭션으로 처리하는 것이다. 이 경로에서는 Hangyeol 단일 입력 소스가 IMK 세션을 계속 소유하고, 영어 기본 설정은 조합 없이 raw key를 그대로 pass-through한다. 전환 요청은 stale session context를 먼저 갱신하며, Secure Input이면 client를 건드리지 않고 내부 mode만 바꾼 뒤 Roman layout 동기화를 다음 비보안 입력 직전까지 미룬다. Caps Lock 기반 실제 입력 소스 전환은 macOS가 소유한다.
 
 ```mermaid
 flowchart TD
     A["RightCommandSuppressor / IOKitManager"] --> B["InputModeCoordinator"]
     B --> C{"Caps Lock 입력 소스 전환 켜짐?"}
     C -->|"yes"| D["custom 전환 무시"]
-    C -->|"no"| E["PriTypeInputController"]
+    C -->|"no"| E["HangyeolInputController"]
     E --> L["session context 갱신"]
     L --> M{"Secure Input?"}
     M -->|"no"| F["active composition commit"]
@@ -126,12 +126,12 @@ flowchart TD
 | 상태 | 소유자 | 원칙 |
 |---|---|---|
 | 전환 요청 정책 | `InputModeCoordinator` | Caps Lock 정책과 active controller fallback을 한 곳에서 판단한다. |
-| 실제 한/영 모드 | process-global `InputModeStore` | 모든 session composer가 읽는 PriType 내부 mode의 source of truth다. |
-| host input mode 표시 | macOS TIS | custom 전환키에서는 입력 소스를 바꾸지 않으므로 메뉴바 source는 PriType 단일 항목으로 유지한다. |
+| 실제 한/영 모드 | process-global `InputModeStore` | 모든 session composer가 읽는 Hangyeol 내부 mode의 source of truth다. |
+| host input mode 표시 | macOS TIS | custom 전환키에서는 입력 소스를 바꾸지 않으므로 메뉴바 source는 Hangyeol 단일 항목으로 유지한다. |
 | macOS 실제 입력 소스 | macOS TIS | custom 전환키에서는 건드리지 않는다. Caps Lock 경로에서만 시스템이 소유한다. |
 | 영어 레이아웃 | IMK session | `overrideKeyboardWithKeyboardNamed`로 ABC/US 계열 layout을 요청한다. |
 
-PriType의 `ComponentInputModeDict`는 단일 mode `com.pritype.inputmethod.v2`만 등록한다. 내부 한/영 상태는 process-global `InputModeStore`가 소유하고 각 session의 `HangulComposer`가 이를 읽는다. custom 전환키는 실제 Apple `ABC` source나 별도 English input mode를 선택하지 않는다.
+Hangyeol의 `ComponentInputModeDict`는 단일 mode `com.meapri.hangyeol.inputmethod`만 등록한다. 내부 한/영 상태는 process-global `InputModeStore`가 소유하고 각 session의 `HangulComposer`가 이를 읽는다. custom 전환키는 실제 Apple `ABC` source나 별도 English input mode를 선택하지 않는다.
 
 ## 한자 후보창 좌표 결정
 
@@ -190,7 +190,7 @@ libhangul preedit: ᄆ (U+1106)
 한자 후보 UI와 mode 변경 알림 callback은 이 흐름과 별도다.
 
 ```text
-PriTypeInputController      IMK callback, active owner, Secure gate
+HangyeolInputController      IMK callback, active owner, Secure gate
           ↓
 InputSession               client/context/adapter lease, finalize 단일 경로
     ├─ field/session 경계 ─► HostAdapterResolver ─► HostTextAdapters 생성·교체
@@ -221,13 +221,13 @@ HostSurfaceResolver        capability 우선 surface 분류
 
 ## 모듈 구성
 
-프로젝트의 제품은 `PriType` 실행 타깃과 `PriTypeCore` 라이브러리 타깃으로 구성된다. 이 외에 `PriTypeBenchmark`(성능 측정), `PriTypeVerify`(빌드 검증), `PriTypeCoreTests`(유닛 테스트) 타깃이 있다.
+프로젝트의 제품은 `Hangyeol` 실행 타깃과 `HangyeolCore` 라이브러리 타깃으로 구성된다. 이 외에 `HangyeolBenchmark`(성능 측정), `HangyeolVerify`(빌드 검증), `HangyeolCoreTests`(유닛 테스트) 타깃이 있다.
 
-### `PriType` (실행 타깃)
+### `Hangyeol` (실행 타깃)
 
 앱 진입점(`main.swift`). `IMKServer` 초기화, `RightCommandSuppressor` / `IOKitManager` 시작, 한자 사전 비동기 로딩, 업데이트 확인을 수행한다. 별도 메뉴 막대 아이콘은 표시하지 않는다.
 
-### `PriTypeCore` (라이브러리 타깃)
+### `HangyeolCore` (라이브러리 타깃)
 
 전체 입력 로직이 포함된 코어 패키지. 외부 의존성은 `libhangul-swift` 하나뿐이다.
 
@@ -238,11 +238,11 @@ HostSurfaceResolver        capability 우선 surface 분류
 | **InputModeOwnership** | `TISRomanSwitchState` 소유권 및 실제 선택 입력 소스의 경계만 추적한다. 일반 focus/activation은 경계로 보지 않으며, TIS 조회 실패 시 상태를 추정하지 않는다. |
 | **ActiveOwnerHandoffRegistry** | 프로세스 active controller를 하나만 공개한다. 새 controller를 publish하기 전에 이전 controller/session을 retire하고, 인계 중 재진입한 claim/release가 있으면 오래된 publish를 취소한다. |
 | **HangulComposerTypes** | `HangulComposerDelegate` 프로토콜(insertText, setMarkedText, textBeforeCursor, replaceTextBeforeCursor)과 `InputMode` enum 정의. |
-| **PriTypeInputController** | IMK 수명주기와 mode write의 imperative 경계. process active owner를 claim하고, client별 상태는 `InputSession`에 위임하며 session/lifecycle 조합 종료를 `session.finalize(reason:)`로 라우팅한다. |
+| **HangyeolInputController** | IMK 수명주기와 mode write의 imperative 경계. process active owner를 claim하고, client별 상태는 `InputSession`에 위임하며 session/lifecycle 조합 종료를 `session.finalize(reason:)`로 라우팅한다. |
 | **InputSession** | client·composer·context·adapter·dedup·focus-loss observer의 단일 소유자. session/lifecycle 조합 종료를 `finalize(reason:)`로 모으되 delivery별 안전한 확정 방식을 선택한다. |
 | **HostAdapterResolver** | `ClientContext.hostSurface`를 `markedText` / `directInsertion` / `immediate` 중 하나로 변환하고 해당 adapter를 생성하는 단일 결정 지점. Capability로 확정된 `blinkWeb`은 실험 설정과 무관하게 canonical marked text를 기본으로 하며, 문서 접근이 안전한 명시적 호환 예외(Hermes)만 direct insertion을 유지한다. |
 | **HostTextAdapters** | `MarkedTextAdapter`(canonical marked text), `DirectInsertionAdapter`(실험: 실제 텍스트 in-place rewrite), `ImmediateModeAdapter`(Finder 비텍스트 영역)를 제공한다. |
-| **HostKeyTransaction** | Blink 조합 확정과 Return·Shift+Return·Forward Delete를 하나의 호스트 트랜잭션으로 묶는다. Return 계열은 조합 폐기와 session lease를 확인한 뒤 CGEvent를 재전달한다. Forward Delete는 adapter가 보존한 PriType 소유 range와 다음 composed character를 확인한 뒤 canonical commit과 explicit range 삭제를 연속 수행한다. |
+| **HostKeyTransaction** | Blink 조합 확정과 Return·Shift+Return·Forward Delete를 하나의 호스트 트랜잭션으로 묶는다. Return 계열은 조합 폐기와 session lease를 확인한 뒤 CGEvent를 재전달한다. Forward Delete는 adapter가 보존한 Hangyeol 소유 range와 다음 composed character를 확인한 뒤 canonical commit과 explicit range 삭제를 연속 수행한다. |
 | **MarkedTextPayload** | Blink web에는 plain `NSString`, native/WebKit에는 clear-underline attribute가 있는 marked text를 만든다. macOS 26은 IME 밑줄 속성을 시스템 스타일로 재생성하므로 밑줄 없는 입력은 직접 삽입 모드에서만 가능하다. |
 | **CursorRectResolver** | 한자 후보창 좌표 전략 체인(firstRect → attributes → 캐시 → AX → 마우스)과 좌표 유효성 검증. |
 | **ClientContextDetector** | IMK client IPC로 capability snapshot을 수집한다. 정책 결정을 직접 소유하지 않는다. |
@@ -256,7 +256,7 @@ HostSurfaceResolver        capability 우선 surface 분류
 | **HanjaManager** | 한자 사전 로더 + 자모 특수문자 검색. `hanja.txt`를 `HanjaTable`에 적재하고, `jamo_symbols.json`에서 자모 특수문자를 로딩한다. LRU 캐시(32개, NSLock 보호)로 재검색 시 사전 접근을 생략한다. 초성 자모(U+1100~) → 호환 자모(U+3131~) 변환을 포함한다. |
 | **ConfigurationManager** | `UserDefaults` 기반 설정 관리. 자판 배열, `KeyBinding`(한/영 전환키·한자 입력키), 자동 대문자, 더블스페이스 마침표, 자동 업데이트 확인 옵션을 저장한다. 기존 `ToggleKey` enum에서 `KeyBinding` struct로의 자동 마이그레이션을 지원한다. `ConfigurationProviding` 프로토콜로 테스트 시 목(mock) 주입이 가능하다. |
 | **SettingsWindowController** | SwiftUI `NSHostingController` 기반 설정 창. Liquid Glass 스타일, Key Recorder(키 녹음) UI, 접근성 권한 확인/요청, Caps Lock 입력 소스 전환 안내를 포함한다. |
-| **StatusBarManager** | 과거 공개 API와 source compatibility를 위한 no-op shell. PriType은 별도 메뉴 막대 아이콘이나 상태 UI를 만들지 않으며 mode·감시 상태도 이 타입에 보관하지 않는다. |
+| **StatusBarManager** | 과거 공개 API와 source compatibility를 위한 no-op shell. Hangyeol은 별도 메뉴 막대 아이콘이나 상태 UI를 만들지 않으며 mode·감시 상태도 이 타입에 보관하지 않는다. |
 | **TextConvenienceHandler** | macOS 더블스페이스 마침표 설정을 한글 조합 경로에서 반영한다. 영어 기본값은 host pass-through이며, 사용자가 영어 편의 대체 처리를 명시적으로 켠 경우에만 자동 대문자·스마트 문장부호·더블스페이스를 처리한다. |
 | **UpdateChecker** | GitHub Releases API를 통해 최신 버전을 확인한다. 24시간 스로틀, 실패 시 다음 실행 시 재시도, 시맨틱 버전 비교(`.numeric`)를 사용한다. |
 | **UpdateNotifier** | `UNUserNotificationCenter`를 사용해 업데이트 알림을 표시한다. 알림 클릭 시 릴리즈 페이지를 연다. |
@@ -268,29 +268,29 @@ HostSurfaceResolver        capability 우선 surface 분류
 | **ToggleLatencyTrace** | DEBUG에서만 물리 전환 요청부터 main 실행·finalize·layout override·mode write·첫 handle까지 monotonic 지연을 구조화해 기록한다. Release에는 clock read, 할당, 로그, 보존 상태가 없다. |
 | **KeyCode** | macOS 키 코드 상수와 문자 판별 함수(`isPrintableASCII`, `shouldPassThrough` 등)를 집중 관리한다. |
 | **L10n** | `Localizable.strings`(ko/en)에서 로컬라이즈된 문자열을 타입 안전하게 접근한다. 배포/개발 환경 모두 대응하는 번들 해석 로직을 포함한다. |
-| **PriTypeConfig** | 전역 상수 정의. 기본 자판 ID(`"2"`, 두벌식), Finder 바탕화면 임계값(50pt), 설정 창 크기, 더블스페이스 임계값(0.45초). |
-| **PriTypeError** | 구조화된 에러 타입. CGEventTap 생성 실패, 접근성 권한 거부, IOHIDManager 오류에 대해 복구 제안(`recoverySuggestion`)을 포함한다. |
+| **HangyeolConfig** | 전역 상수 정의. 기본 자판 ID(`"2"`, 두벌식), Finder 바탕화면 임계값(50pt), 설정 창 크기, 더블스페이스 임계값(0.45초). |
+| **HangyeolError** | 구조화된 에러 타입. CGEventTap 생성 실패, 접근성 권한 거부, IOHIDManager 오류에 대해 복구 제안(`recoverySuggestion`)을 포함한다. |
 | **AboutInfo** | 앱 메타데이터 및 정보 대화상자. 버전은 `Info.plist`의 `CFBundleShortVersionString`에서 읽는다. |
 
 ## 설치 후 적용 흐름
 
-PKG 스크립트는 시스템 전체 프로세스를 이름으로 종료하지 않는다. `preinstall`은 `/dev/console`의 실제 로그인 사용자와 UID를 확인한 뒤 그 사용자가 소유한 PriType 프로세스와 사용자 영역의 중복 번들, 시스템 영역의 레거시 `PriTypeV2.app`만 정리한다. 현재 `/Library/Input Methods/PriType.app`은 지우지 않고 PackageKit의 atomic update 대상으로 남긴다. `postinstall`은 다음 순서로 적용한다.
+PKG 스크립트는 시스템 전체 프로세스를 이름으로 종료하지 않는다. `preinstall`은 `/dev/console`의 실제 로그인 사용자와 UID를 확인한 뒤 그 사용자가 소유한 한결·2.x 프로세스와 사용자 영역의 중복 번들, 시스템 영역의 2.x 번들만 정리한다. 현재 `/Library/Input Methods/Hangyeol.app`은 지우지 않고 PackageKit의 atomic update 대상으로 남긴다. `postinstall`은 다음 순서로 적용한다.
 
 ```text
 postinstall (root)
   ├─ launchctl asuser + sudo -u <console user>
-  │    └─ PriType --post-install-prepare
-  │         ├─ HIToolbox 세 컬렉션의 stale PriType 항목 동기 정리
-  │         ├─ TISRegisterInputSource(/Library/Input Methods/PriType.app)
+  │    └─ Hangyeol --post-install-prepare
+  │         ├─ HIToolbox 세 컬렉션의 stale Hangyeol 항목 동기 정리
+  │         ├─ TISRegisterInputSource(/Library/Input Methods/Hangyeol.app)
   │         ├─ 부모 입력기 → 한글 mode 순서로 TISEnableInputSource
   │         ├─ 기존 등록이 없는 첫 설치만 한글 mode 선택
   │         └─ 설치 안내 pending 기록 후 IMK 초기화 없이 종료
-  └─ 같은 사용자 세션에서 PriType 실행
+  └─ 같은 사용자 세션에서 Hangyeol 실행
        ├─ 설치 pending을 소비해 설정 창을 한 번 표시
        └─ 손쉬운 사용 미허용 시 별도로 macOS 승인 요청 표시
 ```
 
-기존 설치 판정은 `AppleEnabledInputSources` 하나가 아니라 `AppleEnabledInputSources`, `AppleSelectedInputSources`, `AppleInputSourceHistory`의 정리된 현재 PriType parent/mode를 함께 본다. 따라서 선택 기록에만 남아 있는 정상 업데이트를 신규 설치로 오인하지 않는다. TIS 등록·활성화·첫 선택 중 하나라도 준비되지 않으면 입력 소스 설정을 복구 화면으로 연다.
+기존 설치 판정은 `AppleEnabledInputSources` 하나가 아니라 `AppleEnabledInputSources`, `AppleSelectedInputSources`, `AppleInputSourceHistory`의 정리된 현재 Hangyeol parent/mode를 함께 본다. 따라서 선택 기록에만 남아 있는 정상 업데이트를 신규 설치로 오인하지 않는다. TIS 등록·활성화·첫 선택 중 하나라도 준비되지 않으면 입력 소스 설정을 복구 화면으로 연다.
 
 `TISRegisterInputSource`와 `TISEnableInputSource`는 검증된 입력기 설치 코드에 macOS가 제공하는 표준 등록 경로이며 일반 앱 시작에서는 호출하지 않는다. 입력기 agent를 재시작하거나 HIToolbox에 현재 항목을 직접 추가하지 않는다. 손쉬운 사용 권한(TCC)은 여전히 사용자 승인 경계이므로 설치기가 TCC 데이터베이스를 수정하지 않는다. ABC와 다른 입력 소스도 자동 삭제하지 않으며, 설정의 명시적 `ABC 끄기` 동작만 사용자가 요청했을 때 실행한다.
 
@@ -298,7 +298,7 @@ postinstall (root)
 
 ### [libhangul-swift](https://github.com/Meapri/libhangul-swift)
 
-C 기반 libhangul을 순수 Swift로 재구현한 한글 조합 엔진. PriType이 사용하는 API:
+C 기반 libhangul을 순수 Swift로 재구현한 한글 조합 엔진. Hangyeol이 사용하는 API:
 
 - **`ThreadSafeHangulInputContext`**: `OSAllocatedUnfairLock`으로 동기화된 입력 컨텍스트. `process()`, `getPreeditString()`, `getCommitString()`, `flush()`, `reset()` 호출.
 - **`HanjaTable`**: Trie 기반 한자 사전. `matchExact(key:)`로 한글 키에 대응하는 한자 목록 검색.
@@ -309,7 +309,7 @@ C 기반 libhangul을 순수 Swift로 재구현한 한글 조합 엔진. PriType
 
 ## Secure Input 처리
 
-macOS의 `IsSecureEventInputEnabled()`는 프로세스 단위가 아닌 **시스템 전역 플래그**다. PriType은
+macOS의 `IsSecureEventInputEnabled()`는 프로세스 단위가 아닌 **시스템 전역 플래그**다. Hangyeol은
 비밀번호 입력을 조합하거나 기록하는 위험보다 일반 필드에서 잠시 pass-through할 가능성을 선택하는
 fail-closed 정책을 사용한다.
 
@@ -329,7 +329,7 @@ fail-closed 정책을 사용한다.
 
 ## 동시성 (Concurrency) 및 스레드 안전성
 
-PriType은 메인 스레드(IMKServer)와 백그라운드 스레드(CGEventTap, IOKit) 간의 상태 불일치 및 크래시를 방지하기 위해 정교한 동기화 메커니즘을 사용한다.
+Hangyeol은 메인 스레드(IMKServer)와 백그라운드 스레드(CGEventTap, IOKit) 간의 상태 불일치 및 크래시를 방지하기 위해 정교한 동기화 메커니즘을 사용한다.
 
 1. **설정 관리 (`ConfigurationManager`)**
    - 백그라운드 스레드(CGEventTap)에서 매 키 입력마다 `toggleKeyBinding` 및 `hanjaKeyBinding`을 조회한다.
@@ -349,7 +349,7 @@ PriType은 메인 스레드(IMKServer)와 백그라운드 스레드(CGEventTap, 
 
 ## 테스트
 
-Swift Testing 기반 회귀 테스트는 `Tests/PriTypeCoreTests`에 있으며 다음 명령으로 전체 실행한다. 테스트 수는 기능 추가에 따라 변하므로 문서에 고정하지 않는다.
+Swift Testing 기반 회귀 테스트는 `Tests/HangyeolCoreTests`에 있으며 다음 명령으로 전체 실행한다. 테스트 수는 기능 추가에 따라 변하므로 문서에 고정하지 않는다.
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -362,12 +362,12 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ## 디렉토리 구조
 
 ```
-PriType-Swift/
+Hangyeol/
 ├── Sources/
-│   ├── PriType/                    # 실행 타깃 (main.swift)
-│   ├── PriTypeCore/                # 코어 라이브러리
+│   ├── Hangyeol/                    # 실행 타깃 (main.swift)
+│   ├── HangyeolCore/                # 코어 라이브러리
 │   │   ├── HangulComposer.swift        # 한글 조합 엔진
-│   │   ├── PriTypeInputController.swift # IMK 컨트롤러 (얇은 edge)
+│   │   ├── HangyeolInputController.swift # IMK 컨트롤러 (얇은 edge)
 │   │   ├── InputSession.swift           # 세션 상태 + finalize 단일 경로
 │   │   ├── ActiveOwnerHandoffRegistry.swift # process controller 인계
 │   │   ├── InputModeOwnership.swift      # Caps/TIS 소유권 경계
@@ -399,24 +399,24 @@ PriType-Swift/
 │   │   ├── HangulComposerTypes.swift    # 프로토콜/enum 정의
 │   │   ├── KeyCode.swift                # 키 코드 상수
 │   │   ├── L10n.swift                   # 로컬라이제이션
-│   │   ├── PriTypeConfig.swift          # 전역 상수
-│   │   ├── PriTypeError.swift           # 에러 타입
+│   │   ├── HangyeolConfig.swift          # 전역 상수
+│   │   ├── HangyeolError.swift           # 에러 타입
 │   │   ├── AboutInfo.swift              # 앱 메타데이터
 │   │   └── Resources/
 │   │       ├── hanja.txt                # 한자 사전 (6.4MB, ~80,000항목)
 │   │       ├── jamo_symbols.json        # 자모 특수문자 (14키, 390개)
 │   │       ├── ko.lproj/               # 한국어 문자열
 │   │       └── en.lproj/               # 영어 문자열
-│   ├── PriTypeBenchmark/           # 성능 벤치마크 타깃
-│   └── PriTypeVerify/              # 빌드 검증 타깃
+│   ├── HangyeolBenchmark/           # 성능 벤치마크 타깃
+│   └── HangyeolVerify/              # 빌드 검증 타깃
 ├── Tests/
-│   └── PriTypeCoreTests/           # Swift Testing 회귀 테스트
+│   └── HangyeolCoreTests/           # Swift Testing 회귀 테스트
 ├── Packaging/
 │   └── scripts/
 │       ├── preinstall              # 설치 전 기존 번들 정리
 │       └── postinstall             # 설치 후 스크립트
 ├── Info.plist                      # IMK 설정
-├── PriType.entitlements            # com.apple.inputmethod.kit
+├── Hangyeol.entitlements            # com.apple.inputmethod.kit
 ├── build_release.sh                # 임시 payload에서 릴리즈 빌드+서명+패키징
 └── Package.swift                   # SPM 매니페스트
 ```

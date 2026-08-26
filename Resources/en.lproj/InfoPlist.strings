@@ -1,4 +1,4 @@
 /* Localized versions of Info.plist keys */
-"CFBundleName" = "PriType";
-"CFBundleDisplayName" = "PriType";
-"com.pritype.inputmethod.v2" = "PriType";
+"CFBundleName" = "Hangyeol";
+"CFBundleDisplayName" = "Hangyeol";
+"com.meapri.hangyeol.inputmethod" = "Hangyeol";

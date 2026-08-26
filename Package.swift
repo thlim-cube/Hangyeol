@@ -2,25 +2,25 @@
 import PackageDescription
 
 let package = Package(
-    name: "PriType",
+    name: "Hangyeol",
     defaultLocalization: "ko",
     platforms: [
         .macOS(.v14)  // Sonoma or later
     ],
     products: [
         .executable(
-            name: "PriType",
-            targets: ["PriType"]),
+            name: "Hangyeol",
+            targets: ["Hangyeol"]),
         .library(
-            name: "PriTypeCore",
-            targets: ["PriTypeCore"]),
+            name: "HangyeolCore",
+            targets: ["HangyeolCore"]),
     ],
     dependencies: [
         .package(url: "https://github.com/Meapri/libhangul-swift", branch: "main"),
     ],
     targets: [
         .target(
-            name: "PriTypeCore",
+            name: "HangyeolCore",
             dependencies: [
                 .product(name: "LibHangul", package: "libhangul-swift")
             ],
@@ -35,9 +35,9 @@ let package = Package(
             ]
         ),
         .executableTarget(
-            name: "PriType",
+            name: "Hangyeol",
             dependencies: [
-                "PriTypeCore",
+                "HangyeolCore",
                 .product(name: "LibHangul", package: "libhangul-swift")
             ],
             linkerSettings: [
@@ -45,16 +45,16 @@ let package = Package(
             ]
         ),
         .executableTarget(
-            name: "PriTypeVerify",
-            dependencies: ["PriTypeCore"]
+            name: "HangyeolVerify",
+            dependencies: ["HangyeolCore"]
         ),
         .testTarget(
-            name: "PriTypeCoreTests",
-            dependencies: ["PriTypeCore"]
+            name: "HangyeolCoreTests",
+            dependencies: ["HangyeolCore"]
         ),
         .executableTarget(
-            name: "PriTypeBenchmark",
-            dependencies: ["PriTypeCore"],
+            name: "HangyeolBenchmark",
+            dependencies: ["HangyeolCore"],
             linkerSettings: [
                 .unsafeFlags(["-framework", "InputMethodKit"])
             ]

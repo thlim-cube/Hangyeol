@@ -1,0 +1,54 @@
+import Cocoa
+
+/// Centralized About information for Hangyeol
+///
+/// This structure provides all application metadata and about dialog functionality
+/// in a single location to prevent code duplication across different UI components.
+///
+/// All user-visible strings are now sourced from `L10n` for internationalization.
+public struct AboutInfo: Sendable {
+    
+    // MARK: - App Metadata
+    
+    /// Application display name
+    public static var appName: String { L10n.app.name }
+    
+    /// Current version string (read from Info.plist, fallback to hardcoded)
+    public static let version: String = {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.0.0"
+    }()
+
+    /// Current release channel (stable/beta), read from Info.plist when present.
+    public static let releaseChannel: ReleaseChannel = {
+        ReleaseChannel.detect(
+            plistValue: Bundle.main.object(forInfoDictionaryKey: "HangyeolReleaseChannel") as? String,
+            version: version
+        )
+    }()
+
+    /// User-visible version label including the release channel.
+    public static var displayVersion: String {
+        "\(version) (\(releaseChannel.displayName))"
+    }
+    
+    /// Copyright notice (localized)
+    public static var copyright: String { L10n.app.copyright }
+    
+    /// Full description for about dialog (localized)
+    public static var description: String { L10n.about.description }
+    
+    // MARK: - About Dialog
+    
+    /// Shows the standard About dialog
+    ///
+    /// Displays a localized about dialog with app name, description, version, and copyright.
+    /// Must be called from main thread only.
+    @MainActor
+    public static func showAlert() {
+        let alert = NSAlert()
+        alert.messageText = appName
+        alert.informativeText = "\(description)\n\n\(L10n.about.version): \(displayVersion)\n\(copyright)"
+        alert.alertStyle = .informational
+        alert.runModal()
+    }
+}

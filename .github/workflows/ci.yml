@@ -24,7 +24,7 @@ jobs:
       run: swift test -v
 
     - name: Run Verification Tests
-      run: swift run PriTypeVerify
+      run: swift run HangyeolVerify
     
   lint:
     name: SwiftLint

@@ -7,7 +7,7 @@ import AppKit
 // repeatedly. Results: window + /tmp/ime_attr_probe/probe2.log
 
 let logPath = "/tmp/ime_attr_probe/probe2.log"
-let imeDomain = "com.pritype.inputmethod.v2" as CFString
+let imeDomain = "com.meapri.hangyeol.inputmethod" as CFString
 let expKey = "PreeditStyleExperiment" as CFString
 var logLines: [String] = []
 let t0 = Date()
@@ -93,7 +93,7 @@ app.setActivationPolicy(.regular)
 
 let window = NSWindow(contentRect: NSRect(x: 300, y: 300, width: 560, height: 240),
                       styleMask: [.titled], backing: .buffered, defer: false)
-window.title = "PriType 밑줄 실험 (자동 진행)"
+window.title = "Hangyeol 밑줄 실험 (자동 진행)"
 window.level = .floating
 
 let instruction = NSTextField(labelWithString: "이 창에 한글 키(예: ㅎ = g)를 반복해서 눌러주세요.\n키를 누를 때마다 다음 실험값으로 자동으로 넘어갑니다.")

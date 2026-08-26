@@ -1,27 +1,38 @@
 # Changelog
 
-All notable changes to PriType-Swift will be documented in this file.
+All notable changes to Hangyeol will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-08-26
+
+### Changed
+- 제품 이름을 `한결`로, 시스템·코드 표기를 `Hangyeol`로 전환하고 앱·실행 파일·Swift 모듈·문서·빌드 산출물에서 2.x 제품명을 제거했습니다.
+- 앱과 입력 소스 ID를 `com.meapri.hangyeol.inputmethod`, 설치 패키지 ID를 `com.meapri.hangyeol`로 변경했습니다.
+- 기존 `P` 앱 아이콘을 새 `한` 아이콘으로 교체하고 반복 생성 가능한 벡터 드로잉 도구를 추가했습니다.
+
+### Migration
+- 3.0 설치 시 지원하는 2.x 사용자 설정을 새 키로 한 번 이전하고, 이전 앱·입력 소스 등록·설치 영수증을 정리합니다.
+- 새 앱 ID에는 macOS 손쉬운 사용 권한을 한 번 다시 승인해야 하며, 이후 3.x 업데이트에서는 동일한 앱 ID를 유지합니다.
+
 ## [2.8.26] - 2026-08-26
 
 ### Fixed
-- 2.8.24 또는 2.8.25 설치 실패로 PriType 선택이 ABC로 떨어진 상태에서 업데이트해도, 해당 두 버전에서만 PriType을 한 번 다시 선택해 전환 불가 상태를 복구합니다.
+- 2.8.24 또는 2.8.25 설치 실패로 Hangyeol 선택이 ABC로 떨어진 상태에서 업데이트해도, 해당 두 버전에서만 Hangyeol을 한 번 다시 선택해 전환 불가 상태를 복구합니다.
 
 ## [2.8.25] - 2026-08-26
 
 ### Fixed
 - PKG가 교체 직후의 캐시된 TIS 상태를 설치 완료로 오인하지 않도록, 부모 입력기와 Korean mode의 활성화를 항상 재확인하고 비동기 등록 변경 뒤 다시 조회합니다.
-- 업데이트 중 macOS가 PriType에서 ABC로 임시 전환해도 설치 직전 PriType 선택 상태를 복구하며, 원래 ABC나 다른 입력 소스를 사용 중이었다면 그 선택을 유지합니다.
+- 업데이트 중 macOS가 Hangyeol에서 ABC로 임시 전환해도 설치 직전 Hangyeol 선택 상태를 복구하며, 원래 ABC나 다른 입력 소스를 사용 중이었다면 그 선택을 유지합니다.
 
 ## [2.8.24] - 2026-08-26
 
 ### Fixed
-- ABC와 PriType만 등록한 구성에서도 macOS의 `Caps Lock 키로 ABC 입력 소스 전환` 옵션이 나타나도록, 단일 Korean mode를 유지한 채 시스템 언어 전환 capability를 복구했습니다.
+- ABC와 Hangyeol만 등록한 구성에서도 macOS의 `Caps Lock 키로 ABC 입력 소스 전환` 옵션이 나타나도록, 단일 Korean mode를 유지한 채 시스템 언어 전환 capability를 복구했습니다.
 
 ## [2.8.23] - 2026-08-26
 
@@ -38,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Chrome 등에서 포커스 이동 뒤 늦게 도착한 첫 `keyDown`이 이전 field의 조합을 새 field에 확정해 `나나`로 중복되거나, controller 인계 실패로 영문·분리 자모가 입력되던 문제를 수정했습니다.
-- 입력 소스 메뉴의 `PriType 설정...`과 `PriType 정보`를 InputMethodKit command-dispatch 경로로 연결해 회색 비활성 항목으로 표시되던 문제를 수정했습니다.
+- 입력 소스 메뉴의 `Hangyeol 설정...`과 `Hangyeol 정보`를 InputMethodKit command-dispatch 경로로 연결해 회색 비활성 항목으로 표시되던 문제를 수정했습니다.
 
 ## [2.8.20] - 2026-08-25
 
@@ -48,26 +59,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.8.19] - 2026-08-25
 
 ### Fixed
-- 기존 손쉬운 사용 권한이 유지된 업데이트에서도 설치 직후 PriType 설정 창을 정확히 한 번 표시하도록, 설치 완료 안내와 권한 요청 조건을 분리했습니다.
+- 기존 손쉬운 사용 권한이 유지된 업데이트에서도 설치 직후 Hangyeol 설정 창을 정확히 한 번 표시하도록, 설치 완료 안내와 권한 요청 조건을 분리했습니다.
 
 ## [2.8.18] - 2026-08-25
 
 ### Changed
-- PKG 설치가 PackageKit의 원자적 앱 교체를 유지한 채, 현재 사용자 세션에서 표준 TIS API로 PriType 번들을 등록하고 부모 입력기와 한글 모드를 순서대로 활성화합니다.
-- 처음 설치해 PriType 등록 기록이 없는 경우 한글 모드를 바로 선택하고, 업데이트에서는 사용자가 선택한 기존 입력 소스를 유지합니다.
+- PKG 설치가 PackageKit의 원자적 앱 교체를 유지한 채, 현재 사용자 세션에서 표준 TIS API로 Hangyeol 번들을 등록하고 부모 입력기와 한글 모드를 순서대로 활성화합니다.
+- 처음 설치해 Hangyeol 등록 기록이 없는 경우 한글 모드를 바로 선택하고, 업데이트에서는 사용자가 선택한 기존 입력 소스를 유지합니다.
 
 ### Fixed
-- 설치 전에 현재 `PriType.app`을 삭제해 입력 소스 등록 공백을 만들고, 설치 후 입력기 agent 4개를 강제 재시작해 PriType이 사라지거나 재시동 후에도 전환되지 않던 2.8.17 설치 회귀를 해결했습니다.
+- 설치 전에 현재 `Hangyeol.app`을 삭제해 입력 소스 등록 공백을 만들고, 설치 후 입력기 agent 4개를 강제 재시작해 Hangyeol이 사라지거나 재시동 후에도 전환되지 않던 2.8.17 설치 회귀를 해결했습니다.
 
 ## [2.8.17] - 2026-08-25
 
 ### Changed
-- PKG 설치가 현재 로그인한 사용자 세션에서 PriType의 stale 입력 소스를 동기 정리하고 Launch Services와 입력 관련 agent를 다시 등록해, 기존 업데이트를 로그아웃이나 재시동 없이 적용합니다.
-- 설치 전후 프로세스 정리를 로그인 사용자의 정확한 PriType 프로세스로 제한하고, 다른 사용자 세션과 다른 입력 소스는 변경하지 않습니다.
+- PKG 설치가 현재 로그인한 사용자 세션에서 Hangyeol의 stale 입력 소스를 동기 정리하고 Launch Services와 입력 관련 agent를 다시 등록해, 기존 업데이트를 로그아웃이나 재시동 없이 적용합니다.
+- 설치 전후 프로세스 정리를 로그인 사용자의 정확한 Hangyeol 프로세스로 제한하고, 다른 사용자 세션과 다른 입력 소스는 변경하지 않습니다.
 
 ### Fixed
-- PriType가 enabled 목록에는 없고 selected/history 목록에만 있는 업데이트를 신규 설치로 오인해 입력 소스 설정을 다시 열던 문제를 해결했습니다.
-- 손쉬운 사용 권한이 없는 설치 직후 PriType 설정을 함께 열어 macOS가 요구하는 사용자 승인 단계를 바로 확인할 수 있습니다.
+- Hangyeol이 enabled 목록에는 없고 selected/history 목록에만 있는 업데이트를 신규 설치로 오인해 입력 소스 설정을 다시 열던 문제를 해결했습니다.
+- 손쉬운 사용 권한이 없는 설치 직후 Hangyeol 설정을 함께 열어 macOS가 요구하는 사용자 승인 단계를 바로 확인할 수 있습니다.
 - Blink에서 첫 조합 시점의 marked range가 지연되거나 임시 caret을 반환해도 이후 자모·Backspace 갱신에서 실제 소유 range를 회복해, `맑 → Backspace → 말 → Forward Delete`가 `말` 대신 뒤쪽 글자를 삭제합니다.
 
 ## [2.8.16] - 2026-08-24
@@ -140,7 +151,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Chrome 등 Chromium 브라우저에서 웹 콘텐츠와 주소 표시줄 같은 native text field의 전달 경로를 분리하되, Slack·Codex·VS Code 같은 Electron 편집기는 직접 삽입으로 오분류되지 않도록 해 커서 위치 오류와 입력 중단을 막았습니다.
 - Shift·Backspace를 누른 채 한/영 전환키를 사용해도 즉시 전환되도록 하고, 좌우 Command 동시 입력의 Codex 화면 캡처 동작은 유지했습니다.
-- macOS 입력 소스 표시와 겹치던 PriType의 별도 메뉴 막대 키보드 아이콘을 숨겼습니다.
+- macOS 입력 소스 표시와 겹치던 Hangyeol의 별도 메뉴 막대 키보드 아이콘을 숨겼습니다.
 
 ## [2.8.2] - 2026-08-13
 
@@ -153,8 +164,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - 한글 조합 직후 영어로 전환하면 AppKit의 marked-text readback 지연 때문에 마지막 한글 음절이 사라지던 문제를 해결했습니다.
 - 일부 외장 키보드와 HID modifier 재매핑 환경에서 전역 키 상태 조회가 실제 `flagsChanged` 이벤트와 어긋나 우측 Command 한/영 전환이 무시되던 문제를 해결했습니다.
-- macOS 입력 소스 표시와 PriType 상태 메뉴가 모두 `한`으로 보여 중복 설치처럼 보이던 문제를 해결하고, PriType 상태 메뉴를 고유한 키보드 아이콘으로 구분했습니다.
-- 앱 번들·실행 파일·설치 파일 이름을 `PriType`으로 통일하고, 설치 시 기존 `PriTypeV2.app`을 제거하도록 정리했습니다.
+- macOS 입력 소스 표시와 Hangyeol 상태 메뉴가 모두 `한`으로 보여 중복 설치처럼 보이던 문제를 해결하고, Hangyeol 상태 메뉴를 고유한 키보드 아이콘으로 구분했습니다.
+- 앱 번들·실행 파일·설치 파일 이름을 하나로 통일하고, 설치 시 이전 버전 번들을 제거하도록 정리했습니다.
 
 ## [2.8.0] - 2026-08-11
 
@@ -168,7 +179,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 한/영 전환과 상태
 - CGEventTap이 반복 실패하면 tap을 완전히 해제한 뒤 IOKit으로 한 번만 인계합니다. down/repeat/up 쌍, 좌우 modifier 상태와 fallback press 수명주기를 추적해 한 물리키가 두 번 전환되는 경로를 막았습니다.
 - IOKit fallback의 modifier-only 지원 범위를 중앙 상태에 기록하고, regular/combo 미지원과 시작 실패를 메뉴 막대 상태에 표시합니다.
-- Caps Lock 입력 소스 전환 설정을 hot path 밖에서 캐시하고, macOS 소유권 활성화 또는 ABC→PriType 복귀 때 다음 비보안 입력 전에 내부 모드를 한국어로 정합화합니다. 일반 탭·앱·필드 전환은 마지막 PriType 모드를 유지합니다.
+- Caps Lock 입력 소스 전환 설정을 hot path 밖에서 캐시하고, macOS 소유권 활성화 또는 ABC→Hangyeol 복귀 때 다음 비보안 입력 전에 내부 모드를 한국어로 정합화합니다. 일반 탭·앱·필드 전환은 마지막 Hangyeol 모드를 유지합니다.
 - 앱 시작 시 `한`/`A` 상태 표시를 생성하고, 평소에는 실제 mode를, macOS 소유권 정합화가 pending이면 실제 mode write 전 예상 `한`을 우선 표시합니다. 메뉴에서 현재 backend, 제한 사항, 손쉬운 사용 권한, Secure Input 상태를 확인할 수 있으며, 연속 상태 알림은 중앙 저장소의 최신 snapshot을 main actor에서 순서대로 적용합니다.
 
 ### 설정과 진단
@@ -181,14 +192,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.7.5] - 2026-07-31
 
 ### 수정 (탭 전환 시 마지막 한/영 모드 유지)
-- 탭이나 입력 필드가 바뀔 때 새 IMK 세션의 기본 Korean mode가 공유 `HangulComposer.inputMode`를 덮어쓰던 문제를 수정했습니다. PriType 등록을 canonical 단일 mode로 복구하고, custom toggle이 더 이상 현재 클라이언트의 `selectInputMode:`를 호출하지 않으며, IMK `setValue` callback도 내부 한/영 상태를 변경하지 않습니다.
-- 제거된 `com.pritype.inputmethod.v2.english`는 입력 소스 환경설정 정리 시 stale mode로 삭제됩니다.
+- 탭이나 입력 필드가 바뀔 때 새 IMK 세션의 기본 Korean mode가 공유 `HangulComposer.inputMode`를 덮어쓰던 문제를 수정했습니다. Hangyeol 등록을 canonical 단일 mode로 복구하고, custom toggle이 더 이상 현재 클라이언트의 `selectInputMode:`를 호출하지 않으며, IMK `setValue` callback도 내부 한/영 상태를 변경하지 않습니다.
+- 제거된 `com.meapri.hangyeol.inputmethod.english`는 입력 소스 환경설정 정리 시 stale mode로 삭제됩니다.
 
 ### 조사 (한글 조합 밑줄 — macOS 26에서는 marked text로 제거 불가)
-- 조합 밑줄을 모든 앱에서 없애기 위해 marked text 속성을 엔진별로 조정했으나(`PreeditUnderline`: Blink는 `underlineStyle 1 + alpha 1/255`, 그 외는 `underlineStyle 0 + NSColor.clear`), **macOS 26에서는 효과가 없음을 실측으로 확인했습니다**. NSTextInputClient 프로브로 실제 IMK 전송 경로를 측정한 결과, IME가 보내는 모든 속성 조합 — underline 0+clear, alpha 1/255, `NSMarkedClauseSegment` 1~9(kNoHilite 포함 전체 TSM hilite 카테고리), 심지어 속성 없는 문자열까지 13종 전부 — 이 앱에는 동일한 `NSUnderline=2 + 액센트 블루`로 재생성되어 도착합니다. 수신 측 프레임워크가 IME 스타일을 폐기하고 시스템 표준 스타일을 합성하므로, **macOS 26에서는 어떤 IME도 marked text 밑줄을 숨길 수 없습니다**(애플 한글 IME도 동일한 밑줄). 엔진별 속성 튜닝은 속성이 통과되는 구버전 macOS에서만 유효하며 코드에 유지합니다(오분류·부작용 없음). 밑줄 없는 입력은 marked text를 쓰지 않는 직접 삽입 모드(`com.pritype.experimentalDirectInsertion`)로 제공됩니다. 측정 과정은 `PreeditUnderline` 주석에 기록했습니다.
+- 조합 밑줄을 모든 앱에서 없애기 위해 marked text 속성을 엔진별로 조정했으나(`PreeditUnderline`: Blink는 `underlineStyle 1 + alpha 1/255`, 그 외는 `underlineStyle 0 + NSColor.clear`), **macOS 26에서는 효과가 없음을 실측으로 확인했습니다**. NSTextInputClient 프로브로 실제 IMK 전송 경로를 측정한 결과, IME가 보내는 모든 속성 조합 — underline 0+clear, alpha 1/255, `NSMarkedClauseSegment` 1~9(kNoHilite 포함 전체 TSM hilite 카테고리), 심지어 속성 없는 문자열까지 13종 전부 — 이 앱에는 동일한 `NSUnderline=2 + 액센트 블루`로 재생성되어 도착합니다. 수신 측 프레임워크가 IME 스타일을 폐기하고 시스템 표준 스타일을 합성하므로, **macOS 26에서는 어떤 IME도 marked text 밑줄을 숨길 수 없습니다**(애플 한글 IME도 동일한 밑줄). 엔진별 속성 튜닝은 속성이 통과되는 구버전 macOS에서만 유효하며 코드에 유지합니다(오분류·부작용 없음). 밑줄 없는 입력은 marked text를 쓰지 않는 직접 삽입 모드(`com.meapri.hangyeol.experimentalDirectInsertion`)로 제공됩니다. 측정 과정은 `PreeditUnderline` 주석에 기록했습니다.
 
 ### 구조 (end-to-end 입력 파이프라인 개편)
-- 세션 스코프 상태(클라이언트, `ClientContext`, delivery 어댑터, 중복 keyDown 상태, 포커스 상실 안전망)를 단일 소유자 `InputSession`으로 통합했습니다. `PriTypeInputController`는 IMK 수명 주기만 담당하는 얇은 edge가 되었고, 흩어져 있던 `lastClient`/`lastKnownInputClient`/`cachedContext`/`currentAdapter`/옵저버 필드 간 drift 가능성이 사라졌습니다.
+- 세션 스코프 상태(클라이언트, `ClientContext`, delivery 어댑터, 중복 keyDown 상태, 포커스 상실 안전망)를 단일 소유자 `InputSession`으로 통합했습니다. `HangyeolInputController`는 IMK 수명 주기만 담당하는 얇은 edge가 되었고, 흩어져 있던 `lastClient`/`lastKnownInputClient`/`cachedContext`/`currentAdapter`/옵저버 필드 간 drift 가능성이 사라졌습니다.
 - 조합 종료를 `InputSession.finalize(reason:)` **단일 경로**로 통일했습니다. 앱 비활성, IMK `deactivateServer`, 마우스 클릭 commit, 사용자 한/영 전환키, 자판 배열 변경 — 다섯 가지 종료 이벤트가 전부 같은 멱등 1-op commit(`insertText` + `NSNotFound`)을 사용합니다. 과거 KakaoTalk에서 검증된 시퀀스를 모든 경로에 적용한 것으로, 번들 ID 하드코딩이 전혀 없습니다.
 - 조합 출력 전달(어댑터 3종: marked text / 직접 삽입 / immediate)을 `TextDelivery.swift`로 분리하고, 모드 결정을 `TextDeliveryPolicy.mode(for:)` 한 곳으로 모았습니다.
 - 한자 후보창 좌표 전략 체인(firstRect → attributes → 캐시 → AX → 마우스)을 `CursorRectResolver.swift`로 분리해 `HangulComposer`가 조합에만 집중하도록 했습니다(약 280줄 감소).
@@ -205,40 +216,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - libhangul-swift 최신(main)에 맞춰 통합을 점검했습니다. 새 기본값(`outputMode .syllable`, `combinationOnDoubleStroke` OFF, `fineGrainedBackspace` ON, NFC 정규화)이 표준 2벌식 동작과 일치하여 코드 변경은 없으며, 기본값이 바뀌어도 조합이 깨지지 않도록 회귀 테스트(ㄱㄱ↛ㄲ, 와→오 단계 백스페이스)를 추가했습니다.
 
 ### 수정
-- 한글 입력이 전혀 되지 않던 회귀를 고쳤습니다. 통합 아키텍처 작업 중 `Info.plist`의 입력기 등록에 최상위 `TISInputSourceID`(자식 입력 모드와 동일 ID)와 모드별 `TISInputSourceID`/`tsInputModeDefaultStateKey` 등 불필요한 키가 추가되면서 TIS 등록이 깨져, 입력 소스를 선택해도 조합이 동작하지 않았습니다. 등록을 검증된 2.6.5의 최소 `ComponentInputModeDict` 구조로 복원했습니다(단일 모드 `com.pritype.inputmethod.v2`, `smKorean`). 조합 엔진 자체는 정상이었고(유닛 테스트 통과) 원인은 등록부였습니다.
+- 한글 입력이 전혀 되지 않던 회귀를 고쳤습니다. 통합 아키텍처 작업 중 `Info.plist`의 입력기 등록에 최상위 `TISInputSourceID`(자식 입력 모드와 동일 ID)와 모드별 `TISInputSourceID`/`tsInputModeDefaultStateKey` 등 불필요한 키가 추가되면서 TIS 등록이 깨져, 입력 소스를 선택해도 조합이 동작하지 않았습니다. 등록을 검증된 2.6.5의 최소 `ComponentInputModeDict` 구조로 복원했습니다(단일 모드 `com.meapri.hangyeol.inputmethod`, `smKorean`). 조합 엔진 자체는 정상이었고(유닛 테스트 통과) 원인은 등록부였습니다.
 
 ### 구조
-- 한/영 입력 구조를 `v2.6.5`의 단일 상태기계와 `v2.7.2`의 macOS 통합 장점을 결합한 **단일 소스 하이브리드**로 정식화했습니다. PriType 단일 입력 소스가 IMK 세션을 영구 소유하고, 한/영은 `HangulComposer.inputMode` 하나로 내부 전환합니다. 정식 명세를 [Docs/UnifiedInputArchitecture.md](Docs/UnifiedInputArchitecture.md)로 추가하고, 기존 RollbackPlan(가짜 모드 2개 등록 안)은 superseded 처리했습니다.
+- 한/영 입력 구조를 `v2.6.5`의 단일 상태기계와 `v2.7.2`의 macOS 통합 장점을 결합한 **단일 소스 하이브리드**로 정식화했습니다. Hangyeol 단일 입력 소스가 IMK 세션을 영구 소유하고, 한/영은 `HangulComposer.inputMode` 하나로 내부 전환합니다. 정식 명세를 [Docs/UnifiedInputArchitecture.md](Docs/UnifiedInputArchitecture.md)로 추가하고, 기존 RollbackPlan(가짜 모드 2개 등록 안)은 superseded 처리했습니다.
 
 ### 개선
-- 영어 모드를 순수 pass-through로 정리했습니다. PriType가 영문 입력에서 로컬 버퍼를 추적하거나 텍스트를 직접 삽입하지 않으며, 더블스페이스 마침표 등 영문 텍스트 편의는 macOS가 담당합니다. 버퍼-커서 불일치로 인한 잠재 버그 경로를 제거했습니다.
-- 사용되지 않던 입력 소스 헬퍼(`ensureDefaultEnglishInputSourceEnabled`, `ensurePriTypeInputModesEnabled`)를 제거하고, stale 정리는 `cleanupStaleInputSources` 한 곳으로 정리했습니다.
+- 영어 모드를 순수 pass-through로 정리했습니다. Hangyeol이 영문 입력에서 로컬 버퍼를 추적하거나 텍스트를 직접 삽입하지 않으며, 더블스페이스 마침표 등 영문 텍스트 편의는 macOS가 담당합니다. 버퍼-커서 불일치로 인한 잠재 버그 경로를 제거했습니다.
+- 사용되지 않던 입력 소스 헬퍼(`ensureDefaultEnglishInputSourceEnabled`, `ensureHangyeolInputModesEnabled`)를 제거하고, stale 정리는 `cleanupStaleInputSources` 한 곳으로 정리했습니다.
 - 앱 포커스 상실 시 한글 조합을 강제 커밋하던 동작에서 KakaoTalk 번들 ID 하드코딩을 제거했습니다. 이제 특정 앱에 의존하지 않고 모든 앱에 대해 동작하는 멱등 안전망(이미 커밋된 호스트에서는 no-op)으로 일반화했습니다.
-- 사용자 지정 한/영 전환키 경로를 `InputModeCoordinator → PriTypeInputController → HangulComposer` 한 줄로 일원화해, Caps Lock 정책·활성 컨트롤러 가드·전환 전 1회 commit을 한 곳에서 보장하도록 정리했습니다(전환 콜백은 검증된 2.6.5 기준선대로 메인 런루프에 올립니다).
+- 사용자 지정 한/영 전환키 경로를 `InputModeCoordinator → HangyeolInputController → HangulComposer` 한 줄로 일원화해, Caps Lock 정책·활성 컨트롤러 가드·전환 전 1회 commit을 한 곳에서 보장하도록 정리했습니다(전환 콜백은 검증된 2.6.5 기준선대로 메인 런루프에 올립니다).
 - `HangulComposer.inputMode`의 write 경로를 토글 전환과 외부 입력소스 선택(ingress) 두 곳으로 한정한다는 계약을 코드 주석으로 명문화했습니다.
 
 ### 안정성
 - `activateServer`가 `deactivateServer` 없이 반복 호출(Electron/Chromium 계열에서 흔함)될 때 자판 변경 옵저버가 중복 등록돼 `handleLayoutChange`가 여러 번 실행될 수 있던 문제를 막았습니다(재등록 전 기존 등록 제거).
-- `PriTypeInputController`에 `deinit`을 추가해 자판 변경 옵저버와 앱 비활성 옵저버(block 기반은 자동 제거되지 않음)를 정리하도록 했습니다.
+- `HangyeolInputController`에 `deinit`을 추가해 자판 변경 옵저버와 앱 비활성 옵저버(block 기반은 자동 제거되지 않음)를 정리하도록 했습니다.
 - 손쉬운 사용 권한 요청 후 권한을 polling하던 타이머가 권한을 끝내 허용하지 않으면 무한정 돌거나, 버튼을 반복 누르면 중첩되던 문제를 수정했습니다. 타이머를 저장해 재요청 시 교체하고, 상한(약 2분) 후 자동 종료하며, 설정 창이 사라질 때 무효화합니다.
 
 ### UX
-- 설정 창 제목을 로컬라이즈했습니다(`PriType 설정`/`PriType Settings`). 시각적으로는 숨겨져 있지만 Window 메뉴·Mission Control·VoiceOver가 사용하는 값이라 언어에 맞게 읽히도록 정리했습니다.
+- 설정 창 제목을 로컬라이즈했습니다(`Hangyeol 설정`/`Hangyeol Settings`). 시각적으로는 숨겨져 있지만 Window 메뉴·Mission Control·VoiceOver가 사용하는 값이라 언어에 맞게 읽히도록 정리했습니다.
 
 ### 테스트
 - 그동안 커버리지가 없던 순수 함수에 회귀 테스트를 추가했습니다(9개): 한자 후보창 좌표 유효성 검증(`isValidCursorRect` — Chromium 쓰레기 좌표 거부)과 초성↔호환 자모 변환(`isChoseongJamo`/`choseongToCompatibility`/`isJamoConsonant`).
 - AX 좌표 경로의 유일한 강제 언랩(`AXValueCreate(...)!`)을 graceful fallback으로 바꿔 잠재 크래시 경로를 제거했습니다.
 
 ### 검증
-- `swift build -c debug --product PriType`
+- `swift build -c debug --product Hangyeol`
 - `swift test` (121개 통과)
-- `swift run -c debug PriTypeVerify`
-- `swift build -c release --product PriType`
+- `swift run -c debug HangyeolVerify`
+- `swift build -c release --product Hangyeol`
 
 ## [2.7.4] - 2026-05-21 (Stable)
 
 ### 수정
-- 시작 시 PriType이 자기 입력 소스를 다시 enable 하던 경로를 제거해, 부팅 후 macOS가 입력 소스 추가/허용 확인창을 띄울 수 있는 부작용을 줄였습니다.
+- 시작 시 Hangyeol이 자기 입력 소스를 다시 enable 하던 경로를 제거해, 부팅 후 macOS가 입력 소스 추가/허용 확인창을 띄울 수 있는 부작용을 줄였습니다.
 - KakaoTalk에서 앱 포커스를 잃을 때 남은 한글 조합을 강제 커밋하도록 알려진 앱 호환성 정책을 추가했습니다.
 - 업데이트 알림 권한 요청을 앱 시작 시점이 아니라 실제 업데이트 알림을 보낼 때로 늦춰, 시작 시 불필요한 권한 팝업이 뜰 수 있는 경로를 제거했습니다.
 - 입력 hot path의 디버그 카운터를 DEBUG 빌드에만 포함되도록 정리했습니다.
@@ -247,11 +258,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 설정창 폭과 상태 표시를 조정해 Caps Lock 안내, 키 설정, 손쉬운 사용 권한 상태가 덜 잘리고 더 안정적으로 보이도록 정리했습니다.
 
 ### 검증
-- `swift build -c debug --product PriType`
-- `swift run -c debug PriTypeVerify`
-- `swift build -c release --product PriType`
-- `swift run -c release PriTypeVerify`
-- `swift run -c release PriTypeBenchmark`
+- `swift build -c debug --product Hangyeol`
+- `swift run -c debug HangyeolVerify`
+- `swift build -c release --product Hangyeol`
+- `swift run -c release HangyeolVerify`
+- `swift run -c release HangyeolBenchmark`
 - Release PKG 서명, Apple 공증, 스테이플, Gatekeeper 검증
 
 ## [2.7.3] - 2026-05-20 (Stable)
@@ -259,12 +270,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 수정
 - KakaoTalk에서 한글 조합 중 다른 앱으로 포커스를 옮겼다가 돌아오면 마지막 조합 글자가 확정되지 않고 다음 입력으로 덮어써지던 문제를 보완했습니다.
 - KakaoTalk이 앱 비활성화 후에도 IMK marked composition을 오래 붙잡는 경우를 처리하기 위해, KakaoTalk 비활성화 시 조합 중인 글자를 즉시 커밋하도록 호환성 정책을 추가했습니다.
-- PriType 실행 시 자기 입력 소스를 다시 활성화하던 자동 입력 소스 제어 경로를 제거했습니다. 재부팅할 때마다 macOS가 PriType 입력 소스 추가 확인창을 반복 표시할 수 있던 원인을 줄였습니다.
+- Hangyeol 실행 시 자기 입력 소스를 다시 활성화하던 자동 입력 소스 제어 경로를 제거했습니다. 재부팅할 때마다 macOS가 Hangyeol 입력 소스 추가 확인창을 반복 표시할 수 있던 원인을 줄였습니다.
 
 ### 검증
 - `swift test`
-- `swift run -c debug PriTypeVerify`
-- `swift run -c release PriTypeBenchmark`
+- `swift run -c debug HangyeolVerify`
+- `swift run -c release HangyeolBenchmark`
 
 ## [2.7.2] - 2026-05-18 (Stable)
 
@@ -277,7 +288,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 수정
 - 한글 조합 중 Return/Enter를 눌렀을 때 일부 앱에서 줄바꿈이 두 번 입력되던 문제를 수정했습니다.
-- 조합 중 Enter는 PriType이 조합을 확정하고 줄바꿈을 한 번만 삽입한 뒤 원래 Enter 이벤트를 소비합니다.
+- 조합 중 Enter는 Hangyeol이 조합을 확정하고 줄바꿈을 한 번만 삽입한 뒤 원래 Enter 이벤트를 소비합니다.
 - 조합이 없는 상태의 Enter는 기존처럼 앱에 그대로 전달합니다.
 
 ### 호환성
@@ -290,30 +301,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 검증
 - `swift build -c release`
-- `swift run -c release PriTypeVerify`
-- `swift build -c debug --product PriType`
-- PriTypeBenchmark 실행 및 macOS 최소 버전 `14.0` 확인
+- `swift run -c release HangyeolVerify`
+- `swift build -c debug --product Hangyeol`
+- HangyeolBenchmark 실행 및 macOS 최소 버전 `14.0` 확인
 
 ## [2.7] - 2026-05-18 (Stable)
 
 ### 핵심 변경
-- 영어 입력은 PriType 내부 영어 모드가 아니라 macOS 기본 `ABC` 입력 소스를 사용하도록 전환했습니다. PriType은 한글 입력 소스 역할에 집중합니다.
-- Caps Lock 한/영 전환을 PriType 자체 키 가로채기 경로에서 제거하고 macOS 입력 소스 전환 설정을 따르도록 정리했습니다.
-- PriType 입력 소스 등록을 단일 한글 입력 소스(`com.pritype.inputmethod.v2.korean`)로 정리해 메뉴 막대에 `한글`이 중복 표시되던 문제를 해결했습니다.
-- 오래된 PriType 영어 입력 소스, component input mode, Apple Korean 입력 모드 잔여 등록을 정리하는 복구 로직을 추가했습니다.
+- 영어 입력은 Hangyeol 내부 영어 모드가 아니라 macOS 기본 `ABC` 입력 소스를 사용하도록 전환했습니다. Hangyeol은 한글 입력 소스 역할에 집중합니다.
+- Caps Lock 한/영 전환을 Hangyeol 자체 키 가로채기 경로에서 제거하고 macOS 입력 소스 전환 설정을 따르도록 정리했습니다.
+- Hangyeol 입력 소스 등록을 단일 한글 입력 소스(`com.meapri.hangyeol.inputmethod.korean`)로 정리해 메뉴 막대에 `한글`이 중복 표시되던 문제를 해결했습니다.
+- 오래된 Hangyeol 영어 입력 소스, component input mode, Apple Korean 입력 모드 잔여 등록을 정리하는 복구 로직을 추가했습니다.
 
 ### 개선
-- 우측 Command/우측 Option 등 PriType 사용자 지정 전환키는 CGEventTap/IOKit 경로를 유지하면서 실제 macOS 입력 소스 선택과 동기화되도록 정리했습니다.
+- 우측 Command/우측 Option 등 Hangyeol 사용자 지정 전환키는 CGEventTap/IOKit 경로를 유지하면서 실제 macOS 입력 소스 선택과 동기화되도록 정리했습니다.
 - 자동 문장 대문자 옵션을 제거했습니다. 영어 입력이 macOS `ABC`로 이동했기 때문에 해당 동작은 macOS 기본 입력기가 담당합니다.
-- 스페이스 두 번으로 마침표를 입력하는 동작은 PriType 별도 설정 대신 macOS `NSAutomaticPeriodSubstitutionEnabled` 설정을 따르도록 변경했습니다.
+- 스페이스 두 번으로 마침표를 입력하는 동작은 Hangyeol 별도 설정 대신 macOS `NSAutomaticPeriodSubstitutionEnabled` 설정을 따르도록 변경했습니다.
 - 앱 활성화, 창 전환, 키 입력 중 불필요한 Accessibility/컨텍스트 검사를 줄여 입력 지연이 발생할 수 있는 경로를 완화했습니다.
 - 비밀번호/보안 입력 필드에서는 조합 상태를 정리하고 즉시 패스스루하도록 보강했습니다.
 
 ### 설정 및 UX
-- 설정창을 macOS Liquid Glass 스타일에 맞게 정리하고, 기본 시스템 폰트와 새 PriType 앱 아이콘 헤더를 사용하도록 변경했습니다.
-- Caps Lock은 PriType 전환키로 직접 지정하지 못하게 막고 macOS 입력 소스 설정 상태, 안내 문구, 설정 바로가기를 제공하도록 변경했습니다.
+- 설정창을 macOS Liquid Glass 스타일에 맞게 정리하고, 기본 시스템 폰트와 새 Hangyeol 앱 아이콘 헤더를 사용하도록 변경했습니다.
+- Caps Lock은 Hangyeol 전환키로 직접 지정하지 못하게 막고 macOS 입력 소스 설정 상태, 안내 문구, 설정 바로가기를 제공하도록 변경했습니다.
 - 키 설정 충돌 시 기존 설정을 복원했다는 피드백을 표시하도록 했습니다.
-- 더 이상 필요하지 않은 기본 영어 입력기 제거 기능, 자동 대문자 옵션, PriType 전용 더블스페이스 옵션을 제거했습니다.
+- 더 이상 필요하지 않은 기본 영어 입력기 제거 기능, 자동 대문자 옵션, Hangyeol 전용 더블스페이스 옵션을 제거했습니다.
 
 ### 아이콘 및 입력 소스 표시
 - 앱 아이콘과 입력 소스 메뉴/팔레트 아이콘을 새 자산으로 교체했습니다.
@@ -326,7 +337,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 검증
 - `swift build -c release`
-- `swift run -c release PriTypeVerify`
+- `swift run -c release HangyeolVerify`
 - Release/Debug PKG 서명, 공증, 스테이플, Gatekeeper 검증
 
 ## [2.6.5] - 2026-05-10 (Stable)
@@ -357,14 +368,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 검증
 - Swift 테스트 121개 통과
 - SwiftLint strict 0건
-- PriTypeVerify 통과
-- PriTypeBenchmark 통과
+- HangyeolVerify 통과
+- HangyeolBenchmark 통과
 - 릴리즈 PKG 서명, Apple 공증, 스테이플, Gatekeeper 검증 통과
 
 ## [1.0.0] - 2025-12-11
 
 ### Added
-- Initial release of PriType-Swift
+- Initial release
 - Hangul composition using libhangul-swift
 - Korean/English toggle via Right Command or Control+Space
 - SwiftUI-based settings window

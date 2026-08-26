@@ -1,0 +1,865 @@
+import Foundation
+import CoreGraphics
+import Carbon.HIToolbox
+
+// MARK: - Types
+
+/// Toggle key options for language switching (legacy enum, kept for migration)
+///
+/// Defines the available modifier key combinations that can be used
+/// to switch between Korean and English input modes.
+public enum ToggleKey: String, CaseIterable, Sendable {
+    /// Control + Space key combination
+    case controlSpace = "controlSpace"
+    /// Right Command key (single key toggle)
+    case rightCommand = "rightCommand"
+
+    /// Human-readable display name for the toggle key
+    public var displayName: String {
+        switch self {
+        case .controlSpace: return "Control + Space"
+        case .rightCommand: return "우측 Command"
+        }
+    }
+    
+    /// Convert legacy ToggleKey to KeyBinding
+    public var asKeyBinding: KeyBinding {
+        switch self {
+        case .rightCommand:
+            return .defaultToggle
+        case .controlSpace:
+            return KeyBinding(keyCode: 49, modifiers: CGEventFlags.maskControl.rawValue, displayName: "Control + Space")
+        }
+    }
+}
+
+// MARK: - KeyBinding
+
+/// Represents a user-configured key binding (raw keyCode + modifiers)
+///
+/// Unlike the legacy `ToggleKey` enum which only supports preset options,
+/// `KeyBinding` stores the actual raw key code and modifier flags,
+/// allowing users to bind any key combination.
+///
+/// ## Usage
+/// ```swift
+/// let binding = KeyBinding(keyCode: 54, modifiers: 0, displayName: "우측 Command")
+/// if event.keyCode == binding.keyCode { ... }
+/// ```
+public struct KeyBinding: Codable, Equatable, Sendable {
+    /// macOS virtual key code (e.g., 54 = Right Command, 61 = Right Option)
+    public let keyCode: Int64
+    
+    /// CGEventFlags raw value. 0 means single modifier key (no additional modifiers).
+    public let modifiers: UInt64
+    
+    /// Human-readable display name (e.g., "우측 Command", "Control + Space")
+    public let displayName: String
+    
+    /// Whether this is a modifier-only binding (no additional modifiers required)
+    public var isModifierOnly: Bool {
+        modifiers == 0
+    }
+    
+    /// Whether the bound key is a modifier key (Command, Option, Control, Shift, CapsLock)
+    /// Modifier keys generate `flagsChanged` events; regular keys generate `keyDown` events.
+    public var isModifierKey: Bool {
+        switch keyCode {
+        case 54, 55: return true  // Right/Left Command
+        case 61, 58: return true  // Right/Left Option
+        case 62, 59: return true  // Right/Left Control
+        case 56, 60: return true  // Left/Right Shift
+        case 57:     return true  // Caps Lock
+        case 63:     return true  // Fn
+        default:     return false
+        }
+    }
+    
+    /// Default toggle key: Right Command
+    public static let defaultToggle = KeyBinding(keyCode: 54, modifiers: 0, displayName: "우측 Command")
+    
+    /// Default hanja key: Right Option
+    public static let defaultHanja = KeyBinding(keyCode: 61, modifiers: 0, displayName: "우측 Option")
+    
+    /// Generate a display name from raw keyCode and modifiers
+    public static func generateDisplayName(keyCode: Int64, modifiers: UInt64) -> String {
+        var parts: [String] = []
+        let flags = CGEventFlags(rawValue: modifiers)
+        
+        if flags.contains(.maskControl) { parts.append("Control") }
+        if flags.contains(.maskAlternate) { parts.append("Option") }
+        if flags.contains(.maskShift) { parts.append("Shift") }
+        if flags.contains(.maskCommand) { parts.append("Command") }
+        
+        // Key name from keyCode — comprehensive macOS virtual key code mapping
+        let keyName: String
+        switch keyCode {
+        // Modifier keys
+        case 54: keyName = "우측 Command"
+        case 55: keyName = "좌측 Command"
+        case 61: keyName = "우측 Option"
+        case 58: keyName = "좌측 Option"
+        case 62: keyName = "우측 Control"
+        case 59: keyName = "좌측 Control"
+        case 56: keyName = "좌측 Shift"
+        case 60: keyName = "우측 Shift"
+        case 57: keyName = "Caps Lock"
+        case 63: keyName = "Fn"
+        // Special keys
+        case 49: keyName = "Space"
+        case 36: keyName = "Return"
+        case 48: keyName = "Tab"
+        case 53: keyName = "Escape"
+        case 51: keyName = "Delete"
+        case 117: keyName = "Forward Delete"
+        // Arrow keys
+        case 123: keyName = "←"
+        case 124: keyName = "→"
+        case 125: keyName = "↓"
+        case 126: keyName = "↑"
+        // Navigation
+        case 115: keyName = "Home"
+        case 119: keyName = "End"
+        case 116: keyName = "Page Up"
+        case 121: keyName = "Page Down"
+        // F-keys
+        case 122: keyName = "F1"
+        case 120: keyName = "F2"
+        case 99:  keyName = "F3"
+        case 118: keyName = "F4"
+        case 96:  keyName = "F5"
+        case 97:  keyName = "F6"
+        case 98:  keyName = "F7"
+        case 100: keyName = "F8"
+        case 101: keyName = "F9"
+        case 109: keyName = "F10"
+        case 103: keyName = "F11"
+        case 111: keyName = "F12"
+        case 105: keyName = "F13"
+        case 107: keyName = "F14"
+        case 113: keyName = "F15"
+        // Letter keys (QWERTY layout)
+        case 0:  keyName = "A"
+        case 11: keyName = "B"
+        case 8:  keyName = "C"
+        case 2:  keyName = "D"
+        case 14: keyName = "E"
+        case 3:  keyName = "F"
+        case 5:  keyName = "G"
+        case 4:  keyName = "H"
+        case 34: keyName = "I"
+        case 38: keyName = "J"
+        case 40: keyName = "K"
+        case 37: keyName = "L"
+        case 46: keyName = "M"
+        case 45: keyName = "N"
+        case 31: keyName = "O"
+        case 35: keyName = "P"
+        case 12: keyName = "Q"
+        case 15: keyName = "R"
+        case 1:  keyName = "S"
+        case 17: keyName = "T"
+        case 32: keyName = "U"
+        case 9:  keyName = "V"
+        case 13: keyName = "W"
+        case 7:  keyName = "X"
+        case 16: keyName = "Y"
+        case 6:  keyName = "Z"
+        // Number keys
+        case 29: keyName = "0"
+        case 18: keyName = "1"
+        case 19: keyName = "2"
+        case 20: keyName = "3"
+        case 21: keyName = "4"
+        case 23: keyName = "5"
+        case 22: keyName = "6"
+        case 26: keyName = "7"
+        case 28: keyName = "8"
+        case 25: keyName = "9"
+        // Punctuation
+        case 27: keyName = "-"
+        case 24: keyName = "="
+        case 33: keyName = "["
+        case 30: keyName = "]"
+        case 42: keyName = "\\"
+        case 41: keyName = ";"
+        case 39: keyName = "'"
+        case 43: keyName = ","
+        case 47: keyName = "."
+        case 44: keyName = "/"
+        case 50: keyName = "`"
+        default:
+            keyName = "Key(\(keyCode))"
+        }
+        
+        // For modifier-only bindings, don't duplicate modifier name
+        if modifiers == 0 {
+            return keyName
+        }
+        
+        parts.append(keyName)
+        return parts.joined(separator: " + ")
+    }
+}
+
+// MARK: - Notification Names
+
+/// Notification names used by Hangyeol
+public extension Notification.Name {
+    /// Posted when the keyboard layout changes
+    static let keyboardLayoutChanged = Notification.Name("HangyeolKeyboardLayoutChanged")
+    /// Posted when the Roman keyboard override preference changes
+    static let romanKeyboardLayoutPreferenceChanged = Notification.Name("HangyeolRomanKeyboardLayoutPreferenceChanged")
+    /// Posted when a key binding changes
+    static let keyBindingChanged = Notification.Name("HangyeolKeyBindingChanged")
+    /// Posted after the cached macOS Caps Lock input-source ownership changes
+    static let capsLockInputSourceSwitchChanged = Notification.Name("HangyeolCapsLockInputSourceSwitchChanged")
+}
+
+// MARK: - ConfigurationProviding Protocol
+
+/// Protocol for accessing configuration settings
+///
+/// This protocol enables dependency injection for configuration access,
+/// improving testability by allowing mock implementations in tests.
+///
+/// ## Usage
+/// ```swift
+/// class MyClass {
+///     private let config: ConfigurationProviding
+///     
+///     init(config: ConfigurationProviding = ConfigurationManager.shared) {
+///         self.config = config
+///     }
+/// }
+/// ```
+public protocol ConfigurationProviding: AnyObject, Sendable {
+    /// The current keyboard layout identifier
+    var keyboardId: String { get set }
+    
+    /// The selected toggle key for switching between Korean and English
+    var toggleKey: ToggleKey { get set }
+    
+    /// Whether Right Command key is configured as the toggle key
+    var rightCommandAsToggle: Bool { get }
+    
+    /// Whether Control+Space is configured as the toggle key
+    var controlSpaceAsToggle: Bool { get }
+
+    /// Whether macOS owns Caps Lock input-source switching.
+    var capsLockInputSourceSwitchEnabled: Bool { get }
+
+    /// Whether Caps Lock should act like Shift for Korean double consonants.
+    var capsLockProducesDoubleConsonants: Bool { get }
+
+    /// Whether English pass-through should use the user's current Roman layout
+    /// instead of forcing the ABC/US layout.
+    var respectCurrentRomanKeyboardLayout: Bool { get }
+
+    /// Whether Hangyeol should apply English text-convenience substitutions
+    /// instead of leaving them entirely to the host application.
+    var englishTextConvenienceFallbackEnabled: Bool { get }
+    
+    /// Whether the system double-space period feature is enabled.
+    var doubleSpacePeriodEnabled: Bool { get }
+
+    /// Whether the system auto-capitalization feature is enabled.
+    ///
+    /// Hangyeol does not reimplement this in Korean composition; English mode is
+    /// pure pass-through so macOS owns the feature just like the ABC input source.
+    var autoCapitalizationEnabled: Bool { get }
+
+    /// Whether the system smart quote substitution feature is enabled.
+    var smartQuoteSubstitutionEnabled: Bool { get }
+
+    /// Whether the system smart dash substitution feature is enabled.
+    var smartDashSubstitutionEnabled: Bool { get }
+
+    /// Experimental: deliver the in-progress syllable as REAL text (Windows-style
+    /// direct insertion) instead of marked text on probe-verified, non-denylisted hosts.
+    /// Default OFF. See ARCHITECTURE.md, `HostAdapterResolver`.
+    var experimentalDirectInsertion: Bool { get }
+}
+
+public extension ConfigurationProviding {
+    /// Default: experimental direct insertion disabled. Conformers (e.g. test mocks)
+    /// inherit this unless they override it; only `ConfigurationManager` reads the flag.
+    var experimentalDirectInsertion: Bool { false }
+
+    /// Default preserves Hangyeol's existing ABC/US override behavior.
+    var respectCurrentRomanKeyboardLayout: Bool { false }
+
+    /// Default is pure pass-through; hosts own English text substitutions.
+    var englishTextConvenienceFallbackEnabled: Bool { false }
+
+    /// Default: enabled, matching macOS's normal text-input default.
+    var autoCapitalizationEnabled: Bool { true }
+    var smartQuoteSubstitutionEnabled: Bool { true }
+    var smartDashSubstitutionEnabled: Bool { true }
+
+    /// Default preserves Hangyeol's established Caps Lock typing behavior.
+    var capsLockProducesDoubleConsonants: Bool { true }
+}
+
+// MARK: - ConfigurationManager
+
+/// Manages persistent user configuration using UserDefaults
+///
+/// `ConfigurationManager` provides a centralized interface for accessing and
+/// modifying user preferences. All settings are automatically persisted using
+/// `UserDefaults` with the `com.meapri.hangyeol` prefix.
+///
+/// ## Usage
+/// ```swift
+/// // Read current keyboard layout
+/// let layout = ConfigurationManager.shared.keyboardId
+///
+/// // Change keyboard layout (automatically persisted)
+/// ConfigurationManager.shared.keyboardId = "3"  // Switch to Sebeolsik
+/// ```
+///
+/// ## Notifications
+/// When `keyboardId` changes, a `HangyeolKeyboardLayoutChanged` notification is posted
+/// to notify observers (e.g., `HangyeolInputController`) to update the input engine.
+///
+/// ## Thread Safety
+/// This class uses `UserDefaults` which is thread-safe for reading/writing.
+/// The class is marked `@unchecked Sendable` as UserDefaults provides the synchronization.
+public final class ConfigurationManager: ConfigurationProviding, @unchecked Sendable {
+    
+    // MARK: - Singleton
+    
+    /// Shared instance for global access
+    public static let shared = ConfigurationManager()
+    
+    // MARK: - Private Properties
+    
+    private let defaults: UserDefaults
+    private let keyBindingDataReader: @Sendable (String) -> Data?
+    private let systemTextFeatureReader: @Sendable (String) -> Bool?
+    private let capsLockSwitchState = CapsLockSwitchStateCache(
+        reader: ConfigurationManager.readCapsLockInputSourceSwitchState
+    )
+    private var localPreferenceObservers: [NSObjectProtocol] = []
+    private var distributedCapsLockPreferenceObservers: [NSObjectProtocol] = []
+    private let systemTextFeatureLock = NSLock()
+    private let systemTextFeatureRefreshLock = NSLock()
+    private var systemTextFeatureSnapshot: SystemTextFeatureSnapshot
+    private var cachedKeyboardId: String
+    private var cachedEnglishTextConvenienceFallbackEnabled: Bool
+    private var cachedExperimentalDirectInsertion: Bool
+    private var cachedRespectCurrentRomanKeyboardLayout: Bool
+    private var cachedCapsLockProducesDoubleConsonants: Bool
+
+    private convenience init() {
+        self.init(
+            defaults: .standard,
+            keyBindingDataReader: { UserDefaults.standard.data(forKey: $0) },
+            systemTextFeatureReader: ConfigurationManager.readSystemTextFeature
+        )
+    }
+
+    init(
+        defaults: UserDefaults,
+        keyBindingDataReader: @escaping @Sendable (String) -> Data?,
+        systemTextFeatureReader: @escaping @Sendable (String) -> Bool? = ConfigurationManager.readSystemTextFeature
+    ) {
+        self.defaults = defaults
+        self.keyBindingDataReader = keyBindingDataReader
+        self.systemTextFeatureReader = systemTextFeatureReader
+        self.systemTextFeatureSnapshot = ConfigurationManager.readSystemTextFeatureSnapshot(
+            using: systemTextFeatureReader
+        )
+        self.cachedKeyboardId = defaults.string(forKey: Keys.keyboardId) ?? "2"
+        self.cachedEnglishTextConvenienceFallbackEnabled = defaults.bool(
+            forKey: Keys.englishTextConvenienceFallbackEnabled
+        )
+        self.cachedExperimentalDirectInsertion = defaults.bool(
+            forKey: Keys.experimentalDirectInsertion
+        )
+        self.cachedRespectCurrentRomanKeyboardLayout = defaults.bool(
+            forKey: Keys.respectCurrentRomanKeyboardLayout
+        )
+        self.cachedCapsLockProducesDoubleConsonants = defaults.object(
+            forKey: Keys.capsLockProducesDoubleConsonants
+        ) == nil || defaults.bool(forKey: Keys.capsLockProducesDoubleConsonants)
+        observeSystemPreferenceChanges()
+    }
+    
+    // MARK: - Keys
+    
+    private enum Keys {
+        static let keyboardId = key("keyboardId")
+        static let toggleKey = key("toggleKey")  // Legacy key format
+        static let toggleKeyBinding = key("toggleKeyBinding")
+        static let hanjaKeyBinding = key("hanjaKeyBinding")
+        static let lastUpdateCheck = key("lastUpdateCheck")
+        static let autoUpdateCheck = key("autoUpdateCheck")
+        static let experimentalDirectInsertion = key("experimentalDirectInsertion")
+        static let respectCurrentRomanKeyboardLayout = key("respectCurrentRomanKeyboardLayout")
+        static let englishTextConvenienceFallbackEnabled = key(
+            "englishTextConvenienceFallbackEnabled"
+        )
+        static let capsLockProducesDoubleConsonants = key(
+            "capsLockProducesDoubleConsonants"
+        )
+
+        private static func key(_ suffix: String) -> String {
+            "\(ProductIdentity.preferencePrefix).\(suffix)"
+        }
+    }
+
+    private enum SystemTextInputKeys {
+        static let automaticCapitalization = "NSAutomaticCapitalizationEnabled"
+        static let automaticDashSubstitution = "NSAutomaticDashSubstitutionEnabled"
+        static let automaticPeriodSubstitution = "NSAutomaticPeriodSubstitutionEnabled"
+        static let automaticQuoteSubstitution = "NSAutomaticQuoteSubstitutionEnabled"
+    }
+
+    private struct SystemTextFeatureSnapshot: Equatable {
+        let doubleSpacePeriodEnabled: Bool
+        let autoCapitalizationEnabled: Bool
+        let smartQuoteSubstitutionEnabled: Bool
+        let smartDashSubstitutionEnabled: Bool
+    }
+
+    // MARK: - Keyboard Layout
+    
+    /// The current keyboard layout identifier
+    ///
+    /// Supported values:
+    /// - `"2"`: 두벌식 표준 (Dubeolsik Standard)
+    /// - `"3"`: 세벌식 390 (Sebeolsik 390)
+    /// - `"2y"`: 두벌식 옛한글 (Dubeolsik Old Hangul)
+    /// - `"3y"`: 세벌식 옛한글 (Sebeolsik Old Hangul)
+    ///
+    /// When this value changes, a `HangyeolKeyboardLayoutChanged` notification is posted.
+    public var keyboardId: String {
+        get {
+            systemTextFeatureLock.withLock { cachedKeyboardId }
+        }
+        set {
+            let didChange = systemTextFeatureLock.withLock {
+                guard cachedKeyboardId != newValue else { return false }
+                cachedKeyboardId = newValue
+                return true
+            }
+            guard didChange else { return }
+            defaults.set(newValue, forKey: Keys.keyboardId)
+            // Notify observers (e.g. InputController) to update the engine
+            NotificationCenter.default.post(name: .keyboardLayoutChanged, object: nil)
+        }
+    }
+    
+    // MARK: - Toggle Key (Legacy)
+    
+    /// The selected toggle key for switching between Korean and English
+    ///
+    /// Defaults to `.rightCommand` if no preference is set.
+    /// - Note: Legacy property kept for backward compatibility. Prefer `toggleKeyBinding`.
+    public var toggleKey: ToggleKey {
+        get {
+            if let rawValue = defaults.string(forKey: Keys.toggleKey),
+               let key = ToggleKey(rawValue: rawValue) {
+                return key
+            }
+            return .rightCommand  // Default
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: Keys.toggleKey)
+        }
+    }
+    
+    // MARK: - Key Binding Cache
+    // CGEventTap callbacks read these on EVERY key event (100+ times/sec during typing).
+    // JSON decoding on every access is wasteful; cache in memory and invalidate on write.
+    // Lock protects in-memory cache from races between CGEventTap thread and settings UI.
+    
+    private var _cachedToggleBinding: KeyBinding?
+    private var _cachedHanjaBinding: KeyBinding?
+    private let keyBindingLock = NSLock()
+
+    /// Resolve both persisted bindings before a keyboard monitor can invoke its callback.
+    /// Subsequent callback reads stay on the in-memory fast path.
+    func prewarmKeyBindingCache() {
+        _ = toggleKeyBinding
+        _ = hanjaKeyBinding
+    }
+    
+    /// The user-configured toggle key binding
+    ///
+    /// Supports any key or key combination registered via the Key Recorder UI.
+    /// On first access, migrates from legacy `toggleKey` if present.
+    /// Result is cached in memory to avoid JSON decoding on every CGEventTap callback.
+    public var toggleKeyBinding: KeyBinding {
+        get {
+            keyBindingLock.lock()
+            defer { keyBindingLock.unlock() }
+            if let cached = _cachedToggleBinding {
+                return cached
+            }
+            let binding: KeyBinding
+            if let data = keyBindingDataReader(Keys.toggleKeyBinding),
+               let decoded = try? JSONDecoder().decode(KeyBinding.self, from: data) {
+                // Fn and Caps Lock are not supported as Hangyeol custom toggle keys.
+                binding = (decoded.keyCode == 63 || decoded.keyCode == 57) ? .defaultToggle : decoded
+            } else {
+                // Migrate from legacy toggleKey
+                binding = toggleKey.asKeyBinding
+            }
+            _cachedToggleBinding = binding
+            return binding
+        }
+        set {
+            keyBindingLock.lock()
+            _cachedToggleBinding = newValue
+            keyBindingLock.unlock()
+            if let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: Keys.toggleKeyBinding)
+            }
+            NotificationCenter.default.post(name: .keyBindingChanged, object: nil)
+        }
+    }
+    
+    /// The user-configured hanja input key binding
+    ///
+    /// Defaults to Right Option if no preference is set.
+    /// Result is cached in memory to avoid JSON decoding on every CGEventTap callback.
+    public var hanjaKeyBinding: KeyBinding {
+        get {
+            keyBindingLock.lock()
+            defer { keyBindingLock.unlock() }
+            if let cached = _cachedHanjaBinding {
+                return cached
+            }
+            let binding: KeyBinding
+            if let data = keyBindingDataReader(Keys.hanjaKeyBinding),
+               let decoded = try? JSONDecoder().decode(KeyBinding.self, from: data) {
+                // Sanitize: Fn key (63) is not supported in CGEventTap
+                binding = decoded.keyCode == 63 ? .defaultHanja : decoded
+            } else {
+                binding = .defaultHanja
+            }
+            _cachedHanjaBinding = binding
+            return binding
+        }
+        set {
+            keyBindingLock.lock()
+            _cachedHanjaBinding = newValue
+            keyBindingLock.unlock()
+            if let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: Keys.hanjaKeyBinding)
+            }
+            NotificationCenter.default.post(name: .keyBindingChanged, object: nil)
+        }
+    }
+    
+    // MARK: - Convenience Properties
+    
+    /// Whether Right Command key is configured as the toggle key
+    ///
+    /// Use this to conditionally enable Right Command monitoring.
+    public var rightCommandAsToggle: Bool {
+        return toggleKeyBinding.keyCode == 54 && toggleKeyBinding.isModifierOnly
+    }
+    
+    /// Whether Control+Space is configured as the toggle key
+    ///
+    /// Use this to conditionally handle Control+Space in the composer.
+    public var controlSpaceAsToggle: Bool {
+        return toggleKeyBinding.keyCode == 49 && toggleKeyBinding.modifiers == CGEventFlags.maskControl.rawValue
+    }
+
+    /// Use the most recently selected ASCII-capable keyboard layout for English
+    /// pass-through. Default OFF keeps the established ABC/US override.
+    public var respectCurrentRomanKeyboardLayout: Bool {
+        get {
+            systemTextFeatureLock.withLock { cachedRespectCurrentRomanKeyboardLayout }
+        }
+        set {
+            let didChange = systemTextFeatureLock.withLock {
+                guard cachedRespectCurrentRomanKeyboardLayout != newValue else { return false }
+                cachedRespectCurrentRomanKeyboardLayout = newValue
+                return true
+            }
+            guard didChange else { return }
+            defaults.set(newValue, forKey: Keys.respectCurrentRomanKeyboardLayout)
+            NotificationCenter.default.post(name: .romanKeyboardLayoutPreferenceChanged, object: nil)
+        }
+    }
+
+    /// Let Hangyeol emulate macOS English text substitutions in hosts where
+    /// pass-through does not trigger them. Default OFF prevents double transforms.
+    public var englishTextConvenienceFallbackEnabled: Bool {
+        get {
+            systemTextFeatureLock.withLock { cachedEnglishTextConvenienceFallbackEnabled }
+        }
+        set {
+            let didChange = systemTextFeatureLock.withLock {
+                guard cachedEnglishTextConvenienceFallbackEnabled != newValue else { return false }
+                cachedEnglishTextConvenienceFallbackEnabled = newValue
+                return true
+            }
+            guard didChange else { return }
+            defaults.set(newValue, forKey: Keys.englishTextConvenienceFallbackEnabled)
+        }
+    }
+
+    /// Mirrors macOS "Use the Caps Lock key to switch to and from ABC".
+    ///
+    /// When this is enabled, Hangyeol should not also run its own language
+    /// toggle key. The system input-source switch becomes the single owner.
+    public var capsLockInputSourceSwitchEnabled: Bool {
+        capsLockSwitchState.value
+    }
+
+    /// Let the Caps Lock state capitalize Korean layout keys, producing
+    /// ㄲ·ㄸ·ㅃ·ㅆ·ㅉ without holding the physical Shift key. Default ON keeps
+    /// the behavior used by earlier Hangyeol versions.
+    public var capsLockProducesDoubleConsonants: Bool {
+        get {
+            systemTextFeatureLock.withLock { cachedCapsLockProducesDoubleConsonants }
+        }
+        set {
+            let didChange = systemTextFeatureLock.withLock {
+                guard cachedCapsLockProducesDoubleConsonants != newValue else { return false }
+                cachedCapsLockProducesDoubleConsonants = newValue
+                return true
+            }
+            guard didChange else { return }
+            defaults.set(newValue, forKey: Keys.capsLockProducesDoubleConsonants)
+        }
+    }
+
+    /// Refresh the cached ownership setting at a known system-change boundary.
+    ///
+    /// This method may synchronize CFPreferences and therefore must not be
+    /// called for every keyboard event. Keyboard callbacks use the cached
+    /// `capsLockInputSourceSwitchEnabled` property instead.
+    @discardableResult
+    public func refreshCapsLockInputSourceSwitchState() -> Bool {
+        if let change = capsLockSwitchState.refresh() {
+            publishCapsLockInputSourceSwitchChange(change)
+        }
+        return capsLockSwitchState.value
+    }
+
+    private static func readCapsLockInputSourceSwitchState() -> Bool {
+        // Invalidate Core Foundation's process-local view before an explicit
+        // refresh so changes made in System Settings are observable.
+        _ = CFPreferencesSynchronize(
+            kCFPreferencesAnyApplication,
+            kCFPreferencesCurrentUser,
+            kCFPreferencesAnyHost
+        )
+
+        if let value = CFPreferencesCopyValue(
+            "TISRomanSwitchState" as CFString,
+            kCFPreferencesAnyApplication,
+            kCFPreferencesCurrentUser,
+            kCFPreferencesAnyHost
+        ) {
+            if let number = value as? NSNumber {
+                return number.intValue != 0
+            }
+            if let bool = value as? Bool {
+                return bool
+            }
+        }
+
+        return UserDefaults.standard.object(forKey: "TISRomanSwitchState") != nil
+            && UserDefaults.standard.integer(forKey: "TISRomanSwitchState") != 0
+    }
+
+    private func observeSystemPreferenceChanges() {
+        let localCenter = NotificationCenter.default
+        localPreferenceObservers.append(localCenter.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: defaults,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshCapsLockInputSourceSwitchState()
+            self?.refreshSystemTextFeatureSnapshot()
+            self?.refreshInputPolicySnapshot()
+        })
+
+        let distributedCenter = DistributedNotificationCenter.default()
+        let inputSourceNotificationNames = [
+            Notification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String),
+            Notification.Name(kTISNotifyEnabledKeyboardInputSourcesChanged as String)
+        ]
+        distributedCapsLockPreferenceObservers = inputSourceNotificationNames.map { name in
+            distributedCenter.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.refreshCapsLockInputSourceSwitchState()
+            }
+        }
+    }
+
+    private func publishCapsLockInputSourceSwitchChange(_ change: CapsLockSwitchStateCache.Change) {
+        let publish: @Sendable () -> Void = { [weak self] in
+            guard let self,
+                  self.capsLockSwitchState.value == change.currentValue else {
+                return
+            }
+            NotificationCenter.default.post(
+                name: .capsLockInputSourceSwitchChanged,
+                object: self,
+                userInfo: ["isEnabled": change.currentValue]
+            )
+        }
+
+        if Thread.isMainThread {
+            publish()
+        } else {
+            DispatchQueue.main.async(execute: publish)
+        }
+    }
+    
+    // MARK: - Text Input Features
+    
+    /// Mirrors macOS "Add period with double-space" for Korean input and the
+    /// opt-in English text-convenience fallback.
+    public var doubleSpacePeriodEnabled: Bool {
+        return systemTextFeatureLock.withLock {
+            systemTextFeatureSnapshot.doubleSpacePeriodEnabled
+        }
+    }
+
+    /// Mirrors macOS "Capitalize words automatically".
+    ///
+    /// Hangyeol does not apply it in Korean composition. English mode uses it
+    /// only when the explicit text-convenience fallback is enabled.
+    public var autoCapitalizationEnabled: Bool {
+        return systemTextFeatureLock.withLock {
+            systemTextFeatureSnapshot.autoCapitalizationEnabled
+        }
+    }
+
+    /// Mirrors macOS "Use smart quotes".
+    public var smartQuoteSubstitutionEnabled: Bool {
+        return systemTextFeatureLock.withLock {
+            systemTextFeatureSnapshot.smartQuoteSubstitutionEnabled
+        }
+    }
+
+    /// Mirrors macOS "Use smart dashes".
+    public var smartDashSubstitutionEnabled: Bool {
+        return systemTextFeatureLock.withLock {
+            systemTextFeatureSnapshot.smartDashSubstitutionEnabled
+        }
+    }
+
+    /// Refresh all macOS text-feature values at a known low-frequency boundary.
+    ///
+    /// `UserDefaults.didChangeNotification` covers writes made in this process,
+    /// but not writes from System Settings. The app therefore also calls this
+    /// method when application focus changes. Keyboard callbacks read only the
+    /// lock-protected snapshot and never touch `UserDefaults`.
+    @discardableResult
+    public func refreshSystemTextFeatureSnapshot() -> Bool {
+        systemTextFeatureRefreshLock.withLock {
+            let refreshed = ConfigurationManager.readSystemTextFeatureSnapshot(
+                using: systemTextFeatureReader
+            )
+            return systemTextFeatureLock.withLock {
+                guard systemTextFeatureSnapshot != refreshed else { return false }
+                systemTextFeatureSnapshot = refreshed
+                return true
+            }
+        }
+    }
+
+    private static func readSystemTextFeatureSnapshot(
+        using reader: @Sendable (String) -> Bool?
+    ) -> SystemTextFeatureSnapshot {
+        SystemTextFeatureSnapshot(
+            doubleSpacePeriodEnabled: reader(SystemTextInputKeys.automaticPeriodSubstitution) ?? true,
+            autoCapitalizationEnabled: reader(SystemTextInputKeys.automaticCapitalization) ?? true,
+            smartQuoteSubstitutionEnabled: reader(SystemTextInputKeys.automaticQuoteSubstitution) ?? true,
+            smartDashSubstitutionEnabled: reader(SystemTextInputKeys.automaticDashSubstitution) ?? true
+        )
+    }
+
+    private static func readSystemTextFeature(key: String) -> Bool? {
+        // NSGlobalDomain is part of the standard defaults search list, and a
+        // fresh object(forKey:) read picks up values written by other processes.
+        guard UserDefaults.standard.object(forKey: key) != nil else { return nil }
+        return UserDefaults.standard.bool(forKey: key)
+    }
+
+    /// Experimental Windows-style direct insertion (Phase 3). Default OFF.
+    /// When ON, the in-progress syllable is delivered as REAL text on probe-verified,
+    /// non-denylisted hosts instead of marked text. This is a research
+    /// vehicle. Enable via Settings or:
+    ///   defaults write com.meapri.hangyeol.inputmethod com.meapri.hangyeol.experimentalDirectInsertion -bool YES
+    public var experimentalDirectInsertion: Bool {
+        get {
+            systemTextFeatureLock.withLock { cachedExperimentalDirectInsertion }
+        }
+        set {
+            let didChange = systemTextFeatureLock.withLock {
+                guard cachedExperimentalDirectInsertion != newValue else { return false }
+                cachedExperimentalDirectInsertion = newValue
+                return true
+            }
+            guard didChange else { return }
+            defaults.set(newValue, forKey: Keys.experimentalDirectInsertion)
+        }
+    }
+
+    /// Refresh input-path policies at a low-frequency preference boundary.
+    /// Keyboard callbacks read only the lock-protected snapshot.
+    @discardableResult
+    public func refreshInputPolicySnapshot() -> Bool {
+        let refreshedKeyboardId = defaults.string(forKey: Keys.keyboardId) ?? "2"
+        let refreshedDirectInsertion = defaults.bool(forKey: Keys.experimentalDirectInsertion)
+        let refreshedRomanLayout = defaults.bool(forKey: Keys.respectCurrentRomanKeyboardLayout)
+        let refreshedCapsLockDoubleConsonants = defaults.object(
+            forKey: Keys.capsLockProducesDoubleConsonants
+        ) == nil || defaults.bool(forKey: Keys.capsLockProducesDoubleConsonants)
+        return systemTextFeatureLock.withLock {
+            guard cachedKeyboardId != refreshedKeyboardId
+                    || cachedExperimentalDirectInsertion != refreshedDirectInsertion
+                    || cachedRespectCurrentRomanKeyboardLayout != refreshedRomanLayout
+                    || cachedCapsLockProducesDoubleConsonants != refreshedCapsLockDoubleConsonants else {
+                return false
+            }
+            cachedKeyboardId = refreshedKeyboardId
+            cachedExperimentalDirectInsertion = refreshedDirectInsertion
+            cachedRespectCurrentRomanKeyboardLayout = refreshedRomanLayout
+            cachedCapsLockProducesDoubleConsonants = refreshedCapsLockDoubleConsonants
+            return true
+        }
+    }
+
+    // MARK: - Update Settings
+    
+    /// Timestamp of the last successful update check
+    /// Used by `UpdateChecker` to throttle API calls (24-hour interval)
+    public var lastUpdateCheck: Date? {
+        get {
+            defaults.object(forKey: Keys.lastUpdateCheck) as? Date
+        }
+        set {
+            defaults.set(newValue, forKey: Keys.lastUpdateCheck)
+        }
+    }
+    
+    /// Whether automatic update checking is enabled
+    /// Default: enabled
+    public var autoUpdateCheckEnabled: Bool {
+        get {
+            if defaults.object(forKey: Keys.autoUpdateCheck) == nil {
+                return true  // Default enabled
+            }
+            return defaults.bool(forKey: Keys.autoUpdateCheck)
+        }
+        set {
+            defaults.set(newValue, forKey: Keys.autoUpdateCheck)
+        }
+    }
+}
