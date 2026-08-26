@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.26] - 2026-08-26
+
+### Fixed
+- 2.8.24 또는 2.8.25 설치 실패로 PriType 선택이 ABC로 떨어진 상태에서 업데이트해도, 해당 두 버전에서만 PriType을 한 번 다시 선택해 전환 불가 상태를 복구합니다.
+
 ## [2.8.25] - 2026-08-26
 
 ### Fixed

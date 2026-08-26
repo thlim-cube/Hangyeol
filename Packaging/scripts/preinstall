@@ -19,6 +19,11 @@ if [ -n "$CURRENT_USER" ]; then
             /bin/launchctl asuser "$USER_ID" /usr/bin/sudo -H -u "$CURRENT_USER" "$@"
         }
 
+        INSTALLED_VERSION=$(/usr/libexec/PlistBuddy \
+            -c "Print :CFBundleShortVersionString" \
+            "/Library/Input Methods/PriType.app/Contents/Info.plist" \
+            2>/dev/null || true)
+
         # PackageKit can fall back to ABC while it replaces the selected input
         # method. Capture the user's real pre-update selection before stopping
         # PriType so postinstall can restore it without hijacking ABC users.
@@ -29,6 +34,16 @@ if [ -n "$CURRENT_USER" ]; then
         else
             PRI_TYPE_WAS_SELECTED=false
         fi
+
+        # 2.8.24 and 2.8.25 could leave an enabled PriType registration behind
+        # while falling back to ABC. Recover those known broken installations
+        # once; later updates continue to preserve an intentional ABC choice.
+        case "$INSTALLED_VERSION" in
+            2.8.24|2.8.25)
+                PRI_TYPE_WAS_SELECTED=true
+                ;;
+        esac
+
         run_as_console_user /usr/bin/defaults write com.pritype.inputmethod.v2 \
             PriTypeSelectedBeforeInstall -bool "$PRI_TYPE_WAS_SELECTED" || true
 

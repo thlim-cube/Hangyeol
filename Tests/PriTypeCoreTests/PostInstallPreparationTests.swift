@@ -60,10 +60,15 @@ struct InstallerSessionContractTests {
     func preinstallIsUserScoped() throws {
         let source = try script(named: "preinstall")
         let snapshotRange = try #require(source.range(of: "PriTypeSelectedBeforeInstall"))
+        let installedVersionRange = try #require(
+            source.range(of: "Print :CFBundleShortVersionString")
+        )
         let stopRange = try #require(source.range(of: "/usr/bin/pkill"))
 
         #expect(source.contains("pkill -x -u"))
         #expect(source.contains("AppleSelectedInputSources"))
+        #expect(source.contains("2.8.24|2.8.25"))
+        #expect(installedVersionRange.lowerBound < snapshotRange.lowerBound)
         #expect(snapshotRange.lowerBound < stopRange.lowerBound)
         #expect(!source.contains("/bin/rm -rf \"/Library/Input Methods/PriType.app\""))
         #expect(!source.contains("killall"))
