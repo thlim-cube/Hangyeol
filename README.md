@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Meapri/Hangyeol/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Meapri/Hangyeol?label=release"></a>
+  <a href="https://github.com/thlim-cube/Hangyeol/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/thlim-cube/Hangyeol?label=release"></a>
   <img alt="macOS" src="https://img.shields.io/badge/macOS-14.0%2B-111111">
   <img alt="Swift" src="https://img.shields.io/badge/Swift-6.2-F05138">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
@@ -43,7 +43,7 @@
 
 ## 설치
 
-1. [최신 릴리즈](https://github.com/Meapri/Hangyeol/releases/latest)에서 `Hangyeol_Release.pkg`를 다운로드합니다.
+1. [릴리즈 목록](https://github.com/thlim-cube/Hangyeol/releases)에서 최신 `Hangyeol_Release.pkg`를 다운로드합니다.
 2. PKG를 실행해 설치합니다.
 3. 설치기가 한결 입력 소스를 현재 사용자에게 추가하고 설정 창을 한 번 엽니다. 처음 설치할 때는 한결을 바로 선택하고, 업데이트할 때는 현재 선택한 입력 소스를 유지합니다.
 4. 설치가 끝나면 재시동 없이 한결 내부의 한/영 모드를 사용자 지정 전환키로 전환할 수 있습니다.

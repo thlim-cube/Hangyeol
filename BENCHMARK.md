@@ -1,10 +1,12 @@
 # 벤치마크
 
-`swift run -c release HangyeolBenchmark`로 측정했다.
+현재 벤치마크는 `swift run -c release HangyeolBenchmark`로 실행한다.
+
+> 아래 수치는 2.x v2.7.4에서 측정한 역사적 스냅샷입니다. 실행 명령과 소스 경로만 현재 3.x 구조에 맞게 표시합니다.
 
 | 항목 | 값 |
 | --- | --- |
-| Hangyeol | v2.7.4 stable |
+| 측정 대상 | 2.x v2.7.4 stable |
 | 빌드 | Release |
 | 배포 타깃 | macOS 14.0+ (`LC_BUILD_VERSION minos 14.0`) |
 | 측정 환경 | Apple M5 Pro, 48GB RAM |

@@ -7,10 +7,10 @@ public enum ProductIdentity {
     public static let inputModeID = bundleID
     public static let connectionName = "Hangyeol_InputString"
     public static let preferencePrefix = "com.meapri.hangyeol"
-    public static let githubRepository = "Meapri/Hangyeol"
+    public static let githubRepository = "thlim-cube/Hangyeol"
 
-    public static let latestReleaseURL = URL(
-        string: "https://github.com/\(githubRepository)/releases/latest"
+    public static let releasesURL = URL(
+        string: "https://github.com/\(githubRepository)/releases"
     )!
 }
 

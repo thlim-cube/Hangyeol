@@ -13,6 +13,15 @@ struct UpdateCheckerTests {
         #expect(UpdateChecker.isNewer("3.0.0", than: "2.9.9"))
         #expect(UpdateChecker.isNewer("2.4.3", than: "2.4.2"))
     }
+
+    @Test("Product identity uses the canonical Hangyeol release repository")
+    func canonicalReleaseRepository() {
+        #expect(ProductIdentity.githubRepository == "thlim-cube/Hangyeol")
+        #expect(
+            ProductIdentity.releasesURL.absoluteString
+                == "https://github.com/thlim-cube/Hangyeol/releases"
+        )
+    }
     
     @Test("Version comparison: same version not newer")
     func sameVersionNotNewer() {
@@ -108,7 +117,7 @@ struct UpdateCheckerTests {
     ) -> UpdateChecker.GitHubRelease {
         UpdateChecker.GitHubRelease(
             tagName: tagName,
-            htmlUrl: "https://github.com/Meapri/Hangyeol/releases/tag/\(tagName)",
+            htmlUrl: "https://github.com/thlim-cube/Hangyeol/releases/tag/\(tagName)",
             name: name,
             body: nil,
             draft: draft,

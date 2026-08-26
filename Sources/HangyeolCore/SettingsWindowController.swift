@@ -572,7 +572,7 @@ struct SettingsView: View {
             }
             .transition(.opacity)
         case .available(let version):
-            Button(action: { openLatestRelease() }) {
+            Button(action: { openReleases() }) {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.down.circle.fill")
                         .font(.system(size: 12))
@@ -631,8 +631,8 @@ struct SettingsView: View {
         }
     }
 
-    private func openLatestRelease() {
-        NSWorkspace.shared.open(ProductIdentity.latestReleaseURL)
+    private func openReleases() {
+        NSWorkspace.shared.open(ProductIdentity.releasesURL)
     }
 
     private func openInputSourceSettings() {
