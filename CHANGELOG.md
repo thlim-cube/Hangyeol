@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.24] - 2026-08-26
+
+### Fixed
+- ABC와 PriType만 등록한 구성에서도 macOS의 `Caps Lock 키로 ABC 입력 소스 전환` 옵션이 나타나도록, 단일 Korean mode를 유지한 채 시스템 언어 전환 capability를 복구했습니다.
+
 ## [2.8.23] - 2026-08-26
 
 ### Fixed

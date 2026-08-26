@@ -55,10 +55,10 @@ struct RegistrationContractTests {
         #expect(visible == ["com.pritype.inputmethod.v2"])
     }
 
-    @Test("Does not advertise child-mode Caps Lock switching")
-    func noChildModeCapsLockCapability() throws {
+    @Test("Advertises system Caps Lock switching without an English child mode")
+    func systemCapsLockCapability() throws {
         let info = try loadInfoPlist()
-        #expect(info["TICapsLockLanguageSwitchCapable"] == nil)
+        #expect(info["TICapsLockLanguageSwitchCapable"] as? Bool == true)
     }
 
     @Test("Forbidden registration keys are absent (regression guard)")
