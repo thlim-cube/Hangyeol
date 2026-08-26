@@ -142,7 +142,9 @@ final class MarkedTextAdapter: BaseClientAdapter {
     }
 
     override var hostTransactionMarkedRange: NSRange? {
+        recoverRenderedMarkedLocation(for: renderedMarkedText)
         guard renderedMarkedLocation != NSNotFound,
+              renderedMarkedLocationIsConfirmed,
               !renderedMarkedText.isEmpty else { return nil }
         return NSRange(
             location: renderedMarkedLocation,

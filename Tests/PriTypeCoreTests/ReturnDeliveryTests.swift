@@ -409,20 +409,35 @@ struct ReturnDeliveryTests {
         ) == .cancel)
     }
 
-    @Test("Return waits for composition retirement without pinning Blink's caret")
-    func returnAllowsPostCommitCaretTransition() throws {
+    @Test("Shift+Return waits until the last composed syllable is visible")
+    func returnWaitsForDocumentPromotion() throws {
         var gate = try #require(DeferredCompositionRetirementGate(
             markedRange: NSRange(location: 2, length: 1),
             targetPolicy: .compositionOnly
         ))
 
+        #expect(gate.committedTextVerificationRange(
+            for: NSRange(location: NSNotFound, length: 0)
+        ) == NSRange(location: 2, length: 1))
         #expect(gate.observe(
             markedRange: NSRange(location: NSNotFound, length: 0),
-            selectedRange: NSRange(location: NSNotFound, length: 0)
+            selectedRange: NSRange(location: NSNotFound, length: 0),
+            committedTextIsVisible: false
         ) == .wait)
         #expect(gate.observe(
             markedRange: NSRange(location: NSNotFound, length: 0),
-            selectedRange: NSRange(location: 4, length: 0)
+            selectedRange: NSRange(location: 4, length: 0),
+            committedTextIsVisible: false
+        ) == .wait)
+        #expect(gate.observe(
+            markedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: 4, length: 0),
+            committedTextIsVisible: true
+        ) == .wait)
+        #expect(gate.observe(
+            markedRange: NSRange(location: NSNotFound, length: 0),
+            selectedRange: NSRange(location: 4, length: 0),
+            committedTextIsVisible: true
         ) == .deliver)
     }
 

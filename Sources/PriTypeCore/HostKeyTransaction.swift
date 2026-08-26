@@ -159,8 +159,11 @@ struct DeferredCompositionRetirementGate {
     }
 
     func committedTextVerificationRange(for selectedRange: NSRange) -> NSRange? {
-        guard targetPolicy == .caretAnchored || originalMarkedRange == nil,
-              selectedRange.length == 0 else { return nil }
+        if targetPolicy == .compositionOnly,
+           let originalMarkedRange {
+            return originalMarkedRange
+        }
+        guard selectedRange.length == 0 else { return nil }
         return caretTargets.first {
             $0.location == selectedRange.location
         }?.verificationRange

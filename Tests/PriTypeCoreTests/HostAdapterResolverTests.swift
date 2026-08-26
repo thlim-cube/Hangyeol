@@ -394,6 +394,28 @@ struct HostAdapterResolverTests {
             }
         }
     }
+
+    @Test("Forward Delete never trusts an unconfirmed stale preedit caret")
+    func markedAdapterRejectsUnconfirmedStaleCaret() {
+        let client = DelayedMarkedRangeClient(initialSelectionLocation: 1)
+        let adapter = MarkedTextAdapter(
+            client: client,
+            hostSurface: .blinkWeb
+        )
+
+        adapter.setMarkedText("ㅁ")
+        #expect(adapter.hostTransactionMarkedRange == nil)
+
+        adapter.setMarkedText("마")
+        #expect(adapter.hostTransactionMarkedRange == NSRange(location: 2, length: 1))
+        #expect(adapter.tryPerformHostKeyTransaction(
+            keyCode: KeyCode.forwardDelete,
+            modifierFlags: NSEvent.ModifierFlags.function.rawValue,
+            commit: { adapter.insertText("마") }
+        ))
+        #expect(client.orderedHostCalls == ["insert:마", "delete:3:1"])
+        #expect(client.document == "가나마라")
+    }
 }
 
 // MARK: - Composition renderer classification

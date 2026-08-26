@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.23] - 2026-08-26
+
+### Fixed
+- Chrome 등 Blink 편집기에서 마지막 한글 조합이 문서 텍스트로 확정되기 전에 Shift+Enter를 재전달해 마지막 글자가 사라지던 문제를 수정했습니다.
+- 문장 중간 조합 직후 Forward Delete가 아직 확인되지 않은 임시 caret을 조합 위치로 오인해 방금 입력한 글자를 지우던 문제를 수정했습니다.
+
 ## [2.8.22] - 2026-08-26
 
 ### Fixed
