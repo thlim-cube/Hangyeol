@@ -158,10 +158,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 // MARK: - Main Entry Point
 
 if PostInstallPreparation.shouldPrepare(arguments: CommandLine.arguments) {
+    let restorePreviousSelection = PostInstallPreparation.selectedBeforeInstall()
     let result = InputSourceManager.shared.prepareInstalledInputSource(
         at: Bundle.main.bundleURL,
-        selectIfUnconfigured: true
+        selectIfUnconfigured: true,
+        restorePreviousSelection: restorePreviousSelection
     )
+    if result.isReady {
+        PostInstallPreparation.clearSelectedBeforeInstall()
+    }
     PostInstallPreparation.markPending()
     let enableFailure = result.firstEnableFailure.map(String.init) ?? "none"
     let selection = result.selectionStatus.map(String.init) ?? "preserved"

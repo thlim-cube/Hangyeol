@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.25] - 2026-08-26
+
+### Fixed
+- PKG가 교체 직후의 캐시된 TIS 상태를 설치 완료로 오인하지 않도록, 부모 입력기와 Korean mode의 활성화를 항상 재확인하고 비동기 등록 변경 뒤 다시 조회합니다.
+- 업데이트 중 macOS가 PriType에서 ABC로 임시 전환해도 설치 직전 PriType 선택 상태를 복구하며, 원래 ABC나 다른 입력 소스를 사용 중이었다면 그 선택을 유지합니다.
+
 ## [2.8.24] - 2026-08-26
 
 ### Fixed

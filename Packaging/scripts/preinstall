@@ -15,6 +15,23 @@ if [ -n "$CURRENT_USER" ]; then
         | /usr/bin/awk '{ print $2 }')
 
     if [ -n "$USER_ID" ]; then
+        run_as_console_user() {
+            /bin/launchctl asuser "$USER_ID" /usr/bin/sudo -H -u "$CURRENT_USER" "$@"
+        }
+
+        # PackageKit can fall back to ABC while it replaces the selected input
+        # method. Capture the user's real pre-update selection before stopping
+        # PriType so postinstall can restore it without hijacking ABC users.
+        if run_as_console_user /usr/bin/defaults read \
+            com.apple.HIToolbox AppleSelectedInputSources 2>/dev/null \
+            | /usr/bin/grep -q "com.pritype.inputmethod.v2"; then
+            PRI_TYPE_WAS_SELECTED=true
+        else
+            PRI_TYPE_WAS_SELECTED=false
+        fi
+        run_as_console_user /usr/bin/defaults write com.pritype.inputmethod.v2 \
+            PriTypeSelectedBeforeInstall -bool "$PRI_TYPE_WAS_SELECTED" || true
+
         /usr/bin/pkill -x -u "$USER_ID" PriType 2>/dev/null || true
         /usr/bin/pkill -x -u "$USER_ID" PriTypeV2 2>/dev/null || true
     fi

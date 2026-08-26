@@ -22,6 +22,20 @@ struct PostInstallPreparationTests {
         #expect(PostInstallPreparation.consumePending(in: defaults))
         #expect(!PostInstallPreparation.consumePending(in: defaults))
     }
+
+    @Test("Keeps the preinstall selection snapshot until preparation succeeds")
+    func keepsSelectionSnapshotUntilCleared() throws {
+        let suiteName = "PostInstallPreparationTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: PostInstallPreparation.selectedBeforeInstallKey)
+
+        #expect(PostInstallPreparation.selectedBeforeInstall(in: defaults))
+        #expect(PostInstallPreparation.selectedBeforeInstall(in: defaults))
+
+        PostInstallPreparation.clearSelectedBeforeInstall(in: defaults)
+        #expect(!PostInstallPreparation.selectedBeforeInstall(in: defaults))
+    }
 }
 
 @Suite("Installer Session Contract")
@@ -45,8 +59,12 @@ struct InstallerSessionContractTests {
     @Test("Preinstall only stops the console user's exact PriType processes")
     func preinstallIsUserScoped() throws {
         let source = try script(named: "preinstall")
+        let snapshotRange = try #require(source.range(of: "PriTypeSelectedBeforeInstall"))
+        let stopRange = try #require(source.range(of: "/usr/bin/pkill"))
 
         #expect(source.contains("pkill -x -u"))
+        #expect(source.contains("AppleSelectedInputSources"))
+        #expect(snapshotRange.lowerBound < stopRange.lowerBound)
         #expect(!source.contains("/bin/rm -rf \"/Library/Input Methods/PriType.app\""))
         #expect(!source.contains("killall"))
         #expect(!source.contains("sleep "))
@@ -59,7 +77,7 @@ struct InstallerSessionContractTests {
 
         #expect(source.contains("launchctl asuser"))
         #expect(source.contains("sudo -H -u"))
-        #expect(source.contains("--post-install-prepare"))
+        #expect(source.components(separatedBy: "--post-install-prepare").count - 1 == 2)
         #expect(!source.contains("lsregister"))
         #expect(!source.contains("kickstart -k"))
         #expect(!source.contains("TextInputMenuAgent"))

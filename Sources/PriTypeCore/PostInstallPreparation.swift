@@ -5,6 +5,7 @@ public enum PostInstallPreparation {
     public static let failureExitCode: Int32 = 10
 
     private static let pendingSetupKey = "PriTypePendingPostInstallSetup"
+    internal static let selectedBeforeInstallKey = "PriTypeSelectedBeforeInstall"
 
     public static func shouldPrepare(arguments: [String]) -> Bool {
         arguments.dropFirst().contains(argument)
@@ -22,5 +23,18 @@ public enum PostInstallPreparation {
         defaults.removeObject(forKey: pendingSetupKey)
         defaults.synchronize()
         return true
+    }
+
+    public static func selectedBeforeInstall(
+        in defaults: UserDefaults = .standard
+    ) -> Bool {
+        defaults.bool(forKey: selectedBeforeInstallKey)
+    }
+
+    public static func clearSelectedBeforeInstall(
+        in defaults: UserDefaults = .standard
+    ) {
+        defaults.removeObject(forKey: selectedBeforeInstallKey)
+        defaults.synchronize()
     }
 }

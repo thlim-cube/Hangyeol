@@ -29,6 +29,48 @@ internal struct InputSourceInstallationCandidate: Equatable {
     let isSelectCapable: Bool
 }
 
+internal struct InputSourceInstallationPlan {
+    let candidatesToEnable: [InputSourceInstallationCandidate]
+    let enabledMode: InputSourceInstallationCandidate?
+    let hasRequiredCandidates: Bool
+    let isEnabled: Bool
+}
+
+private final class InputSourceChangeMonitor: @unchecked Sendable {
+    private let center = DistributedNotificationCenter.default()
+    private var observerTokens: [NSObjectProtocol] = []
+    private var didObserveChange = false
+
+    init() {
+        let notificationNames = [
+            Notification.Name(kTISNotifyEnabledKeyboardInputSourcesChanged as String),
+            Notification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String)
+        ]
+        observerTokens = notificationNames.map { name in
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.didObserveChange = true
+            }
+        }
+    }
+
+    deinit {
+        observerTokens.forEach(center.removeObserver)
+    }
+
+    func waitForChange(until deadline: Date) -> Bool {
+        let timeoutTimer = Timer(fire: deadline, interval: 0, repeats: false) { _ in }
+        RunLoop.current.add(timeoutTimer, forMode: .default)
+        defer { timeoutTimer.invalidate() }
+
+        while !didObserveChange && Date() < deadline {
+            _ = RunLoop.current.run(mode: .default, before: deadline)
+        }
+        let observedChange = didObserveChange
+        didObserveChange = false
+        return observedChange
+    }
+}
+
 // MARK: - InputSourceManager
 
 /// Manages macOS input-source queries, installer registration, and stale
@@ -154,18 +196,24 @@ public final class InputSourceManager: @unchecked Sendable {
     @discardableResult
     public func prepareInstalledInputSource(
         at appURL: URL,
-        selectIfUnconfigured: Bool
+        selectIfUnconfigured: Bool,
+        restorePreviousSelection: Bool
     ) -> InputSourceInstallationResult {
+        let changeMonitor = InputSourceChangeMonitor()
         let cleanupResult = cleanupStaleInputSources()
         let registrationStatus = TISRegisterInputSource(appURL as CFURL)
-        let initialRecords = priTypeInstallationRecords()
-        let orderedCandidates = Self.installationCandidates(
-            from: initialRecords.map(\.candidate)
+        let discoveredRecords = installationRecords(
+            waitingUntil: { $0.hasRequiredCandidates },
+            changeMonitor: changeMonitor
         )
+        let discoveryPlan = Self.installationPlan(from: discoveredRecords.map(\.candidate))
 
         var firstEnableFailure: OSStatus?
-        for candidate in orderedCandidates where !candidate.isEnabled {
-            guard let source = initialRecords.first(where: {
+        // TIS may hand the installer a cached `isEnabled=true` record from the
+        // replaced bundle. Reassert both identities so the new registration is
+        // persisted instead of disappearing when the system cache refreshes.
+        for candidate in discoveryPlan.candidatesToEnable {
+            guard let source = discoveredRecords.first(where: {
                 $0.candidate.inputSourceID == candidate.inputSourceID
             })?.source else {
                 firstEnableFailure = firstEnableFailure ?? OSStatus(paramErr)
@@ -178,23 +226,19 @@ public final class InputSourceManager: @unchecked Sendable {
             }
         }
 
-        let enabledRecords = priTypeInstallationRecords()
-        let enabledCandidates = Self.installationCandidates(
-            from: enabledRecords.map(\.candidate)
+        let enabledRecords = installationRecords(
+            waitingUntil: { $0.isEnabled },
+            changeMonitor: changeMonitor
         )
-        let hasEnabledParent = enabledCandidates.contains {
-            Self.installationRole(of: $0) == 0 && $0.isEnabled
-        }
-        let enabledMode = enabledCandidates.first {
-            Self.installationRole(of: $0) == 1 && $0.isEnabled
-        }
+        let enabledPlan = Self.installationPlan(from: enabledRecords.map(\.candidate))
 
         let shouldSelect = Self.shouldSelectInstalledInputSource(
             selectIfUnconfigured: selectIfUnconfigured,
-            hasCurrentRegistration: cleanupResult.hasCurrentPriTypeRegistration
+            hasCurrentRegistration: cleanupResult.hasCurrentPriTypeRegistration,
+            restorePreviousSelection: restorePreviousSelection
         )
         var selectionStatus: OSStatus?
-        if shouldSelect, let enabledMode {
+        if shouldSelect, let enabledMode = enabledPlan.enabledMode {
             guard let modeSource = enabledRecords.first(where: {
                 $0.candidate.inputSourceID == enabledMode.inputSourceID
             })?.source else {
@@ -207,16 +251,55 @@ public final class InputSourceManager: @unchecked Sendable {
                 )
             }
             selectionStatus = TISSelectInputSource(modeSource)
+            if selectionStatus == noErr && !isPriTypeSelected() {
+                _ = changeMonitor.waitForChange(
+                    until: Date().addingTimeInterval(Self.postInstallSettlementTimeout)
+                )
+            }
         }
 
-        let isEnabled = hasEnabledParent && enabledMode != nil
-        let selectionSucceeded = !shouldSelect || selectionStatus == noErr
+        let selectionSucceeded = !shouldSelect
+            || (selectionStatus == noErr && isPriTypeSelected())
         return InputSourceInstallationResult(
             registrationStatus: registrationStatus,
             firstEnableFailure: firstEnableFailure,
             selectionStatus: selectionStatus,
-            isReady: isEnabled && selectionSucceeded
+            isReady: registrationStatus == noErr
+                && firstEnableFailure == nil
+                && enabledPlan.isEnabled
+                && selectionSucceeded
         )
+    }
+
+    internal static func installationPlan(
+        from candidates: [InputSourceInstallationCandidate]
+    ) -> InputSourceInstallationPlan {
+        let orderedCandidates = installationCandidates(from: candidates)
+        let parent = orderedCandidates.first { installationRole(of: $0) == 0 }
+        let mode = orderedCandidates.first { installationRole(of: $0) == 1 }
+        return InputSourceInstallationPlan(
+            candidatesToEnable: orderedCandidates,
+            enabledMode: mode?.isEnabled == true ? mode : nil,
+            hasRequiredCandidates: parent != nil && mode != nil,
+            isEnabled: parent?.isEnabled == true && mode?.isEnabled == true
+        )
+    }
+
+    internal static func settleInstallationState<State>(
+        initial: State,
+        isSettled: (State) -> Bool,
+        waitForChange: () -> Bool,
+        reload: () -> State
+    ) -> State {
+        var state = initial
+        while !isSettled(state) {
+            let observedChange = waitForChange()
+            state = reload()
+            if !observedChange {
+                break
+            }
+        }
+        return state
     }
 
     internal static func installationCandidates(
@@ -232,14 +315,44 @@ public final class InputSourceManager: @unchecked Sendable {
 
     internal static func shouldSelectInstalledInputSource(
         selectIfUnconfigured: Bool,
-        hasCurrentRegistration: Bool
+        hasCurrentRegistration: Bool,
+        restorePreviousSelection: Bool
     ) -> Bool {
-        selectIfUnconfigured && !hasCurrentRegistration
+        restorePreviousSelection || (selectIfUnconfigured && !hasCurrentRegistration)
     }
 
     private struct InputSourceInstallationRecord {
         let source: TISInputSource
         let candidate: InputSourceInstallationCandidate
+    }
+
+    private static let postInstallSettlementTimeout: TimeInterval = 10
+
+    private func installationRecords(
+        waitingUntil condition: (InputSourceInstallationPlan) -> Bool,
+        changeMonitor: InputSourceChangeMonitor
+    ) -> [InputSourceInstallationRecord] {
+        let deadline = Date().addingTimeInterval(Self.postInstallSettlementTimeout)
+        return Self.settleInstallationState(
+            initial: priTypeInstallationRecords(),
+            isSettled: { records in
+                condition(Self.installationPlan(from: records.map(\.candidate)))
+            },
+            waitForChange: {
+                changeMonitor.waitForChange(until: deadline)
+            },
+            reload: {
+                priTypeInstallationRecords()
+            }
+        )
+    }
+
+    private func isPriTypeSelected() -> Bool {
+        guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else {
+            return false
+        }
+        return Self.stringProperty(kTISPropertyInputModeID, from: source)
+            == Self.priTypeKoreanInputMode
     }
 
     private func priTypeInstallationRecords() -> [InputSourceInstallationRecord] {
