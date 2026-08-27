@@ -24,7 +24,21 @@ private func isInputSourceAuthoritativelyReady() -> Bool {
     }
 }
 
+private func openInputSourceSettingsAfterPreparationFailure() {
+    guard let settingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.preference.keyboard?InputSources"
+    ) else {
+        return
+    }
+    _ = NSWorkspace.shared.open(settingsURL)
+}
+
 if PostInstallPreparation.shouldRunLaunchProbe(arguments: CommandLine.arguments) {
+    exit(EXIT_SUCCESS)
+}
+
+if PostInstallPreparation.shouldMarkPending(arguments: CommandLine.arguments) {
+    PostInstallPreparation.markPending()
     exit(EXIT_SUCCESS)
 }
 
@@ -210,8 +224,9 @@ if PostInstallPreparation.shouldPrepare(arguments: CommandLine.arguments) {
     let isReady = authoritativeReady && selectionSucceeded
     if isReady {
         PostInstallPreparation.clearInstallationSnapshot()
+    } else {
+        openInputSourceSettingsAfterPreparationFailure()
     }
-    PostInstallPreparation.markPending()
     let enableFailure = result.firstEnableFailure.map(String.init) ?? "none"
     let selectionStatus = selection.map { String($0.status) } ?? "preserved"
     print(

@@ -2,6 +2,7 @@ import Foundation
 
 public enum PostInstallPreparation {
     public static let argument = "--post-install-prepare"
+    public static let notificationArgument = "--post-install-notify"
     public static let statusArgument = "--post-install-status"
     public static let launchProbeArgument = "--verify-launch"
     public static let failureExitCode: Int32 = 10
@@ -16,6 +17,10 @@ public enum PostInstallPreparation {
 
     public static func shouldPrepare(arguments: [String]) -> Bool {
         arguments.dropFirst().contains(argument)
+    }
+
+    public static func shouldMarkPending(arguments: [String]) -> Bool {
+        arguments.dropFirst().contains(notificationArgument)
     }
 
     public static func shouldCheckStatus(arguments: [String]) -> Bool {

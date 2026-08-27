@@ -26,23 +26,20 @@ run_as_console_user() {
 /usr/bin/pkill -x -u "$USER_ID" PriType 2>/dev/null || true
 /usr/bin/pkill -x -u "$USER_ID" PriTypeV2 2>/dev/null || true
 
-# Register and enable Hangyeol synchronously in the logged-in user's TIS domain.
-# The signed helper remains alive while macOS asks for activation consent and
-# accepts success only after a separate process sees the persisted TIS state.
-run_as_console_user "$APP_EXECUTABLE" --post-install-prepare
-PREPARE_STATUS=$?
-
-# Do not trust the activation caller's TIS cache. Recheck from one final fresh
-# process before deciding whether setup is complete.
-run_as_console_user "$APP_EXECUTABLE" --post-install-status
-STATUS_CHECK=$?
-if [ "$STATUS_CHECK" -ne 0 ]; then
-    PREPARE_STATUS=$STATUS_CHECK
-fi
-
+# Mark the settings presentation through a bounded helper command, then open
+# the app while PackageKit still has the logged-in user's GUI context.
+run_as_console_user "$APP_EXECUTABLE" --post-install-notify \
+    >/dev/null 2>&1 || true
 run_as_console_user /usr/bin/open "$APP_PATH" >/dev/null 2>&1 || true
 
-if [ "$PREPARE_STATUS" -ne 0 ]; then
+# Input-source consent and TIS propagation are login-session work, not a
+# PackageKit transaction. LaunchServices owns this independent signed helper,
+# so Installer can finish while the helper waits for authoritative TIS state.
+run_as_console_user /usr/bin/open -n -g "$APP_PATH" \
+    --args --post-install-prepare >/dev/null 2>&1
+PREPARE_LAUNCH_STATUS=$?
+
+if [ "$PREPARE_LAUNCH_STATUS" -ne 0 ]; then
     run_as_console_user /usr/bin/open \
         "x-apple.systempreferences:com.apple.preference.keyboard?InputSources" \
         >/dev/null 2>&1 || true

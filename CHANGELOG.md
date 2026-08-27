@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.4] - 2026-08-28
+
+### Fixed
+- 입력 소스 활성화 동의와 TIS 전파 확인을 PackageKit의 동기 `postinstall`에서 독립된 서명 앱 프로세스로 옮겨, 승인을 기다리는 동안 Installer가 멈춘 것처럼 보이던 문제를 해결했습니다. 설정 창 표시는 짧은 별도 명령으로 먼저 예약하며, 준비 실패 시에만 입력 소스 설정을 안내합니다.
+
 ## [3.0.3] - 2026-08-28
 
 ### Added

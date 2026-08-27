@@ -11,6 +11,17 @@ struct PostInstallPreparationTests {
         #expect(!PostInstallPreparation.shouldPrepare(arguments: ["Hangyeol", "--unrelated"]))
     }
 
+    @Test("Recognizes only the bounded installer notification argument")
+    func recognizesInstallerNotificationArgument() {
+        #expect(PostInstallPreparation.shouldMarkPending(
+            arguments: ["Hangyeol", "--post-install-notify"]
+        ))
+        #expect(!PostInstallPreparation.shouldMarkPending(arguments: ["Hangyeol"]))
+        #expect(!PostInstallPreparation.shouldMarkPending(
+            arguments: ["Hangyeol", "--post-install-prepare"]
+        ))
+    }
+
     @Test("Recognizes only the private external status argument")
     func recognizesStatusArgument() {
         #expect(PostInstallPreparation.shouldCheckStatus(
@@ -187,14 +198,32 @@ struct InstallerSessionContractTests {
         #expect(!source.contains("for user_home in /Users/*"))
     }
 
-    @Test("Postinstall prepares and launches Hangyeol in the GUI user session")
-    func postinstallUsesGUIUserSession() throws {
+    @Test("Postinstall delegates activation without blocking PackageKit")
+    func postinstallDelegatesActivationOutsidePackageKit() throws {
         let source = try script(named: "postinstall")
+        let settingsMarkerRange = try #require(
+            source.range(of: "--post-install-notify")
+        )
+        let settingsLaunchRange = try #require(
+            source.range(of: "run_as_console_user /usr/bin/open \"$APP_PATH\"")
+        )
+        let preparationLaunchRange = try #require(
+            source.range(of: "run_as_console_user /usr/bin/open -n -g \"$APP_PATH\"")
+        )
+        let preparationArgumentRange = try #require(
+            source.range(of: "--args --post-install-prepare")
+        )
 
         #expect(source.contains("launchctl asuser"))
         #expect(source.contains("sudo -H -u"))
         #expect(source.components(separatedBy: "--post-install-prepare").count - 1 == 1)
-        #expect(source.components(separatedBy: "--post-install-status").count - 1 == 1)
+        #expect(source.components(separatedBy: "--post-install-notify").count - 1 == 1)
+        #expect(!source.contains("--post-install-status"))
+        #expect(settingsMarkerRange.lowerBound < settingsLaunchRange.lowerBound)
+        #expect(settingsLaunchRange.lowerBound < preparationLaunchRange.lowerBound)
+        #expect(preparationLaunchRange.lowerBound < preparationArgumentRange.lowerBound)
+        #expect(!source.contains("open -W"))
+        #expect(!source.contains("PREPARE_STATUS"))
         #expect(!source.contains("pkill -x -u \"$USER_ID\" Hangyeol"))
         #expect(!source.contains("lsregister"))
         #expect(!source.contains("kickstart -k"))
@@ -250,6 +279,7 @@ struct InstallerSessionContractTests {
         #expect(source.contains("if shouldShowSettingsAfterInstall {"))
         #expect(source.contains("waitForAuthoritativeStatus"))
         #expect(source.contains("shouldSelectAfterActivation"))
+        #expect(source.contains("openInputSourceSettingsAfterPreparationFailure"))
         #expect(!source.contains("Task.detached(priority: .utility) {\n            _ = InputSourceManager.shared.cleanupStaleInputSources()"))
         #expect(!source.contains("&& !IOKitManager.hasAccessibilityPermission()"))
     }
