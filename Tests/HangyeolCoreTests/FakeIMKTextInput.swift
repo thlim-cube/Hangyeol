@@ -14,6 +14,7 @@ class FakeIMKTextInput: NSObject, IMKTextInput {
     var markedPayloadWasAttributed: [Bool] = []
     var firstRectValue = NSRect.zero
     var onInsertText: (() -> Void)?
+    var onSetMarkedText: (() -> Void)?
     var onAttributedSubstring: (() -> Void)?
     var onSelectedRange: (() -> Void)?
     var attributedSubstringUnavailable = false
@@ -58,6 +59,7 @@ class FakeIMKTextInput: NSObject, IMKTextInput {
             let location = selectedRangeValue.location == NSNotFound ? 0 : selectedRangeValue.location
             markedRangeValue = NSRange(location: location, length: text.utf16.count)
         }
+        onSetMarkedText?()
     }
 
     func selectedRange() -> NSRange {

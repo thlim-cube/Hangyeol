@@ -405,6 +405,10 @@ struct HostAdapterResolverTests {
 
         adapter.setMarkedText("ㅁ")
         #expect(adapter.hostTransactionMarkedRange == nil)
+        #expect(
+            adapter.hostTransactionProvisionalMarkedRange
+                == NSRange(location: 1, length: 1)
+        )
 
         adapter.setMarkedText("마")
         #expect(adapter.hostTransactionMarkedRange == NSRange(location: 2, length: 1))

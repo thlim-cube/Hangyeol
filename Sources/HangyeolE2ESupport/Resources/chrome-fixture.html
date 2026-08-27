@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>HangyeolE2E</title>
+  <style>
+    body { font: 18px -apple-system, sans-serif; margin: 40px; max-width: 900px; }
+    label { display: block; margin: 18px 0; }
+    input, textarea, [contenteditable] {
+      box-sizing: border-box;
+      display: block;
+      font: inherit;
+      margin-top: 6px;
+      min-height: 44px;
+      padding: 8px;
+      width: 100%;
+    }
+    [contenteditable] { border: 1px solid #888; }
+    .fields { display: grid; gap: 20px; grid-template-columns: 1fr 1fr; }
+  </style>
+</head>
+<body>
+  <h1>Hangyeol IME E2E fixture</h1>
+  <label>일반 input<input id="normal-input" autocomplete="off"></label>
+  <label>contenteditable<div id="editable" contenteditable="true"></div></label>
+  <div class="fields">
+    <label>왼쪽 필드<input id="left" autocomplete="off"></label>
+    <label>오른쪽 필드<input id="right" autocomplete="off"></label>
+  </div>
+  <label>여러 줄<textarea id="multiline"></textarea></label>
+  <script>
+    const ids = ["normal-input", "editable", "left", "right", "multiline"];
+    const valueOf = (id) => {
+      const element = document.getElementById(id);
+      return id === "editable" ? element.innerText : element.value;
+    };
+    const bytesToBase64 = (bytes) => {
+      let binary = "";
+      bytes.forEach((byte) => binary += String.fromCharCode(byte));
+      return btoa(binary);
+    };
+    const publish = () => {
+      const horizontalChrome = Math.max(0, (window.outerWidth - window.innerWidth) / 2);
+      const verticalChrome = Math.max(0, window.outerHeight - window.innerHeight - horizontalChrome);
+      const centers = Object.fromEntries(ids.map((id) => {
+        const rect = document.getElementById(id).getBoundingClientRect();
+        return [id, {
+          x: window.screenX + horizontalChrome + rect.left + rect.width / 2,
+          y: window.screenY + verticalChrome + rect.top + rect.height / 2
+        }];
+      }));
+      const selections = Object.fromEntries(ids.map((id) => {
+        const element = document.getElementById(id);
+        if (typeof element.selectionStart === "number") {
+          return [id, {start: element.selectionStart, end: element.selectionEnd}];
+        }
+        const selection = window.getSelection();
+        const offset = selection && selection.rangeCount > 0
+          && element.contains(selection.anchorNode)
+          ? selection.anchorOffset
+          : null;
+        return [id, {start: offset, end: offset}];
+      }));
+      const state = {
+        normalInput: valueOf("normal-input"),
+        editable: valueOf("editable"),
+        left: valueOf("left"),
+        right: valueOf("right"),
+        multiline: valueOf("multiline"),
+        focusedID: document.activeElement?.id || "",
+        pageID: location.hash.slice(1),
+        centers,
+        selections
+      };
+      const json = JSON.stringify(state);
+      document.title = "HangyeolE2E:" + bytesToBase64(new TextEncoder().encode(json));
+    };
+    ids.forEach((id) => {
+      const element = document.getElementById(id);
+      ["beforeinput", "input", "compositionstart", "compositionupdate",
+       "compositionend", "focus", "blur", "keyup", "mouseup"].forEach((name) => {
+        element.addEventListener(name, () => queueMicrotask(publish));
+      });
+    });
+    window.addEventListener("resize", publish);
+    window.addEventListener("scroll", publish);
+    publish();
+  </script>
+</body>
+</html>

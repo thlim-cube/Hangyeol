@@ -312,27 +312,23 @@ struct InputSourceManagerTests {
         #expect(reloadCount == 1)
     }
 
-    @Test("Installer restores Hangyeol only when it was selected before an update")
-    func installerSelectionPolicyRestoresPreviousSelection() {
-        #expect(InputSourceManager.shouldSelectInstalledInputSource(
-            selectIfUnconfigured: true,
-            hasCurrentRegistration: false,
-            restorePreviousSelection: false
-        ))
-        #expect(!InputSourceManager.shouldSelectInstalledInputSource(
-            selectIfUnconfigured: true,
-            hasCurrentRegistration: true,
-            restorePreviousSelection: false
-        ))
-        #expect(InputSourceManager.shouldSelectInstalledInputSource(
-            selectIfUnconfigured: true,
-            hasCurrentRegistration: true,
-            restorePreviousSelection: true
-        ))
-        #expect(!InputSourceManager.shouldSelectInstalledInputSource(
-            selectIfUnconfigured: false,
-            hasCurrentRegistration: false,
-            restorePreviousSelection: false
-        ))
+    @Test("Authoritative status requires both registered candidates to be enabled")
+    func authoritativeStatusRequiresCompleteActivation() {
+        let ready = InputSourceInstallationStatus(
+            hasRequiredCandidates: true,
+            isEnabled: true
+        )
+        let missingMode = InputSourceInstallationStatus(
+            hasRequiredCandidates: false,
+            isEnabled: true
+        )
+        let awaitingConsent = InputSourceInstallationStatus(
+            hasRequiredCandidates: true,
+            isEnabled: false
+        )
+
+        #expect(ready.isReady)
+        #expect(!missingMode.isReady)
+        #expect(!awaitingConsent.isReady)
     }
 }

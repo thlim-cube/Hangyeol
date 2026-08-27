@@ -3,8 +3,38 @@ import InputMethodKit
 import Cocoa
 import HangyeolCore
 
+private func isInputSourceAuthoritativelyReady() -> Bool {
+    guard let executableURL = Bundle.main.executableURL else { return false }
+    let probe = Process()
+    let completion = DispatchSemaphore(value: 0)
+    probe.executableURL = executableURL
+    probe.arguments = [PostInstallPreparation.statusArgument]
+    probe.standardOutput = FileHandle.nullDevice
+    probe.standardError = FileHandle.nullDevice
+    probe.terminationHandler = { _ in completion.signal() }
+    do {
+        try probe.run()
+        guard completion.wait(timeout: .now() + 2) == .success else {
+            probe.terminate()
+            return false
+        }
+        return probe.terminationStatus == EXIT_SUCCESS
+    } catch {
+        return false
+    }
+}
+
 if PostInstallPreparation.shouldRunLaunchProbe(arguments: CommandLine.arguments) {
     exit(EXIT_SUCCESS)
+}
+
+if PostInstallPreparation.shouldCheckStatus(arguments: CommandLine.arguments) {
+    let status = InputSourceManager.shared.installedInputSourceStatus()
+    print(
+        "Hangyeol post-install status: candidates=\(status.hasRequiredCandidates) "
+            + "enabled=\(status.isEnabled) ready=\(status.isReady)"
+    )
+    exit(status.isReady ? EXIT_SUCCESS : PostInstallPreparation.failureExitCode)
 }
 
 _ = Legacy3xSettingsMigration.migrateInstalledPreferences()
@@ -51,10 +81,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         // tab, and field activation must keep Hangyeol's process-wide mode intact.
         InputModeCoordinator.shared.startSystemOwnershipMonitoring()
         
-        Task.detached(priority: .utility) {
-            _ = InputSourceManager.shared.cleanupStaleInputSources()
-        }
-
         if shouldShowSettingsAfterInstall {
             DispatchQueue.main.async {
                 SettingsWindowController.shared.showSettings()
@@ -168,23 +194,36 @@ if PostInstallPreparation.shouldPrepare(arguments: CommandLine.arguments) {
     let restorePreviousSelection = PostInstallPreparation.selectedBeforeInstall()
     let wasInstalledBeforeUpdate = PostInstallPreparation.installedBeforeInstall()
     let result = InputSourceManager.shared.prepareInstalledInputSource(
-        at: Bundle.main.bundleURL,
-        selectIfUnconfigured: !wasInstalledBeforeUpdate,
+        at: Bundle.main.bundleURL
+    )
+    let authoritativeReady = PostInstallPreparation.waitForAuthoritativeStatus {
+        isInputSourceAuthoritativelyReady()
+    }
+    let shouldSelect = PostInstallPreparation.shouldSelectAfterActivation(
+        wasInstalledBeforeUpdate: wasInstalledBeforeUpdate,
         restorePreviousSelection: restorePreviousSelection
     )
-    if result.isReady {
+    let selection = authoritativeReady && shouldSelect
+        ? InputSourceManager.shared.selectInstalledInputSource()
+        : nil
+    let selectionSucceeded = !shouldSelect || selection?.isSelected == true
+    let isReady = authoritativeReady && selectionSucceeded
+    if isReady {
         PostInstallPreparation.clearInstallationSnapshot()
     }
     PostInstallPreparation.markPending()
     let enableFailure = result.firstEnableFailure.map(String.init) ?? "none"
-    let selection = result.selectionStatus.map(String.init) ?? "preserved"
+    let selectionStatus = selection.map { String($0.status) } ?? "preserved"
     print(
         "Hangyeol post-install: registration=\(result.registrationStatus) "
             + "enableFailure=\(enableFailure) "
-            + "selection=\(selection) "
-            + "ready=\(result.isReady)"
+            + "locallyEnabled=\(result.isLocallyVisibleAndEnabled) "
+            + "authoritativeReady=\(authoritativeReady) "
+            + "selection=\(selectionStatus) "
+            + "selected=\(selection?.isSelected.description ?? "preserved") "
+            + "ready=\(isReady)"
     )
-    exit(result.isReady ? EXIT_SUCCESS : PostInstallPreparation.failureExitCode)
+    exit(isReady ? EXIT_SUCCESS : PostInstallPreparation.failureExitCode)
 }
 
 let app = NSApplication.shared

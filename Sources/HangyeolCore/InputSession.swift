@@ -60,6 +60,16 @@ final class InputSession: @unchecked Sendable {
         case fieldIdentityMayHaveChanged
     }
 
+    /// A proven host field boundary can be followed by redundant same-client
+    /// activations before Blink publishes the new marked range. Keep only enough
+    /// causal state to protect the first owned key and its immediately following
+    /// keyDown; every other activation still uses marked-text ownership proof.
+    private enum FieldHandoffActivationState: Equatable {
+        case none
+        case awaitingFirstOwnedKey
+        case firstOwnedKeyAccepted
+    }
+
     private struct DeferredMarkedTextCleanupToken {
         let generation: UInt64
         let normalizedContent: String
@@ -74,6 +84,7 @@ final class InputSession: @unchecked Sendable {
     /// provisional until the live marked range proves the canonical marked preedit is
     /// still owned; explicit navigation/lifecycle boundaries remain stronger.
     private var contextRefreshRequirement: ContextRefreshRequirement = .none
+    private var fieldHandoffActivationState: FieldHandoffActivationState = .none
     var contextNeedsRefresh: Bool {
         contextRefreshRequirement != .none
     }
@@ -132,6 +143,11 @@ final class InputSession: @unchecked Sendable {
     /// lifecycle callback from an older session cannot overwrite the active state.
     private let invalidateHanjaShortcutSessionState: () -> Void
 
+    /// Clears field-local cursor geometry. Injected only so deterministic lifecycle
+    /// tests can exercise session transitions without mutating the process-wide UI
+    /// cache used by unrelated tests; production keeps the real cache invalidator.
+    private let invalidateCursorContext: () -> Void
+
     /// Releases the process-active controller only when this session still belongs to
     /// it. Injected by the controller so focus-loss behavior remains session-testable.
     private let retireActiveControllerAfterFocusLoss: (InputSession) -> Void
@@ -147,6 +163,9 @@ final class InputSession: @unchecked Sendable {
         composer: HangulComposer,
         experimentalDirectInsertion: @escaping () -> Bool,
         invalidateHanjaShortcutSessionState: @escaping () -> Void = {},
+        invalidateCursorContext: @escaping () -> Void = {
+            CursorRectResolver.invalidateCache()
+        },
         retireActiveControllerAfterFocusLoss: @escaping (InputSession) -> Void = { _ in }
     ) {
         self.client = client
@@ -154,6 +173,7 @@ final class InputSession: @unchecked Sendable {
         self.composer = composer
         self.experimentalDirectInsertion = experimentalDirectInsertion
         self.invalidateHanjaShortcutSessionState = invalidateHanjaShortcutSessionState
+        self.invalidateCursorContext = invalidateCursorContext
         self.retireActiveControllerAfterFocusLoss = retireActiveControllerAfterFocusLoss
         self.adapter = HostAdapterResolver.makeAdapter(
             for: client,
@@ -188,7 +208,7 @@ final class InputSession: @unchecked Sendable {
         context = newContext
         if fieldIdentityMayHaveChanged {
             composer.clearLocalBuffer()
-            CursorRectResolver.invalidateCache()
+            invalidateCursorContext()
             contextGeneration &+= 1
         }
         contextRefreshRequirement = .none
@@ -198,10 +218,19 @@ final class InputSession: @unchecked Sendable {
     }
 
     func markContextStale() {
+        fieldHandoffActivationState = .none
         contextStateRevision &+= 1
         invalidateHanjaShortcutSessionState()
         composer.resetTextConvenienceState()
         contextRefreshRequirement = .fieldIdentityMayHaveChanged
+    }
+
+    /// A Tab, host commit, or mouse move already proved that the next input belongs
+    /// to a freshly analyzed field. The same boundary can make Blink deliver a late
+    /// repeated activation while the first marked jamo is still becoming observable.
+    private func markContextStaleForHostFieldHandoff() {
+        markContextStale()
+        fieldHandoffActivationState = .awaitingFirstOwnedKey
     }
 
     /// Repeated `activateServer` can be an Electron/Chromium quirk or a real
@@ -209,6 +238,30 @@ final class InputSession: @unchecked Sendable {
     /// client's live marked range can be checked together. Never downgrade a proven
     /// Tab, commit, deactivate, mouse, or controller-handoff boundary.
     func markContextStaleForSameClientReactivation() {
+        // The host boundary has already revoked the old field and forces a full
+        // analysis before the first write. A repeated activation caused by that same
+        // handoff (including one synchronously triggered by keyboard override) must
+        // not revoke the freshly acquired lease or discard the first marked jamo.
+        guard fieldHandoffActivationState == .none else {
+            // If full field analysis is currently in flight, revoke only that
+            // snapshot. The input-boundary refresh retries once against the latest
+            // client state; a second reentry remains fail-closed.
+            if contextNeedsRefresh {
+                contextStateRevision &+= 1
+                invalidateHanjaShortcutSessionState()
+            }
+            DebugLogger.event("input.same_client_activation_coalesced", metadata: [
+                .state(
+                    "phase",
+                    contextNeedsRefresh
+                        ? "during_field_analysis"
+                        : fieldHandoffActivationState == .awaitingFirstOwnedKey
+                            ? "before_first_key"
+                            : "after_first_key"
+                )
+            ])
+            return
+        }
         contextStateRevision &+= 1
         invalidateHanjaShortcutSessionState()
         guard contextRefreshRequirement == .none else { return }
@@ -303,6 +356,15 @@ final class InputSession: @unchecked Sendable {
         using analyze: (IMKTextInput) -> ClientContext
     ) -> Bool {
         if refreshContextIfNeeded(using: analyze) {
+            armFocusLossFinalizer()
+            return true
+        }
+        // A same-client activation can synchronously re-enter while the first full
+        // field analysis calls IMK client APIs. Retry once in the same keyDown so the
+        // first physical key is not dropped; repeated churn still leaves the session
+        // stale and therefore unable to write.
+        if contextNeedsRefresh,
+           refreshContextIfNeeded(using: analyze) {
             armFocusLossFinalizer()
             return true
         }
@@ -474,11 +536,11 @@ final class InputSession: @unchecked Sendable {
         // A click inside Hangyeol's live marked range is proof that focus stayed in
         // the same field. Every other click can move focus while reusing the client.
         if state != .active || shouldFinalize {
-            markContextStale()
+            markContextStaleForHostFieldHandoff()
         }
 
         composer.dismissHanjaCandidates()
-        CursorRectResolver.invalidateCache()
+        invalidateCursorContext()
         composer.clearLocalBuffer()
         return didFinalize
     }
@@ -489,15 +551,16 @@ final class InputSession: @unchecked Sendable {
     /// context and external-shortcut classification become untrusted together.
     func finishHostCommitBoundary() {
         composer.dismissHanjaCandidates()
-        CursorRectResolver.invalidateCache()
+        invalidateCursorContext()
         composer.clearLocalBuffer()
-        markContextStale()
+        markContextStaleForHostFieldHandoff()
     }
 
     /// Tab and host-passed Enter keys can move focus or submit into another field.
     /// IMK does not guarantee a deactivate or mouse callback before that field reuses
     /// the same client.
     func observeHostFieldBoundaryKeyDown(keyCode: UInt16, passedToHost: Bool) {
+        advanceFieldHandoffAfterKeyDown(passedToHost: passedToHost)
         guard passedToHost,
               keyCode == KeyCode.tab
                 || keyCode == KeyCode.return
@@ -505,8 +568,29 @@ final class InputSession: @unchecked Sendable {
             return
         }
         previousHostFieldBoundaryPassedToHost = true
-        CursorRectResolver.invalidateCache()
-        markContextStale()
+        invalidateCursorContext()
+        markContextStaleForHostFieldHandoff()
+    }
+
+    /// Retain the explicit handoff token across exactly the first Hangyeol-owned key.
+    /// This is event-counted rather than timer-based: a late activation before the
+    /// second key is coalesced, while any later or pass-through input restores the
+    /// normal fail-closed activation path.
+    private func advanceFieldHandoffAfterKeyDown(passedToHost: Bool) {
+        switch fieldHandoffActivationState {
+        case .none:
+            return
+        case .awaitingFirstOwnedKey:
+            if !passedToHost,
+               !contextNeedsRefresh,
+               composer.hasActiveComposition {
+                fieldHandoffActivationState = .firstOwnedKeyAccepted
+            } else {
+                fieldHandoffActivationState = .none
+            }
+        case .firstOwnedKeyAccepted:
+            fieldHandoffActivationState = .none
+        }
     }
 
     // MARK: Duplicate keyDown suppression

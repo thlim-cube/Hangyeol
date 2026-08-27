@@ -416,6 +416,29 @@ struct InputModeOwnershipTests {
         #expect(client.markCalls.count == markCountBeforeInput)
     }
 
+    @Test("Physical toggle delivery records intent before returning from monitor callback")
+    @MainActor
+    func physicalToggleIntentPrecedesMainQueueAndFirstKey() {
+        let coordinator = InputModeCoordinator(
+            activeControllerProvider: { nil },
+            capsLockOwnershipProvider: { false }
+        )
+        let trace = ToggleLatencyTrace.begin(source: .customKey)
+
+        DispatchQueue.global().sync {
+            PhysicalToggleIntentDelivery.record(trace) { trace in
+                coordinator.requestToggle(source: .customKey, trace: trace)
+            }
+        }
+
+        var applied = false
+        #expect(coordinator.reconcilePendingToggleIfNeeded { _, _ in
+            applied = true
+            return true
+        })
+        #expect(applied)
+    }
+
     private func pendingOwnershipTracker() -> InputModeOwnershipTracker {
         var tracker = InputModeOwnershipTracker()
         _ = tracker.observe(InputModeOwnershipSnapshot(

@@ -25,8 +25,14 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
     var hostTransactionMarkedText: String? { nil }
 
     /// Hangyeol-owned marked range captured before the host can report a delayed
-    /// or virtual caret. Only canonical marked-text adapters expose this range.
+    /// or virtual caret. Only a range confirmed by the client's live IMK mark is
+    /// exposed here.
     var hostTransactionMarkedRange: NSRange? { nil }
+
+    /// Composition start captured before Blink publishes a live marked range.
+    /// This candidate is not a mutation authority; `HostKeyTransaction` can use it
+    /// only with post-commit document-length and content verification.
+    var hostTransactionProvisionalMarkedRange: NSRange? { nil }
 
     init(client: IMKTextInput, hostSurface: HostSurface) {
         self.client = client
@@ -82,14 +88,17 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
         modifierFlags: UInt,
         commit: () -> Void
     ) -> Bool {
-        HostKeyTransaction.perform(
+        let confirmedMarkedRange = hostTransactionMarkedRange
+        return HostKeyTransaction.perform(
             client: client,
             keyCode: keyCode,
             modifierFlags: modifierFlags,
             isClientWriteAllowed: clientWriteIsAllowed,
             didPost: deferredHostKeyBoundaryHandler,
             expectedCommittedText: hostTransactionMarkedText,
-            expectedMarkedRange: hostTransactionMarkedRange,
+            expectedMarkedRange: confirmedMarkedRange
+                ?? hostTransactionProvisionalMarkedRange,
+            expectedMarkedRangeIsConfirmed: confirmedMarkedRange != nil,
             commit: commit
         )
     }
@@ -145,6 +154,15 @@ final class MarkedTextAdapter: BaseClientAdapter {
         recoverRenderedMarkedLocation(for: renderedMarkedText)
         guard renderedMarkedLocation != NSNotFound,
               renderedMarkedLocationIsConfirmed,
+              !renderedMarkedText.isEmpty else { return nil }
+        return NSRange(
+            location: renderedMarkedLocation,
+            length: renderedMarkedText.utf16.count
+        )
+    }
+
+    override var hostTransactionProvisionalMarkedRange: NSRange? {
+        guard renderedMarkedLocation != NSNotFound,
               !renderedMarkedText.isEmpty else { return nil }
         return NSRange(
             location: renderedMarkedLocation,

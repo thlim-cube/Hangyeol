@@ -857,6 +857,108 @@ struct InputSessionFinalizeTests {
         #expect(client.insertCalls.isEmpty)
     }
 
+    @Test("Tab 직후 첫 자모와 늦은 same-client activation 사이에서도 첫 음절을 유지한다")
+    func tabFirstSyllableSurvivesLateSameClientActivation() {
+        let (session, composer, client) = makeMarkedSession()
+
+        session.observeHostFieldBoundaryKeyDown(
+            keyCode: KeyCode.tab,
+            passedToHost: true
+        )
+        #expect(session.refreshContextForInputBoundary { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+        _ = session.prepareForNonSecureClientWrites()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        session.observeHostFieldBoundaryKeyDown(keyCode: 15, passedToHost: false)
+        #expect(client.markedText == "ㄱ")
+
+        // Blink may deliver the same client's late activation before markedRange
+        // exposes the just-rendered first jamo. This activation belongs to the Tab
+        // handoff, not to another field move.
+        client.markedRangeValue = NSRange(location: NSNotFound, length: 0)
+        client.attributedSubstringUnavailable = true
+        session.markContextStaleForSameClientReactivation()
+        _ = session.refreshContextForInputBoundary { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        }
+        _ = session.prepareForNonSecureClientWrites()
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "P", keyCode: 35)!,
+            delegate: session.adapter
+        )
+        session.observeHostFieldBoundaryKeyDown(keyCode: 35, passedToHost: false)
+
+        #expect(composer.activePreeditForDisplay == "계")
+        #expect(client.markedText == "계")
+        #expect(client.insertCalls.isEmpty)
+
+        // The causal exception is exhausted by the first two owned keyDown events.
+        // A later unproven activation must return to the normal fail-closed path.
+        client.markedRangeValue = NSRange(location: NSNotFound, length: 0)
+        session.markContextStaleForSameClientReactivation()
+        #expect(session.contextNeedsRefresh)
+        #expect(session.refreshContextForInputBoundary { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+        _ = session.prepareForNonSecureClientWrites()
+        #expect(!composer.hasActiveComposition)
+    }
+
+    @Test("Tab handoff가 유발한 첫 키 전 activation은 새 필드 write lease를 취소하지 않는다")
+    func tabActivationBeforeFirstKeyKeepsFreshWriteLease() {
+        let (session, _, client) = makeMarkedSession()
+
+        session.observeHostFieldBoundaryKeyDown(
+            keyCode: KeyCode.tab,
+            passedToHost: true
+        )
+        #expect(session.refreshContextForInputBoundary { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+        _ = session.prepareForNonSecureClientWrites()
+        let lease = session.captureContextStateLease()
+        #expect(lease != nil)
+
+        // Chromium can synchronously reactivate while
+        // overrideKeyboardWithKeyboardNamed: is still on the first-key stack.
+        session.markContextStaleForSameClientReactivation()
+        session.markContextStaleForSameClientReactivation()
+
+        #expect(!session.contextNeedsRefresh)
+        if let lease {
+            #expect(session.isCurrent(lease))
+        }
+    }
+
+    @Test("Tab handoff 분석 중 activation은 오래된 분석을 폐기하고 첫 keyDown에서 재분석한다")
+    func tabActivationDuringFieldAnalysisRetriesOnce() {
+        let (session, _, client) = makeMarkedSession()
+        session.observeHostFieldBoundaryKeyDown(
+            keyCode: KeyCode.tab,
+            passedToHost: true
+        )
+        var analysisCount = 0
+
+        #expect(session.refreshContextForInputBoundary { _ in
+            analysisCount += 1
+            if analysisCount == 1 {
+                session.markContextStaleForSameClientReactivation()
+            }
+            return self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+
+        #expect(analysisCount == 2)
+        #expect(!session.contextNeedsRefresh)
+        _ = session.prepareForNonSecureClientWrites()
+        #expect(session.captureContextStateLease() != nil)
+    }
+
     @Test("Stale activation layout refresh does not write")
     func staleActivationLayoutRefreshDoesNotWrite() {
         let (session, composer, client) = makeMarkedSession()

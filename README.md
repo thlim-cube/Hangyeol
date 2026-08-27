@@ -45,10 +45,10 @@
 
 1. [릴리즈 목록](https://github.com/thlim-cube/Hangyeol/releases)에서 최신 `Hangyeol_Release.pkg`를 다운로드합니다.
 2. PKG를 실행해 설치합니다.
-3. 설치기가 한결 입력 소스를 현재 사용자에게 추가하고 설정 창을 한 번 엽니다. 처음 설치할 때는 한결을 바로 선택하고, 업데이트할 때는 현재 선택한 입력 소스를 유지합니다.
-4. 설치가 끝나면 재시동 없이 한결 내부의 한/영 모드를 사용자 지정 전환키로 전환할 수 있습니다.
+3. 처음 설치할 때 macOS가 한결 입력 소스 활성화를 물으면 `허용`을 누릅니다. 설치기는 별도 프로세스에서 실제 활성화를 확인한 뒤 한결을 선택하고 설정 창을 한 번 엽니다.
+4. 기존 버전을 업데이트할 때는 현재 입력 연결을 끊지 않도록 실행 중인 한결을 유지합니다. 설치 중이던 앱은 계속 사용할 수 있고, 새 버전 실행 파일은 로그아웃 후 로그인하거나 재시동하면 적용됩니다.
 
-한결 앱 번들은 기본적으로 `/Library/Input Methods/Hangyeol.app`에 설치됩니다. 3.0 설치기는 2.x 설정을 한 번 이전하고 기존 앱·입력 소스 등록·설치 영수증을 정리한 뒤, 현재 로그인한 사용자 세션에서 macOS 표준 TIS API로 새 번들을 등록합니다. 이후 3.x 업데이트는 PackageKit의 원자적 교체를 사용합니다. 입력기 관련 시스템 프로세스를 강제 재시작하지 않으며, 다른 입력 소스와 ABC도 자동으로 삭제하지 않습니다.
+한결 앱 번들은 기본적으로 `/Library/Input Methods/Hangyeol.app`에 설치됩니다. 3.0 설치기는 2.x 설정을 한 번 이전하고 기존 앱·입력 소스 등록·설치 영수증을 정리한 뒤, 현재 로그인한 사용자 세션에서 macOS 표준 TIS API로 새 번들을 등록합니다. 활성화 요청을 보낸 프로세스의 캐시는 설치 완료 근거로 사용하지 않고, 새 프로세스에서도 한결 parent와 mode가 활성화됐는지 확인합니다. 이후 3.x 업데이트는 PackageKit의 원자적 교체를 사용합니다. 입력기 관련 시스템 프로세스를 강제 재시작하지 않으며, 다른 입력 소스와 ABC도 자동으로 삭제하지 않습니다.
 
 macOS 보안 정책상 손쉬운 사용 권한은 설치기가 대신 허용할 수 없습니다. 3.0은 새 앱 ID를 사용하므로 2.x에서 올릴 때 한 번 다시 승인해야 합니다. 설치 직후 한결 설정과 macOS 승인 화면을 열어 필요한 단계만 안내하며, 이후 같은 ID와 코드 서명을 사용하는 3.x 업데이트에서는 권한이 유지됩니다.
 
@@ -89,6 +89,14 @@ Caps Lock 입력 소스 전환을 쓰지 않는다면 한결 설정에서 한/�
 # 개발 빌드
 swift build
 
+# 유닛·상태 전이 회귀 테스트
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+
+# 설치된 PKG의 실제 TextEdit·Chrome 입력 E2E
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  swift run -c debug HangyeolE2E \
+  --package /absolute/path/Hangyeol_<version>_Local.pkg
+
 # 릴리즈 PKG 생성, 서명, 공증, Gatekeeper 검증
 ./build_release.sh
 ```
@@ -97,6 +105,9 @@ swift build
 
 - **입력 소스가 중복으로 보일 때**
   최신 설치기는 현재 사용자의 한결 stale 항목을 정리하고 TIS API로 현재 번들을 다시 등록합니다. 설치 후에도 중복이 남으면 macOS 입력 소스 설정에서 표시된 항목과 한결 버전을 확인해 이슈에 첨부해 주세요.
+
+- **업데이트 직후 새 버전이 적용되지 않을 때**
+  실행 중인 앱의 IMK 연결을 강제로 끊지 않는 업데이트 정책입니다. 로그아웃 후 다시 로그인하거나 Mac을 재시동하면 새 실행 파일이 적용됩니다. 설치 직후 전환이나 설정 메뉴가 고장 난 상태를 만들기 위해 입력기·시스템 agent를 강제 종료하지 않습니다.
 
 - **Caps Lock 전환이 안 될 때**
   macOS 입력 소스 설정에서 Caps Lock 전환 옵션이 켜져 있는지 확인해 주세요. 한결 설정에서 Caps Lock을 직접 전환키로 지정하는 방식은 사용하지 않습니다.
@@ -108,6 +119,7 @@ swift build
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): 내부 구조, 입력 처리 흐름, 주요 모듈
 - [Docs/UnifiedInputArchitecture.md](Docs/UnifiedInputArchitecture.md): 현재 한/영 상태·소유권·전환 계약
+- [Docs/E2ETesting.md](Docs/E2ETesting.md): 설치본과 PKG를 대조하는 실제 TextEdit·Chrome 입력 검증
 - [BENCHMARK.md](BENCHMARK.md): 성능 측정 결과
 - [CHANGELOG.md](CHANGELOG.md): 버전별 변경 사항
 

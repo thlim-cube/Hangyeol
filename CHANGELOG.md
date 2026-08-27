@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.3] - 2026-08-28
+
+### Added
+- 설치 앱·PKG·실행 중인 IMK 서버의 버전·build·코드 서명을 먼저 대조하고 실제 `CGEvent` 입력과 `AXUIElement` 결과를 확인하는 TextEdit·Chrome E2E 러너를 추가했습니다. Chrome field·브라우저 탭 전환 직후 첫 음절도 대기 없이 반복 검증합니다.
+- controller 활성화·늦은 keyDown/deactivate·같은 client의 field 이동·Secure Input·mode 전환·session 교체·늦은 한자 callback을 고정 seed 연산열로 검증하는 수명주기 모델 테스트를 추가했습니다.
+
+### Fixed
+- macOS 26의 입력 소스 활성화 동의가 아직 저장되지 않았는데 `TISEnableInputSource` 호출 프로세스의 로컬 캐시만 보고 설치 성공으로 끝내던 문제를 해결했습니다. 서명된 설치 도우미가 동의 요청을 유지하고, 별도 프로세스에서 parent·mode 활성화가 확인된 뒤에만 설치 준비를 완료합니다.
+- 업데이트 도중 실행 중인 한결 IMK 서버를 종료해 Chrome·Codex가 stale controller에 연결되고 전환·설정 메뉴가 고장 나던 문제를 해결했습니다. 기존 로그인 세션은 현재 서버를 보존하고, 새 실행 파일은 다음 로그인 또는 재시동부터 적용합니다.
+- 실제 입력 E2E가 사용자의 기존 TextEdit 프로세스를 재사용해 열기 창과 문서를 남기던 문제를 해결했습니다. 테스트마다 별도 TextEdit 인스턴스를 만들고 종료까지 확인합니다.
+- 전환키를 놓은 직후 Chrome 탭·field를 바꾸며 입력하면 메인 큐보다 첫 keyDown이 앞서 영어 1~2자 또는 `ㄱㅖ`처럼 분리 자모가 입력되던 문제를 해결했습니다. Event Tap과 IOKit은 물리 전환 의도를 즉시 큐에 보존하고, IMK client write와 mode 변경만 메인 스레드에서 수행합니다.
+- Chrome·Codex·Slack에서 조합 직후 Forward Delete를 빠르게 누르면 합성 키 재전달이 유실되어 뒤 글자가 남던 문제를 해결했습니다. 조합 시작 위치는 후보로만 보존하고, 확정 문자열·문서 길이·caret·뒤 글자가 모두 일치할 때만 명시적 range 삭제를 수행합니다.
+- Chrome field·브라우저 탭 전환 직후 첫 키 처리와 늦은 same-client 활성화가 교차하면 첫 자모의 write lease가 취소되거나 아직 지연된 marked range를 근거로 조합이 폐기되어 `ㄱㅖ`처럼 분리되던 문제를 해결했습니다. 이미 확인된 host field handoff에 속한 활성화만 첫 음절 경계에서 합치고, 이후 활성화는 기존 marked-text 소유권 검사를 유지합니다.
+
 ## [3.0.2] - 2026-08-27
 
 ### Changed

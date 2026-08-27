@@ -14,6 +14,9 @@ let package = Package(
         .library(
             name: "HangyeolCore",
             targets: ["HangyeolCore"]),
+        .executable(
+            name: "HangyeolE2E",
+            targets: ["HangyeolE2E"]),
     ],
     dependencies: [
         .package(url: "https://github.com/Meapri/libhangul-swift", branch: "main"),
@@ -48,9 +51,20 @@ let package = Package(
             name: "HangyeolVerify",
             dependencies: ["HangyeolCore"]
         ),
+        .target(
+            name: "HangyeolE2ESupport",
+            dependencies: ["HangyeolCore"],
+            resources: [
+                .process("Resources")
+            ]
+        ),
+        .executableTarget(
+            name: "HangyeolE2E",
+            dependencies: ["HangyeolE2ESupport"]
+        ),
         .testTarget(
             name: "HangyeolCoreTests",
-            dependencies: ["HangyeolCore"]
+            dependencies: ["HangyeolCore", "HangyeolE2ESupport"]
         ),
         .executableTarget(
             name: "HangyeolBenchmark",

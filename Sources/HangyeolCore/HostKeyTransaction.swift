@@ -19,44 +19,80 @@ private final class DeferredHostKeyBoundary: @unchecked Sendable {
     }
 }
 
-/// Exact document mutation for a host-owned Forward Delete. The adapter supplies
-/// the composition start it captured before Blink can virtualize or delay its
-/// caret; the following composed character is measured before commit and deleted
-/// at its post-commit range.
+/// Exact document mutation for a host-owned Forward Delete. A provisional Blink
+/// composition start never authorizes deletion on its own: the committed text,
+/// document-length transition, caret, and following composed character must all
+/// agree after commit before this mutation can run.
 private struct PreparedForwardDeletion {
     private static let maxProbeLength = 64
+    private static let maxReasonableLocation = 10_000_000
 
     private let client: IMKTextInput
+    private let expectedCommittedText: String
+    private let committedRange: NSRange
     private let deletionRange: NSRange?
+    private let expectedFollowingText: String?
+    private let expectedDocumentLength: Int
 
     static func prepare(
         client: IMKTextInput,
         expectedCommittedText: String,
-        expectedMarkedRange: NSRange
+        expectedMarkedRange: NSRange,
+        expectedMarkedRangeIsConfirmed: Bool
     ) -> PreparedForwardDeletion? {
         let normalizedExpectedText = expectedCommittedText
             .precomposedStringWithCanonicalMapping
         let committedLength = normalizedExpectedText.utf16.count
         guard !normalizedExpectedText.isEmpty,
               expectedMarkedRange.location != NSNotFound,
+              expectedMarkedRange.location >= 0,
+              expectedMarkedRange.location < Self.maxReasonableLocation,
               expectedMarkedRange.length == committedLength else { return nil }
 
         let (postCommitCaret, caretOverflow) = expectedMarkedRange.location
             .addingReportingOverflow(committedLength)
         guard !caretOverflow else { return nil }
 
+        let documentLength = client.length()
+        guard documentLength >= 0,
+              documentLength < Self.maxReasonableLocation else { return nil }
         let markedReadback = client
             .attributedSubstring(from: expectedMarkedRange)?
             .string
             .precomposedStringWithCanonicalMapping
+        let selection = client.selectedRange()
+        let provisionalMarkIsVisible = !expectedMarkedRangeIsConfirmed
+            && selection == NSRange(location: postCommitCaret, length: 0)
+        // Blink may expose the marked syllable through document APIs before it
+        // publishes `markedRange`. In that state, matching text alone is not proof:
+        // it could be an identical committed syllable under a still-virtual mark.
+        // The caret at the provisional mark's exact visual end supplies the missing
+        // independent signal. A preedit-start caret keeps the safer growth proof.
         let documentIncludesMarkedText = markedReadback == normalizedExpectedText
+            && (expectedMarkedRangeIsConfirmed || provisionalMarkIsVisible)
         let followingSourceLocation = documentIncludesMarkedText
             ? postCommitCaret
             : expectedMarkedRange.location
-        let documentLength = client.length()
         guard followingSourceLocation <= documentLength else { return nil }
+        let expectedDocumentLength: Int
+        if documentIncludesMarkedText {
+            expectedDocumentLength = documentLength
+        } else {
+            let (lengthAfterCommit, overflow) = documentLength
+                .addingReportingOverflow(committedLength)
+            guard !overflow,
+                  lengthAfterCommit < Self.maxReasonableLocation else { return nil }
+            expectedDocumentLength = lengthAfterCommit
+        }
         guard followingSourceLocation < documentLength else {
-            return PreparedForwardDeletion(client: client, deletionRange: nil)
+            return PreparedForwardDeletion(
+                client: client,
+                expectedCommittedText: normalizedExpectedText,
+                committedRange: expectedMarkedRange,
+                deletionRange: nil,
+                expectedFollowingText: nil,
+                expectedDocumentLength: expectedDocumentLength
+            )
         }
 
         let probeLength = min(
@@ -76,16 +112,107 @@ private struct PreparedForwardDeletion {
 
         return PreparedForwardDeletion(
             client: client,
+            expectedCommittedText: normalizedExpectedText,
+            committedRange: expectedMarkedRange,
             deletionRange: NSRange(
                 location: postCommitCaret,
                 length: composedRange.length
-            )
+            ),
+            expectedFollowingText: String(
+                followingText[followingText.startIndex..<followingText.index(
+                    followingText.startIndex,
+                    offsetBy: 1
+                )]
+            ).precomposedStringWithCanonicalMapping,
+            expectedDocumentLength: expectedDocumentLength
         )
     }
 
-    func invoke() {
-        guard let deletionRange else { return }
+    func invokeIfReady(isClientWriteAllowed: () -> Bool) -> Bool {
+        guard isClientWriteAllowed(),
+              client.length() == expectedDocumentLength,
+              client.markedRange().length == 0,
+              client.selectedRange() == NSRange(
+                  location: NSMaxRange(committedRange),
+                  length: 0
+              ),
+              client.attributedSubstring(from: committedRange)?
+                  .string
+                  .precomposedStringWithCanonicalMapping == expectedCommittedText else {
+            return false
+        }
+        guard let deletionRange else { return true }
+        guard let expectedFollowingText,
+              client.attributedSubstring(from: deletionRange)?
+                  .string
+                  .precomposedStringWithCanonicalMapping == expectedFollowingText,
+              isClientWriteAllowed() else {
+            return false
+        }
         client.insertText("", replacementRange: deletionRange)
+        return true
+    }
+}
+
+private final class DeferredForwardDeletion: @unchecked Sendable {
+    private static let maxPromotionPolls = 100
+
+    private let prepared: PreparedForwardDeletion
+    private let authorization: DeferredClientWriteAuthorization
+    private let postedBoundary: DeferredHostKeyBoundary
+    private let environment: DeferredHostKeyReplayEnvironment
+    private var pollCount = 0
+
+    init(
+        prepared: PreparedForwardDeletion,
+        authorization: DeferredClientWriteAuthorization,
+        postedBoundary: DeferredHostKeyBoundary,
+        environment: DeferredHostKeyReplayEnvironment
+    ) {
+        self.prepared = prepared
+        self.authorization = authorization
+        self.postedBoundary = postedBoundary
+        self.environment = environment
+    }
+
+    func deliverOrSchedule() {
+        if deliverIfReady() { return }
+        environment.scheduleInitial(DeferredHostKeyPoll { [self] in
+            poll()
+        })
+    }
+
+    private func poll() {
+        guard authorization.isAllowed() else {
+            logSkip("stale_session")
+            return
+        }
+        if deliverIfReady() { return }
+        pollCount += 1
+        guard pollCount < Self.maxPromotionPolls else {
+            logSkip("document_promotion_unverified")
+            return
+        }
+        environment.scheduleRetry(DeferredHostKeyPoll { [self] in
+            poll()
+        })
+    }
+
+    private func deliverIfReady() -> Bool {
+        guard prepared.invokeIfReady(
+            isClientWriteAllowed: authorization.isAllowed
+        ) else { return false }
+        postedBoundary.handler(KeyCode.forwardDelete)
+        DebugLogger.event("input.host_key_range_delete_delivered", metadata: [
+            .count("promotion_polls", pollCount)
+        ])
+        return true
+    }
+
+    private func logSkip(_ reason: StaticString) {
+        DebugLogger.event("input.host_key_range_delete_skipped", metadata: [
+            .state("reason", reason)
+        ])
     }
 }
 
@@ -407,6 +534,8 @@ enum HostKeyTransaction {
         didPost: @escaping (UInt16) -> Void,
         expectedCommittedText: String?,
         expectedMarkedRange: NSRange? = nil,
+        expectedMarkedRangeIsConfirmed: Bool = true,
+        environment: DeferredHostKeyReplayEnvironment = .live,
         commit: () -> Void
     ) -> Bool {
         if keyCode == KeyCode.forwardDelete,
@@ -417,13 +546,19 @@ enum HostKeyTransaction {
            let deletion = PreparedForwardDeletion.prepare(
                client: client,
                expectedCommittedText: expectedCommittedText,
-               expectedMarkedRange: expectedMarkedRange
+               expectedMarkedRange: expectedMarkedRange,
+               expectedMarkedRangeIsConfirmed: expectedMarkedRangeIsConfirmed
            ) {
+            let deferredDeletion = DeferredForwardDeletion(
+                prepared: deletion,
+                authorization: DeferredClientWriteAuthorization(
+                    isAllowed: isClientWriteAllowed
+                ),
+                postedBoundary: DeferredHostKeyBoundary(handler: didPost),
+                environment: environment
+            )
             commit()
-            guard isClientWriteAllowed() else { return true }
-            deletion.invoke()
-            didPost(keyCode)
-            DebugLogger.event("input.host_key_range_delete_delivered")
+            deferredDeletion.deliverOrSchedule()
             return true
         }
 
@@ -433,7 +568,8 @@ enum HostKeyTransaction {
             modifierFlags: modifierFlags,
             isClientWriteAllowed: isClientWriteAllowed,
             didPost: didPost,
-            expectedCommittedText: expectedCommittedText
+            expectedCommittedText: expectedCommittedText,
+            environment: environment
         ) else { return false }
         commit()
         replay.schedule()

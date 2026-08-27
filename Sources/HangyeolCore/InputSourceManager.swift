@@ -9,8 +9,21 @@ public struct InputSourceCleanupResult: Sendable {
 public struct InputSourceInstallationResult: Sendable {
     public let registrationStatus: OSStatus
     public let firstEnableFailure: OSStatus?
-    public let selectionStatus: OSStatus?
-    public let isReady: Bool
+    public let isLocallyVisibleAndEnabled: Bool
+}
+
+public struct InputSourceInstallationStatus: Sendable {
+    public let hasRequiredCandidates: Bool
+    public let isEnabled: Bool
+
+    public var isReady: Bool {
+        hasRequiredCandidates && isEnabled
+    }
+}
+
+public struct InputSourceSelectionResult: Sendable {
+    public let status: OSStatus
+    public let isSelected: Bool
 }
 
 internal struct InputSourceCleanupPlan {
@@ -195,12 +208,10 @@ public final class InputSourceManager: @unchecked Sendable {
     /// and the typing hot path.
     @discardableResult
     public func prepareInstalledInputSource(
-        at appURL: URL,
-        selectIfUnconfigured: Bool,
-        restorePreviousSelection: Bool
+        at appURL: URL
     ) -> InputSourceInstallationResult {
         let changeMonitor = InputSourceChangeMonitor()
-        let cleanupResult = cleanupStaleInputSources()
+        _ = cleanupStaleInputSources()
         let registrationStatus = TISRegisterInputSource(appURL as CFURL)
         let discoveredRecords = installationRecords(
             waitingUntil: { $0.hasRequiredCandidates },
@@ -232,42 +243,51 @@ public final class InputSourceManager: @unchecked Sendable {
         )
         let enabledPlan = Self.installationPlan(from: enabledRecords.map(\.candidate))
 
-        let shouldSelect = Self.shouldSelectInstalledInputSource(
-            selectIfUnconfigured: selectIfUnconfigured,
-            hasCurrentRegistration: cleanupResult.hasCurrentHangyeolRegistration,
-            restorePreviousSelection: restorePreviousSelection
-        )
-        var selectionStatus: OSStatus?
-        if shouldSelect, let enabledMode = enabledPlan.enabledMode {
-            guard let modeSource = enabledRecords.first(where: {
-                $0.candidate.inputSourceID == enabledMode.inputSourceID
-            })?.source else {
-                selectionStatus = OSStatus(paramErr)
-                return InputSourceInstallationResult(
-                    registrationStatus: registrationStatus,
-                    firstEnableFailure: firstEnableFailure,
-                    selectionStatus: selectionStatus,
-                    isReady: false
-                )
-            }
-            selectionStatus = TISSelectInputSource(modeSource)
-            if selectionStatus == noErr && !isHangyeolSelected() {
-                _ = changeMonitor.waitForChange(
-                    until: Date().addingTimeInterval(Self.postInstallSettlementTimeout)
-                )
-            }
-        }
-
-        let selectionSucceeded = !shouldSelect
-            || (selectionStatus == noErr && isHangyeolSelected())
         return InputSourceInstallationResult(
             registrationStatus: registrationStatus,
             firstEnableFailure: firstEnableFailure,
-            selectionStatus: selectionStatus,
-            isReady: registrationStatus == noErr
+            isLocallyVisibleAndEnabled: registrationStatus == noErr
                 && firstEnableFailure == nil
                 && enabledPlan.isEnabled
-                && selectionSucceeded
+        )
+    }
+
+    /// Returns the TIS view visible to the current process. Installer readiness
+    /// must call this from a process other than the one that requested
+    /// activation so an uncommitted caller-local cache cannot pass the check.
+    public func installedInputSourceStatus() -> InputSourceInstallationStatus {
+        let plan = Self.installationPlan(
+            from: hangyeolInstallationRecords().map(\.candidate)
+        )
+        return InputSourceInstallationStatus(
+            hasRequiredCandidates: plan.hasRequiredCandidates,
+            isEnabled: plan.isEnabled
+        )
+    }
+
+    /// Selects the enabled Hangyeol mode only after another process has proved
+    /// that the activation consent was persisted.
+    public func selectInstalledInputSource() -> InputSourceSelectionResult {
+        let changeMonitor = InputSourceChangeMonitor()
+        let records = hangyeolInstallationRecords()
+        let plan = Self.installationPlan(from: records.map(\.candidate))
+        guard plan.isEnabled,
+              let enabledMode = plan.enabledMode,
+              let modeSource = records.first(where: {
+                  $0.candidate.inputSourceID == enabledMode.inputSourceID
+              })?.source else {
+            return InputSourceSelectionResult(status: OSStatus(paramErr), isSelected: false)
+        }
+
+        let status = TISSelectInputSource(modeSource)
+        if status == noErr && !isHangyeolSelected() {
+            _ = changeMonitor.waitForChange(
+                until: Date().addingTimeInterval(Self.postInstallSettlementTimeout)
+            )
+        }
+        return InputSourceSelectionResult(
+            status: status,
+            isSelected: status == noErr && isHangyeolSelected()
         )
     }
 
@@ -311,14 +331,6 @@ public final class InputSourceManager: @unchecked Sendable {
                 (installationRole(of: $0) ?? Int.max)
                     < (installationRole(of: $1) ?? Int.max)
             }
-    }
-
-    internal static func shouldSelectInstalledInputSource(
-        selectIfUnconfigured: Bool,
-        hasCurrentRegistration: Bool,
-        restorePreviousSelection: Bool
-    ) -> Bool {
-        restorePreviousSelection || (selectIfUnconfigured && !hasCurrentRegistration)
     }
 
     private struct InputSourceInstallationRecord {

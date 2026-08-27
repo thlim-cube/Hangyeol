@@ -244,6 +244,21 @@ private final class DelayedBlinkForwardDeleteClient: FakeIMKTextInput {
             text = string as? String ?? ""
         }
         insertCalls.append((text, replacementRange))
+        if replacementRange.location != NSNotFound,
+           replacementRange.length > 0 {
+            var units = Array(document.utf16)
+            let end = min(
+                units.count,
+                replacementRange.location + replacementRange.length
+            )
+            units.removeSubrange(replacementRange.location..<end)
+            document = String(decoding: units, as: UTF16.self)
+            selectedRangeValue = NSRange(
+                location: replacementRange.location,
+                length: 0
+            )
+            return
+        }
         pendingCommittedText = text
     }
 
@@ -819,6 +834,203 @@ struct ReturnDeliveryTests {
         #expect(client.document == "가나마라")
         #expect(client.selectedRangeValue == NSRange(location: 3, length: 0))
         #expect(boundaryCount == 1)
+    }
+
+    @Test(
+        "Chrome, Codex, Slack accept a visible provisional mark with an end caret",
+        arguments: [
+            "com.google.Chrome",
+            "com.openai.codex",
+            "com.tinyspeck.slackmacgap"
+        ]
+    )
+    func blinkHostsUseVisibleProvisionalForwardDeleteRange(bundleID: String) {
+        let client = RangeForwardDeleteClient()
+        client.bundleID = bundleID
+        var boundaryCount = 0
+
+        let handled = HostKeyTransaction.perform(
+            client: client,
+            keyCode: KeyCode.forwardDelete,
+            modifierFlags: NSEvent.ModifierFlags.function.rawValue,
+            isClientWriteAllowed: { true },
+            didPost: { keyCode in
+                if keyCode == KeyCode.forwardDelete { boundaryCount += 1 }
+            },
+            expectedCommittedText: "마",
+            expectedMarkedRange: NSRange(location: 2, length: 1),
+            expectedMarkedRangeIsConfirmed: false,
+            commit: {
+                client.insertText(
+                    "마",
+                    replacementRange: NSRange(
+                        location: NSNotFound,
+                        length: NSNotFound
+                    )
+                )
+            }
+        )
+
+        #expect(handled)
+        #expect(client.orderedHostCalls == [
+            "insert:마",
+            "delete:3:1"
+        ])
+        #expect(client.document == "가나마라")
+        #expect(client.selectedRangeValue == NSRange(location: 3, length: 0))
+        #expect(boundaryCount == 1)
+    }
+
+    @Test(
+        "Chrome, Codex, Slack verify a provisional mark before delayed range deletion",
+        arguments: [
+            "com.google.Chrome",
+            "com.openai.codex",
+            "com.tinyspeck.slackmacgap"
+        ]
+    )
+    func blinkHostsVerifyDelayedForwardDeleteRange(bundleID: String) throws {
+        let client = DelayedBlinkForwardDeleteClient(
+            exposesLiveMarkedRange: false,
+            selectionTracksMarkedText: false
+        )
+        client.bundleID = bundleID
+        let driver = ManualHostKeyReplayDriver()
+        client.setMarkedText(
+            "마",
+            selectionRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
+        )
+
+        let handled = HostKeyTransaction.perform(
+            client: client,
+            keyCode: KeyCode.forwardDelete,
+            modifierFlags: NSEvent.ModifierFlags.function.rawValue,
+            isClientWriteAllowed: { true },
+            didPost: driver.recordBoundary,
+            expectedCommittedText: "마",
+            expectedMarkedRange: NSRange(location: 2, length: 1),
+            expectedMarkedRangeIsConfirmed: false,
+            environment: driver.environment,
+            commit: {
+                client.insertText(
+                    "마",
+                    replacementRange: NSRange(
+                        location: NSNotFound,
+                        length: NSNotFound
+                    )
+                )
+            }
+        )
+
+        #expect(handled)
+        #expect(client.document == "가나다라")
+        #expect(driver.postedEventTypes.isEmpty)
+        #expect(driver.postedBoundaryCount == 0)
+
+        try driver.runNextPoll()
+        #expect(client.document == "가나다라")
+        try client.promotePendingCommit()
+        client.retireMarkedText()
+        try driver.runNextPoll()
+
+        #expect(client.document == "가나마라")
+        #expect(client.selectedRangeValue == NSRange(location: 3, length: 0))
+        #expect(driver.postedEventTypes.isEmpty)
+        #expect(driver.postedBoundaryCount == 1)
+    }
+
+    @Test("A provisional mark cannot match an identical following syllable early")
+    func provisionalForwardDeleteRequiresDocumentPromotion() throws {
+        let client = DelayedBlinkForwardDeleteClient(
+            exposesLiveMarkedRange: false,
+            selectionTracksMarkedText: false
+        )
+        client.document = "가나마라"
+        let driver = ManualHostKeyReplayDriver()
+        client.setMarkedText(
+            "마",
+            selectionRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
+        )
+
+        let handled = HostKeyTransaction.perform(
+            client: client,
+            keyCode: KeyCode.forwardDelete,
+            modifierFlags: NSEvent.ModifierFlags.function.rawValue,
+            isClientWriteAllowed: { true },
+            didPost: driver.recordBoundary,
+            expectedCommittedText: "마",
+            expectedMarkedRange: NSRange(location: 2, length: 1),
+            expectedMarkedRangeIsConfirmed: false,
+            environment: driver.environment,
+            commit: {
+                client.insertText(
+                    "마",
+                    replacementRange: NSRange(
+                        location: NSNotFound,
+                        length: NSNotFound
+                    )
+                )
+            }
+        )
+
+        #expect(handled)
+        try driver.runNextPoll()
+        #expect(client.document == "가나마라")
+        #expect(driver.postedBoundaryCount == 0)
+
+        try client.promotePendingCommit()
+        client.retireMarkedText()
+        try driver.runNextPoll()
+        #expect(client.document == "가나마라")
+        #expect(driver.postedBoundaryCount == 1)
+    }
+
+    @Test("A delayed Forward Delete never writes after its field lease expires")
+    func delayedForwardDeleteStopsAfterLeaseChange() throws {
+        let client = DelayedBlinkForwardDeleteClient(
+            exposesLiveMarkedRange: false,
+            selectionTracksMarkedText: false
+        )
+        let driver = ManualHostKeyReplayDriver()
+        var clientWriteIsAllowed = true
+        client.setMarkedText(
+            "마",
+            selectionRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
+        )
+
+        let handled = HostKeyTransaction.perform(
+            client: client,
+            keyCode: KeyCode.forwardDelete,
+            modifierFlags: NSEvent.ModifierFlags.function.rawValue,
+            isClientWriteAllowed: { clientWriteIsAllowed },
+            didPost: driver.recordBoundary,
+            expectedCommittedText: "마",
+            expectedMarkedRange: NSRange(location: 2, length: 1),
+            expectedMarkedRangeIsConfirmed: false,
+            environment: driver.environment,
+            commit: {
+                client.insertText(
+                    "마",
+                    replacementRange: NSRange(
+                        location: NSNotFound,
+                        length: NSNotFound
+                    )
+                )
+            }
+        )
+
+        #expect(handled)
+        try client.promotePendingCommit()
+        client.retireMarkedText()
+        clientWriteIsAllowed = false
+        try driver.runNextPoll()
+
+        #expect(client.document == "가나마다라")
+        #expect(driver.postedBoundaryCount == 0)
+        #expect(driver.polls.isEmpty)
     }
 
     @Test("Forward Delete removes one composed character after the committed mark")

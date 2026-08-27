@@ -82,6 +82,8 @@ keyDown ──► HangyeolInputController.handle()
 4. `HangulComposer`는 libhangul-swift의 `ThreadSafeHangulInputContext`로 한글 조합을 수행하고, 확정 문자열(commit)을 먼저 `insertText`로 전달한 뒤 새 조합 문자열(preedit)을 `setMarkedText`로 전달한다. 이 순서를 뒤집으면 호스트의 오래된 caret에 preedit이 남고 직접 삽입 범위도 어긋날 수 있으므로 바꾸지 않는다.
 5. 세션이 보유한 `HostTextAdapters` 어댑터(`MarkedTextAdapter` / `DirectInsertionAdapter` / `ImmediateModeAdapter`)가 composer callback을 받아 `IMKTextInput` 프로토콜로 텍스트를 앱에 전달한다.
 
+Tab·host commit·marked range 밖 클릭처럼 이미 증명된 field handoff는 다음 field의 전체 context 분석을 강제한다. Blink가 그 handoff의 same-client `activateServer`를 첫 자모 전후에 늦게 반복해도 새 field의 write lease와 첫 음절 조합을 다시 폐기하지 않는다. 이 예외는 첫 두 Hangyeol-owned keyDown까지만 event-counted token으로 유지되며, 이후 활성화나 근거 없는 reactivation은 다시 live marked-text 소유권을 확인하고 불명확하면 client write 없이 폐기한다.
+
 ### 세션 경계 조합 종료 단일 경로 (InputSession.finalize)
 
 과거 KakaoTalk 계열 버그(stranded preedit, 마지막 글자 유실, 이모티콘 팝업 깜빡임)는 session/lifecycle 종료 이벤트마다 commit 시퀀스가 조금씩 달랐던 데서 왔다. 현재는 앱 비활성·controller 교체·마우스 commit·mode/layout 변경 같은 외부 경계가 `InputSession.finalize(reason:)` 하나로 수렴한다. Return·Space·Arrow처럼 한 keyDown 안에서 끝나는 일반 조합은 `HangulComposer`가 현재 adapter로 확정한다. 현재 field generation이 비보안으로 확인된 경우에만 marked-text 경로에서 `replacementRange = NSNotFound`인 canonical 1-op commit을 사용하며, stale·미확인 generation은 client write 없이 engine·adapter·후보 상태를 폐기한다. 직접 삽입 경로는 이미 문서에 있는 실제 텍스트를 재삽입하지 않고 엔진만 flush하며, Hangyeol이 만든 stale marked fallback도 같은 generation의 소유권이 확인된 경우에만 정리한다.
@@ -94,6 +96,8 @@ keyDown ──► HangyeolInputController.handle()
 ## 한/영 전환 흐름
 
 `RightCommandSuppressor`가 `CGEventTap`으로 시스템 레벨 키 이벤트를 가로채서 사용자가 설정한 전환키(기본: 우측 Command)와 한자키(기본: 우측 Option)를 처리한다. Key Recorder 방식으로 아무 키나 등록할 수 있다. modifier-only 전환키는 Shift·Backspace 등 타이핑 중 겹친 키와 무관하게 동작하며, Codex 앱샷을 위한 좌우 Command 동시 입력만 전환을 취소하고 원래 키 조합을 host에 남긴다. `CGEventTap`은 일시 비활성화 시 물리 modifier 상태를 다시 동기화해 재활성화한다. 60초 안에 세 번째 비활성화가 발생하면 tap 자원을 먼저 완전히 해제한 뒤 IOKit으로 영구 인계한다. `ToggleMonitorStatusStore`가 시작 권한과 상태를 직렬화하므로 두 backend가 동시에 입력을 소유하지 않는다. IOKit fallback은 HID 매핑 가능한 modifier-only 바인딩만 지원하며, regular/combo 바인딩은 임의로 흉내 내지 않고 중앙 상태에 제한으로 기록한다.
+
+두 감시 backend는 전환키가 성립한 callback 안에서 `InputModeCoordinator.requestToggle`을 즉시 호출해 잠금으로 보호된 의도 큐에 먼저 기록한다. 첫 keyDown이 메인 큐 실행보다 빨라도 controller가 그 key를 해석하기 전에 pending 전환을 소비한다. Event Tap/IOKit callback에서는 IMK client write를 하지 않으며, 조합 확정·keyboard override·실제 mode write는 coordinator가 메인 스레드에서만 실행한다.
 
 regular/combo 한자 바인딩은 `HanjaShortcutSessionState`가 `nonsecure`일 때만 down/repeat/up 쌍을 소비하고, `secure` 또는 `unknown`이면 전체 쌍을 host로 통과시킨다. modifier-only 한자키는 전역 단축키 계약을 유지하되 controller의 Secure Input 게이트가 후보 조회를 중단한다.
 
@@ -214,14 +218,14 @@ HostSurfaceResolver        capability 우선 surface 분류
 - adapter 선택과 payload·host-key 처리는 `ClientContext.hostSurface`를 다시 bundle로 해석하지 않는다. `blinkWeb`은 canonical marked text와 host-key 중재를 기본으로 하되, 문서 접근이 안전한 명시적 호환 예외(Hermes)는 direct insertion을 유지한다. `blinkNative`는 안전한 explicit range, `finderNonText`는 immediate delivery를 사용한다.
 - 조합 확정은 `InputSession.finalize(reason:)` 밖에 별도 lifecycle 경로를 만들지 않는다.
 - 호스트별 동작은 capability로 표현할 수 없을 때만 `ClientCompatibilityPolicy`에 둔다.
-- 실제 앱에서 확인한 Enter·Shift+Return·Forward Delete 순서는 `HostKeyTransaction` 계약으로 유지한다. Return 계열은 live marked range와 재전달 권한을 먼저 준비하고, 빈 marked-text 갱신 없이 canonical `insertText`로 조합을 확정한 뒤 retirement 감시와 키 재전달을 시작한다. Forward Delete는 adapter가 조합 시작 시점의 소유 range를 보존하되 첫 range가 지연되거나 임시 caret만 있으면 이후 자모·Backspace 갱신의 실제 marked range로 교정하고, 조합 확정과 뒤쪽 composed-character range 삭제를 같은 client transaction에서 수행한다.
+- 실제 앱에서 확인한 Enter·Shift+Return·Forward Delete 순서는 `HostKeyTransaction` 계약으로 유지한다. Return 계열은 live marked range와 재전달 권한을 먼저 준비하고, 빈 marked-text 갱신 없이 canonical `insertText`로 조합을 확정한 뒤 retirement 감시와 키 재전달을 시작한다. Forward Delete는 adapter가 조합 시작 시점의 range를 보존한다. live marked range가 늦으면 이 값을 위치 후보로만 사용하고, 확정 문자열·문서 길이 전이·caret·뒤쪽 composed character가 모두 일치한 뒤 명시적 replacement range로 삭제한다. 어느 증거든 불일치하면 추측해서 삭제하지 않는다.
 - 직접 삽입은 live real preedit이 없고 문서 접근만 불안정할 때 marked text로 낮춘다. 이미 live
   preedit을 쓴 뒤 selection을 검증할 수 없으면 삭제 범위를 추측하거나 전체 preedit을 다시
   표시하지 않는다. 마지막으로 검증한 문서 상태를 유지하고 현재 조합 쓰기를 중단한다.
 
 ## 모듈 구성
 
-프로젝트의 제품은 `Hangyeol` 실행 타깃과 `HangyeolCore` 라이브러리 타깃으로 구성된다. 이 외에 `HangyeolBenchmark`(성능 측정), `HangyeolVerify`(빌드 검증), `HangyeolCoreTests`(유닛 테스트) 타깃이 있다.
+프로젝트의 제품은 `Hangyeol` 실행 타깃과 `HangyeolCore` 라이브러리 타깃으로 구성된다. 이 외에 `HangyeolBenchmark`(성능 측정), `HangyeolVerify`(빌드 검증), `HangyeolE2E`(설치본 실제 입력 검증), `HangyeolCoreTests`(유닛·상태 전이 테스트) 타깃이 있다.
 
 ### `Hangyeol` (실행 타깃)
 
@@ -274,7 +278,7 @@ HostSurfaceResolver        capability 우선 surface 분류
 
 ## 설치 후 적용 흐름
 
-PKG 스크립트는 시스템 전체 프로세스를 이름으로 종료하지 않는다. `preinstall`은 `/dev/console`의 실제 로그인 사용자와 UID를 확인한 뒤 그 사용자가 소유한 한결·2.x 프로세스와 사용자 영역의 중복 번들, 시스템 영역의 2.x 번들만 정리한다. 현재 `/Library/Input Methods/Hangyeol.app`은 지우지 않고 PackageKit의 atomic update 대상으로 남긴다. 컴포넌트 패키지는 `BundleHasStrictIdentifier=false`로 생성해 이전 `com.meapri` 및 잘못 배치된 `com.thlim.hangyeol.inputmethod` 번들도 같은 표준 경로에서 `com.thlim.inputmethod.Hangyeol`로 교체하며, 식별자 불일치로 만들어졌던 `Hangyeol.localized` 잔여 경로는 preinstall에서 정리한다. 설치된 앱은 Dock 아이콘 없이 설정 창을 열 수 있도록 `LSUIElement=true`로 실행된다. `postinstall`은 다음 순서로 적용한다.
+PKG 스크립트는 시스템 전체 프로세스를 이름으로 종료하지 않는다. `preinstall`은 `/dev/console`의 실제 로그인 사용자와 UID를 확인한 뒤 사용자 영역의 중복 번들, 시스템 영역의 2.x 번들, 이전 이름의 2.x 프로세스만 정리한다. 실행 중인 한결 IMK 서버는 기존 Chrome·Electron client 연결을 유지하도록 종료하지 않는다. 현재 `/Library/Input Methods/Hangyeol.app`은 지우지 않고 PackageKit의 atomic update 대상으로 남긴다. 컴포넌트 패키지는 `BundleHasStrictIdentifier=false`로 생성해 이전 `com.meapri` 및 잘못 배치된 `com.thlim.hangyeol.inputmethod` 번들도 같은 표준 경로에서 `com.thlim.inputmethod.Hangyeol`로 교체하며, 식별자 불일치로 만들어졌던 `Hangyeol.localized` 잔여 경로는 preinstall에서 정리한다. 설치된 앱은 Dock 아이콘 없이 설정 창을 열 수 있도록 `LSUIElement=true`로 실행된다. `postinstall`은 다음 순서로 적용한다.
 
 ```text
 postinstall (root)
@@ -283,16 +287,19 @@ postinstall (root)
   │         ├─ HIToolbox 세 컬렉션의 stale Hangyeol 항목 동기 정리
   │         ├─ TISRegisterInputSource(/Library/Input Methods/Hangyeol.app)
   │         ├─ 부모 입력기 → 한글 mode 순서로 TISEnableInputSource
-  │         ├─ 기존 등록이 없는 첫 설치만 한글 mode 선택
+  │         ├─ 서명된 helper를 유지한 채 macOS 활성화 동의 대기
+  │         ├─ 별도 Hangyeol --post-install-status 프로세스에서 활성화 검증
+  │         ├─ 첫 설치 또는 업데이트 전 선택 상태 복구 시 한글 mode 선택
   │         └─ 설치 안내 pending 기록 후 IMK 초기화 없이 종료
+  ├─ 새 프로세스에서 --post-install-status 최종 검증
   └─ 같은 사용자 세션에서 Hangyeol 실행
        ├─ 설치 pending을 소비해 설정 창을 한 번 표시
        └─ 손쉬운 사용 미허용 시 별도로 macOS 승인 요청 표시
 ```
 
-기존 설치 판정은 `AppleEnabledInputSources` 하나가 아니라 `AppleEnabledInputSources`, `AppleSelectedInputSources`, `AppleInputSourceHistory`의 정리된 현재 Hangyeol parent/mode를 함께 본다. 따라서 선택 기록에만 남아 있는 정상 업데이트를 신규 설치로 오인하지 않는다. TIS 등록·활성화·첫 선택 중 하나라도 준비되지 않으면 입력 소스 설정을 복구 화면으로 연다.
+설치 전 선택과 기존 설치 여부는 `preinstall`이 별도 snapshot으로 보존한다. 설치 준비를 호출한 프로세스의 TIS 캐시는 활성화 동의가 저장되기 전에도 enabled 상태를 반환할 수 있으므로 성공 근거로 쓰지 않는다. 별도 프로세스에서 Hangyeol parent와 한글 mode가 모두 보이고 활성화된 뒤에만 선택 snapshot을 복구한다. 준비되지 않으면 입력 소스 설정을 복구 화면으로 연다.
 
-`TISRegisterInputSource`와 `TISEnableInputSource`는 검증된 입력기 설치 코드에 macOS가 제공하는 표준 등록 경로이며 일반 앱 시작에서는 호출하지 않는다. 입력기 agent를 재시작하거나 HIToolbox에 현재 항목을 직접 추가하지 않는다. 손쉬운 사용 권한(TCC)은 여전히 사용자 승인 경계이므로 설치기가 TCC 데이터베이스를 수정하지 않는다. ABC와 다른 입력 소스도 자동 삭제하지 않으며, 설정의 명시적 `ABC 끄기` 동작만 사용자가 요청했을 때 실행한다.
+`TISRegisterInputSource`와 `TISEnableInputSource`는 검증된 입력기 설치 코드에 macOS가 제공하는 표준 등록 경로이며 일반 앱 시작에서는 호출하지 않는다. 입력기 agent나 실행 중인 한결 IMK 서버를 재시작하지 않으므로, 업데이트된 실행 파일은 다음 로그인 또는 재시동부터 새 client 연결에 사용된다. 손쉬운 사용 권한(TCC)은 여전히 사용자 승인 경계이므로 설치기가 TCC 데이터베이스를 수정하지 않는다. ABC와 다른 입력 소스도 자동 삭제하지 않으며, 설정의 명시적 `ABC 끄기` 동작만 사용자가 요청했을 때 실행한다.
 
 ## 의존 라이브러리
 
@@ -357,7 +364,9 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 
 > **참고**: Command Line Tools SDK에는 Testing 모듈이 포함되어 있지 않으므로 `DEVELOPER_DIR`로 Xcode SDK를 지정해야 한다.
 
-자동 회귀는 fake `IMKTextInput`, synthetic `NSEvent`, mock candidate presenter 기반이다. 설치된 IME의 실제 InputMethodKit callback 순서와 TextEdit·GoodNotes·KakaoTalk·Chromium/Electron·Secure field 동작은 별도 실기기 검증이 필요하다.
+유닛 회귀는 fake `IMKTextInput`, synthetic `NSEvent`, mock candidate presenter 기반이다. 고정 seed operation sequence는 controller/session/generation/lease 상태 전이를 반복하며 실패 seed와 전체 연산열을 출력한다.
+
+설치된 PKG의 TextEdit·Chrome 경로는 `HangyeolE2E`로 검증한다. 러너는 실제 `CGEvent`와 `AXUIElement`를 사용하며 실행법과 권한 경계는 [Docs/E2ETesting.md](Docs/E2ETesting.md)에 정리되어 있다. Confluence와 로그인 세션이 필요한 호스트는 로컬 fixture 결과와 분리해서 검증한다.
 
 ## 디렉토리 구조
 
@@ -408,6 +417,8 @@ Hangyeol/
 │   │       ├── ko.lproj/               # 한국어 문자열
 │   │       └── en.lproj/               # 영어 문자열
 │   ├── HangyeolBenchmark/           # 성능 벤치마크 타깃
+│   ├── HangyeolE2E/                 # 실제 IME E2E 실행 타깃
+│   ├── HangyeolE2ESupport/          # 설치본 검사, Chrome fixture, AX/CGEvent 러너
 │   └── HangyeolVerify/              # 빌드 검증 타깃
 ├── Tests/
 │   └── HangyeolCoreTests/           # Swift Testing 회귀 테스트

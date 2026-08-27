@@ -304,9 +304,7 @@ public final class IOKitManager: @unchecked Sendable {
                     .state("backend", "iokit")
                 ])
                 let callback = onRightCommandToggle
-                DispatchQueue.main.async {
-                    callback?(trace)
-                }
+                PhysicalToggleIntentDelivery.record(trace, using: callback)
             case .released(shouldToggle: false):
                 toggleTraceLifecycle.cancel()
                 DebugLogger.event("toggle.ignored", metadata: [

@@ -650,15 +650,11 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     private func triggerToggle() {
         let callback = onToggle
         let trace = ToggleLatencyTrace.begin(source: .customKey)
-        // Hop to the main run loop and let the toggle settle there. This matches
-        // the proven v2.6.5 baseline: first-key stability comes from the single
-        // internal state machine (`HangulComposer.inputMode` with no async TIS
-        // source selection), NOT from running the toggle synchronously inside the
-        // CGEventTap callback. Keeping IMK commit / keyboard-override work off the
-        // tap callback also protects against `kCGEventTapDisabledByTimeout`.
-        DispatchQueue.main.async {
-            callback?(trace)
-        }
+        // Record the physical intent before the next keyDown can overtake a main-
+        // queue hop. `InputModeCoordinator.requestToggle` only appends to its locked
+        // queue here; IMK finalize, keyboard override, and mode writes still run on
+        // the coordinator's main-thread drain path.
+        PhysicalToggleIntentDelivery.record(trace, using: callback)
     }
     
     private func triggerHanjaLookup() {

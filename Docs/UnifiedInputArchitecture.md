@@ -131,12 +131,14 @@ Hangyeol은 별도 `한`/`A` 상태 아이콘을 추가하지 않는다. 실제 
 Caps Lock 정책·active controller 가드·전환 전 1회 commit을 한 곳(coordinator/controller)에서 보장한다.
 
 토글 콜백은 [RightCommandSuppressor.triggerToggle](../Sources/HangyeolCore/RightCommandSuppressor.swift)에서
-`DispatchQueue.main.async`로 메인 런루프에 올린다. 이는 **검증된 2.6.5 기준선과 동일**하다.
+물리 전환 의도만 `InputModeCoordinator.requestToggle`에 즉시 기록한다. coordinator의 잠금 큐 append는
+Event Tap/IOKit callback 안에서 끝나므로 메인 큐보다 첫 keyDown이 먼저 와도 전환이 유실되지 않는다.
+조합 확정, keyboard override, 실제 `InputModeStore` write는 여전히 main-thread drain에서만 수행하므로
+Event Tap callback 안에서 IMK IPC를 실행하지 않는다.
 
-> 설계 노트: "전환 직후 첫 글자 씹힘"의 구조적 원인은 async hop이 아니라 2.7.2의 *비동기 TIS source 선택*이었다.
-> 현재 구조는 실제 ABC source를 선택하지 않고 process-global `InputModeStore`만 controller 경계에서 갱신하므로
-> race가 사라진다. 한때 토글을 탭 콜백 안에서 동기 실행하는 안을 검토했으나, 2.6.5/2.7.2 어디에도 없던 신규
-> 동작(탭 콜백 내 IMK IPC)이라 `kCGEventTapDisabledByTimeout` 위험만 추가하고 이득이 불확실해 채택하지 않았다.
+> 설계 노트: 2.7.2의 비동기 TIS source 선택은 제거된 상태지만, callback 자체를 메인 큐로 미루면 빠른
+> Chrome handoff의 첫 keyDown이 pending 의도 기록보다 앞설 수 있다. 따라서 "의도 기록은 즉시, client
+> transaction은 메인 스레드"를 별도 경계로 유지한다.
 
 ### ④ controller-only inputMode write path
 `InputModeStore`를 쓰는 production 경계는 `HangyeolInputController`로 제한한다. 일반 탭·앱·필드
@@ -230,4 +232,4 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build -c release 
 - Caps Lock은 macOS 입력 소스 설정이 소유한다는 정책
 - GoodNotes Return 중복/누락 보정
 - 앱 비활성 시 조합 강제 commit — host-무관 멱등 안전망(과거 KakaoTalk 하드코딩을 일반화: `InputSession.handleAppDeactivation()` → `finalize(.appDeactivate)`)
-- 설치/시작 시 Hangyeol 자신을 `TISEnableInputSource` 하지 않는 보수화
+- 일반 앱 시작과 typing hot path에서 Hangyeol 자신을 `TISEnableInputSource` 하지 않는 보수화(서명된 설치 helper만 담당)

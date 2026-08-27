@@ -1,9 +1,22 @@
 import Foundation
 import Carbon.HIToolbox
 
-/// A physical custom-toggle press is recorded before the event-tap callback hops
-/// to the main queue. Keeping the intent outside any controller lets a short IMK
-/// handoff finish without losing the user's mode change.
+/// Records a physical toggle intent on the monitoring callback before a later
+/// main-queue turn can be overtaken by the first keyDown. The callback may only
+/// enqueue through `InputModeCoordinator.requestToggle`; client writes remain on
+/// the coordinator's main-thread drain path.
+enum PhysicalToggleIntentDelivery {
+    static func record(
+        _ trace: ToggleLatencyTrace,
+        using callback: (@Sendable (ToggleLatencyTrace) -> Void)?
+    ) {
+        callback?(trace)
+    }
+}
+
+/// A physical custom-toggle press is recorded before the coordinator hops to the
+/// main queue. Keeping the intent outside any controller lets a short IMK handoff
+/// finish without losing the user's mode change.
 private final class PendingInputModeToggleQueue: @unchecked Sendable {
     struct Intent {
         let id: UInt64

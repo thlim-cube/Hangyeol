@@ -20,24 +20,24 @@ run_as_console_user() {
     /bin/launchctl asuser "$USER_ID" /usr/bin/sudo -H -u "$CURRENT_USER" "$@"
 }
 
-# Stop only Hangyeol processes owned by the logged-in user. The executable may
-# have been relaunched automatically while Installer replaced the bundle.
-/usr/bin/pkill -x -u "$USER_ID" Hangyeol 2>/dev/null || true
+# Retired 2.x servers cannot own the current bundle's IMK connection. The
+# current Hangyeol process is deliberately preserved: replacing its live
+# client connections is a login-session boundary, not a safe installer action.
 /usr/bin/pkill -x -u "$USER_ID" PriType 2>/dev/null || true
 /usr/bin/pkill -x -u "$USER_ID" PriTypeV2 2>/dev/null || true
 
 # Register and enable Hangyeol synchronously in the logged-in user's TIS domain.
-# The installer-only command selects Hangyeol only when that user had no current
-# Hangyeol registration; updates preserve the user's selected input source.
+# The signed helper remains alive while macOS asks for activation consent and
+# accepts success only after a separate process sees the persisted TIS state.
 run_as_console_user "$APP_EXECUTABLE" --post-install-prepare
 PREPARE_STATUS=$?
 
-# The first helper process can be the boundary that makes a freshly replaced
-# TIS registration visible. Retry once without a timing delay; the helper keeps
-# the preinstall selection snapshot until a fully ready attempt succeeds.
-if [ "$PREPARE_STATUS" -ne 0 ]; then
-    run_as_console_user "$APP_EXECUTABLE" --post-install-prepare
-    PREPARE_STATUS=$?
+# Do not trust the activation caller's TIS cache. Recheck from one final fresh
+# process before deciding whether setup is complete.
+run_as_console_user "$APP_EXECUTABLE" --post-install-status
+STATUS_CHECK=$?
+if [ "$STATUS_CHECK" -ne 0 ]; then
+    PREPARE_STATUS=$STATUS_CHECK
 fi
 
 run_as_console_user /usr/bin/open "$APP_PATH" >/dev/null 2>&1 || true

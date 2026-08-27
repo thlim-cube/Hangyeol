@@ -35,8 +35,8 @@ if [ -n "$CURRENT_USER" ]; then
         done
 
         # PackageKit can fall back to ABC while it replaces the selected input
-        # method. Capture the user's real pre-update selection before stopping
-        # Hangyeol so postinstall can restore it without hijacking ABC users.
+        # method. Capture the user's real pre-update selection so postinstall
+        # can restore it without hijacking intentional ABC users.
         if run_as_console_user /usr/bin/defaults read \
             com.apple.HIToolbox AppleSelectedInputSources 2>/dev/null \
             | /usr/bin/grep -q \
@@ -63,7 +63,10 @@ if [ -n "$CURRENT_USER" ]; then
         run_as_console_user /usr/bin/defaults write com.thlim.inputmethod.Hangyeol \
             HangyeolInstalledBeforeInstall -bool "$HANGYEOL_WAS_INSTALLED" || true
 
-        /usr/bin/pkill -x -u "$USER_ID" Hangyeol 2>/dev/null || true
+        # Keep the current Hangyeol IMK server alive during an update. Existing
+        # host applications own connections to that process; terminating it
+        # before a replacement session exists leaves Chrome and Electron apps
+        # attached to a stale controller until logout or restart.
         /usr/bin/pkill -x -u "$USER_ID" PriType 2>/dev/null || true
         /usr/bin/pkill -x -u "$USER_ID" PriTypeV2 2>/dev/null || true
 
