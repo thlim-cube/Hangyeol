@@ -18,6 +18,7 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 COMPONENT_PLIST="$TEMP_DIR/components.plist"
 EXPANDED_DIR="$TEMP_DIR/Expanded"
 RAW_PKG="$TEMP_DIR/Hangyeol.raw.pkg"
+SCRIPTS_DIR="$TEMP_DIR/Scripts"
 
 cleanup() {
     rm -rf "$TEMP_DIR"
@@ -26,6 +27,7 @@ trap cleanup EXIT
 
 cd "$REPO_ROOT"
 swift build -c release --product "$APP_NAME"
+swift build -c release --product HangyeolInstallerHelper
 
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp ".build/release/$APP_NAME" "$MACOS_DIR/$APP_NAME"
@@ -49,6 +51,10 @@ find "$APP_BUNDLE" -name '._*' -delete
 xattr -cr "$APP_BUNDLE" 2>/dev/null || true
 codesign --verify --strict --verbose=2 "$APP_BUNDLE"
 "$MACOS_DIR/$APP_NAME" --verify-launch
+bash Tools/stage_package_scripts.sh \
+    release \
+    "$SCRIPTS_DIR" \
+    "$SIGNING_IDENTITY"
 
 pkgbuild --analyze --root "$PAYLOAD_DIR" "$COMPONENT_PLIST"
 plutil -replace 0.BundleIsRelocatable -bool NO "$COMPONENT_PLIST"
@@ -56,7 +62,7 @@ plutil -replace 0.BundleHasStrictIdentifier -bool NO "$COMPONENT_PLIST"
 pkgbuild --root "$PAYLOAD_DIR" \
     --component-plist "$COMPONENT_PLIST" \
     --install-location "/Library/Input Methods" \
-    --scripts Packaging/scripts \
+    --scripts "$SCRIPTS_DIR" \
     --identifier "com.thlim.hangyeol" \
     --version "$APP_VERSION" \
     "$RAW_PKG"
@@ -64,7 +70,7 @@ pkgbuild --root "$PAYLOAD_DIR" \
 bash Tools/rebuild_clean_package.sh \
     "$RAW_PKG" \
     "$PAYLOAD_DIR" \
-    Packaging/scripts \
+    "$SCRIPTS_DIR" \
     "$PKG_OUTPUT"
 
 PAYLOAD_FILES=$(pkgutil --payload-files "$PKG_OUTPUT")
@@ -83,6 +89,13 @@ if [ -z "$EXPANDED_APP" ]; then
 fi
 
 codesign --verify --strict --verbose=2 "$EXPANDED_APP"
+EXPANDED_HELPER=$(find "$EXPANDED_DIR" -type f \
+    -name HangyeolInstallerHelper -print -quit)
+if [ -z "$EXPANDED_HELPER" ]; then
+    echo "Packaged installer helper was not found during validation." >&2
+    exit 1
+fi
+codesign --verify --strict --verbose=2 "$EXPANDED_HELPER"
 SIGNATURE_DETAILS=$(codesign -dv --verbose=4 "$EXPANDED_APP" 2>&1)
 case "$SIGNATURE_DETAILS" in
     *"Identifier=com.thlim.inputmethod.Hangyeol"*)

@@ -15,6 +15,9 @@ let package = Package(
             name: "HangyeolCore",
             targets: ["HangyeolCore"]),
         .executable(
+            name: "HangyeolInstallerHelper",
+            targets: ["HangyeolInstallerHelper"]),
+        .executable(
             name: "HangyeolE2E",
             targets: ["HangyeolE2E"]),
     ],
@@ -23,8 +26,12 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "HangyeolInstallerSupport"
+        ),
+        .target(
             name: "HangyeolCore",
             dependencies: [
+                "HangyeolInstallerSupport",
                 .product(name: "LibHangul", package: "libhangul-swift")
             ],
             resources: [
@@ -38,9 +45,14 @@ let package = Package(
             ]
         ),
         .executableTarget(
+            name: "HangyeolInstallerHelper",
+            dependencies: ["HangyeolInstallerSupport"]
+        ),
+        .executableTarget(
             name: "Hangyeol",
             dependencies: [
                 "HangyeolCore",
+                "HangyeolInstallerSupport",
                 .product(name: "LibHangul", package: "libhangul-swift")
             ],
             linkerSettings: [
@@ -64,7 +76,11 @@ let package = Package(
         ),
         .testTarget(
             name: "HangyeolCoreTests",
-            dependencies: ["HangyeolCore", "HangyeolE2ESupport"]
+            dependencies: [
+                "HangyeolCore",
+                "HangyeolE2ESupport",
+                "HangyeolInstallerSupport"
+            ]
         ),
         .executableTarget(
             name: "HangyeolBenchmark",

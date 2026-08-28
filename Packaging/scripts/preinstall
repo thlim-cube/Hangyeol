@@ -1,6 +1,20 @@
 #!/bin/bash
 # preinstall for Hangyeol.pkg
 
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+PACKAGED_HELPER="$SCRIPT_DIR/HangyeolInstallerHelper"
+STAGING_DIR=""
+STAGED_HELPER=""
+
+cleanup() {
+    if [ -n "$STAGING_DIR" ] && [ -d "$STAGING_DIR" ]; then
+        /bin/rm -rf "$STAGING_DIR"
+    fi
+}
+trap cleanup EXIT
+
 CURRENT_USER=$(/usr/bin/stat -f "%Su" /dev/console 2>/dev/null || true)
 
 case "$CURRENT_USER" in
@@ -11,13 +25,29 @@ esac
 
 if [ -n "$CURRENT_USER" ]; then
     USER_ID=$(/usr/bin/id -u "$CURRENT_USER" 2>/dev/null || true)
-    USER_HOME=$(/usr/bin/dscl . -read "/Users/$CURRENT_USER" NFSHomeDirectory 2>/dev/null \
-        | /usr/bin/awk '{ print $2 }')
+    USER_HOME=$(/usr/bin/dscl . -read "/Users/$CURRENT_USER" NFSHomeDirectory \
+        2>/dev/null | /usr/bin/awk '{ print $2 }')
 
     if [ -n "$USER_ID" ]; then
         run_as_console_user() {
-            /bin/launchctl asuser "$USER_ID" /usr/bin/sudo -H -u "$CURRENT_USER" "$@"
+            /bin/launchctl asuser "$USER_ID" \
+                /usr/bin/sudo -H -u "$CURRENT_USER" "$@"
         }
+
+        if [ ! -x "$PACKAGED_HELPER" ] \
+            || ! /usr/bin/codesign --verify --strict "$PACKAGED_HELPER"; then
+            echo "Hangyeol preinstall helper is missing or has an invalid signature." >&2
+            exit 1
+        fi
+
+        # PackageKit's private Scripts directory is not guaranteed to be
+        # traversable by the console user. Run the signed helper from a narrow,
+        # disposable directory whose contents are verified again after copying.
+        STAGING_DIR=$(/usr/bin/mktemp -d "/private/tmp/hangyeol-preinstall.XXXXXX")
+        /bin/chmod 755 "$STAGING_DIR"
+        STAGED_HELPER="$STAGING_DIR/HangyeolInstallerHelper"
+        /usr/bin/install -m 755 "$PACKAGED_HELPER" "$STAGED_HELPER"
+        /usr/bin/codesign --verify --strict "$STAGED_HELPER"
 
         INSTALLED_VERSION=""
         INSTALLED_BUNDLE_IDENTIFIER=""
@@ -46,53 +76,100 @@ if [ -n "$CURRENT_USER" ]; then
             fi
         done
 
-        # PackageKit can fall back to ABC while it replaces the selected input
-        # method. Capture the user's real pre-update selection so postinstall
-        # can restore it without hijacking intentional ABC users.
-        if run_as_console_user /usr/bin/defaults read \
-            com.apple.HIToolbox AppleSelectedInputSources 2>/dev/null \
-            | /usr/bin/grep -q \
-                -e "com.thlim.inputmethod.Hangyeol" \
-                -e "com.thlim.hangyeol.inputmethod" \
-                -e "com.meapri.hangyeol.inputmethod" \
-                -e "com.pritype.inputmethod.v2"; then
-            HANGYEOL_WAS_SELECTED=true
-        else
-            HANGYEOL_WAS_SELECTED=false
+        # Move away from every current or retired Hangyeol identity before its
+        # executable is replaced. Failure is fatal: replacing the active IMK
+        # server is the exact state that leaves the current login session stale.
+        if ! PREPARE_OUTPUT=$(run_as_console_user \
+            "$STAGED_HELPER" --prepare-update); then
+            echo "Hangyeol could not select a safe fallback input source." >&2
+            exit 1
+        fi
+        SELECTED_BEFORE=$(/bin/printf '%s\n' "$PREPARE_OUTPUT" \
+            | /usr/bin/awk -F= '$1 == "selected-before" { print $2 }')
+        FALLBACK_SOURCE_ID=$(/bin/printf '%s\n' "$PREPARE_OUTPUT" \
+            | /usr/bin/awk -F= '$1 == "fallback-source-id" { print $2 }')
+        FALLBACK_WAS_ENABLED=$(/bin/printf '%s\n' "$PREPARE_OUTPUT" \
+            | /usr/bin/awk -F= '$1 == "fallback-was-enabled" { print $2 }')
+        case "$SELECTED_BEFORE" in
+            true)
+                HANGYEOL_WAS_SELECTED=true
+                ;;
+            false)
+                HANGYEOL_WAS_SELECTED=false
+                ;;
+            *)
+                echo "Hangyeol preinstall helper returned an invalid result." >&2
+                exit 1
+                ;;
+        esac
+        case "$FALLBACK_WAS_ENABLED" in
+            true|false)
+                ;;
+            *)
+                echo "Hangyeol preinstall helper returned invalid fallback state." >&2
+                exit 1
+                ;;
+        esac
+        if [ -z "$FALLBACK_SOURCE_ID" ]; then
+            echo "Hangyeol preinstall helper omitted its fallback identity." >&2
+            exit 1
         fi
 
-        # 2.8.24 and 2.8.25 could leave an enabled Hangyeol registration behind
-        # while falling back to ABC. Recover those known broken installations
-        # once; later updates continue to preserve an intentional ABC choice.
+        # Recover known 2.x fallback failures once. Newer updates preserve an
+        # intentional non-Hangyeol selection exactly as reported by TIS.
         case "$INSTALLED_VERSION" in
             2.8.24|2.8.25)
                 HANGYEOL_WAS_SELECTED=true
                 ;;
         esac
 
-        run_as_console_user /usr/bin/defaults write com.thlim.inputmethod.Hangyeol \
-            HangyeolSelectedBeforeInstall -bool "$HANGYEOL_WAS_SELECTED" || true
-        run_as_console_user /usr/bin/defaults write com.thlim.inputmethod.Hangyeol \
-            HangyeolInstalledBeforeInstall -bool "$HANGYEOL_WAS_INSTALLED" || true
-        run_as_console_user /usr/bin/defaults write com.thlim.inputmethod.Hangyeol \
+        run_as_console_user /usr/bin/defaults write \
+            com.thlim.inputmethod.Hangyeol \
+            HangyeolSelectedBeforeInstall -bool "$HANGYEOL_WAS_SELECTED"
+        run_as_console_user /usr/bin/defaults write \
+            com.thlim.inputmethod.Hangyeol \
+            HangyeolInstalledBeforeInstall -bool "$HANGYEOL_WAS_INSTALLED"
+        run_as_console_user /usr/bin/defaults write \
+            com.thlim.inputmethod.Hangyeol \
             HangyeolInstalledBundleIdentifier -string \
-            "$INSTALLED_BUNDLE_IDENTIFIER" || true
-        run_as_console_user /usr/bin/defaults write com.thlim.inputmethod.Hangyeol \
+            "$INSTALLED_BUNDLE_IDENTIFIER"
+        run_as_console_user /usr/bin/defaults write \
+            com.thlim.inputmethod.Hangyeol \
             HangyeolInstalledConnectionName -string \
-            "$INSTALLED_CONNECTION_NAME" || true
-        run_as_console_user /usr/bin/defaults write com.thlim.inputmethod.Hangyeol \
+            "$INSTALLED_CONNECTION_NAME"
+        run_as_console_user /usr/bin/defaults write \
+            com.thlim.inputmethod.Hangyeol \
             HangyeolInstalledInputModeSchema -string \
-            "$INSTALLED_INPUT_MODE_SCHEMA" || true
+            "$INSTALLED_INPUT_MODE_SCHEMA"
+        run_as_console_user /usr/bin/defaults write \
+            com.thlim.inputmethod.Hangyeol \
+            HangyeolFallbackInputSourceID -string "$FALLBACK_SOURCE_ID"
+        run_as_console_user /usr/bin/defaults write \
+            com.thlim.inputmethod.Hangyeol \
+            HangyeolFallbackWasEnabled -bool "$FALLBACK_WAS_ENABLED"
 
-        # Keep the current Hangyeol IMK server alive while PackageKit replaces
-        # the bundle. Existing host connections and TIS candidates remain owned
-        # by that process until the next login starts the installed executable.
-        /usr/bin/pkill -x -u "$USER_ID" PriType 2>/dev/null || true
-        /usr/bin/pkill -x -u "$USER_ID" PriTypeV2 2>/dev/null || true
+        # Terminate only input-method processes owned by this product. The
+        # helper polls the exact condition, so PackageKit never relies on a
+        # fixed delay and never restarts macOS text-input services.
+        for process_name in Hangyeol PriType PriTypeV2; do
+            /usr/bin/pkill -TERM -x -u "$USER_ID" "$process_name" \
+                2>/dev/null || true
+        done
+        if ! run_as_console_user "$STAGED_HELPER" \
+            --wait-for-process-exit 3 Hangyeol PriType PriTypeV2; then
+            for process_name in Hangyeol PriType PriTypeV2; do
+                /usr/bin/pkill -KILL -x -u "$USER_ID" "$process_name" \
+                    2>/dev/null || true
+            done
+            if ! run_as_console_user "$STAGED_HELPER" \
+                --wait-for-process-exit 2 Hangyeol PriType PriTypeV2; then
+                echo "Hangyeol input-method process did not terminate." >&2
+                exit 1
+            fi
+        fi
 
-        # Retired bundle identities cannot reuse their Accessibility grants.
-        # Remove only those old product grants; the current identity remains a
-        # user-controlled TCC decision.
+        # Retired identities cannot reuse their Accessibility grants. The
+        # current identity remains a user-controlled TCC decision.
         run_as_console_user /usr/bin/tccutil reset Accessibility \
             com.thlim.hangyeol.inputmethod >/dev/null 2>&1 || true
         run_as_console_user /usr/bin/tccutil reset Accessibility \
@@ -110,10 +187,8 @@ if [ -n "$CURRENT_USER" ]; then
     esac
 fi
 
-# PackageKit performs an atomic update of the current Hangyeol.app bundle. Do
-# not delete it here: removing it creates a registration gap in the user's TIS
-# domain before the replacement bundle is installed. Retired 2.x bundles and
-# receipts are removed explicitly so they cannot appear as duplicate products.
+# Keep the canonical bundle in place for PackageKit's replacement. Only retired
+# names and receipts are removed, so no unrelated input source is touched.
 /bin/rm -rf "/Library/Input Methods/PriType.app"
 /bin/rm -rf "/Library/Input Methods/PriTypeV2.app"
 /bin/rm -rf "/Library/Input Methods/Hangyeol.localized"

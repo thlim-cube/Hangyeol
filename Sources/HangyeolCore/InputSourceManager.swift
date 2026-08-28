@@ -1,15 +1,10 @@
 import Foundation
 import Carbon
+import HangyeolInstallerSupport
 
 public struct InputSourceCleanupResult: Sendable {
     public let hasCurrentHangyeolRegistration: Bool
     public let didChange: Bool
-}
-
-public struct InputSourceInstallationResult: Sendable {
-    public let registrationStatus: OSStatus
-    public let firstEnableFailure: OSStatus?
-    public let isLocallyVisibleAndEnabled: Bool
 }
 
 public struct InputSourceInstallationStatus: Sendable {
@@ -21,67 +16,11 @@ public struct InputSourceInstallationStatus: Sendable {
     }
 }
 
-public struct InputSourceSelectionResult: Sendable {
-    public let status: OSStatus
-    public let isSelected: Bool
-}
-
 internal struct InputSourceCleanupPlan {
     let enabledSources: [[String: Any]]
     let selectedSources: [[String: Any]]
     let historySources: [[String: Any]]
     let result: InputSourceCleanupResult
-}
-
-internal struct InputSourceInstallationCandidate: Equatable {
-    let inputSourceID: String
-    let inputModeID: String?
-    let inputSourceType: String
-    let isEnabled: Bool
-    let isEnableCapable: Bool
-    let isSelectCapable: Bool
-}
-
-internal struct InputSourceInstallationPlan {
-    let candidatesToEnable: [InputSourceInstallationCandidate]
-    let enabledMode: InputSourceInstallationCandidate?
-    let hasRequiredCandidates: Bool
-    let isEnabled: Bool
-}
-
-private final class InputSourceChangeMonitor: @unchecked Sendable {
-    private let center = DistributedNotificationCenter.default()
-    private var observerTokens: [NSObjectProtocol] = []
-    private var didObserveChange = false
-
-    init() {
-        let notificationNames = [
-            Notification.Name(kTISNotifyEnabledKeyboardInputSourcesChanged as String),
-            Notification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String)
-        ]
-        observerTokens = notificationNames.map { name in
-            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                self?.didObserveChange = true
-            }
-        }
-    }
-
-    deinit {
-        observerTokens.forEach(center.removeObserver)
-    }
-
-    func waitForChange(until deadline: Date) -> Bool {
-        let timeoutTimer = Timer(fire: deadline, interval: 0, repeats: false) { _ in }
-        RunLoop.current.add(timeoutTimer, forMode: .default)
-        defer { timeoutTimer.invalidate() }
-
-        while !didObserveChange && Date() < deadline {
-            _ = RunLoop.current.run(mode: .default, before: deadline)
-        }
-        let observedChange = didObserveChange
-        didObserveChange = false
-        return observedChange
-    }
 }
 
 // MARK: - InputSourceManager
@@ -114,6 +53,10 @@ public final class InputSourceManager: @unchecked Sendable {
 
     private static let hangyeolBundleID = ProductIdentity.bundleID
     private static let hangyeolKoreanInputMode = ProductIdentity.inputModeID
+    private static let installerIdentity = InstallerInputSourceIdentity(
+        bundleID: ProductIdentity.bundleID,
+        modeID: ProductIdentity.inputModeID
+    )
     private static let currentHangyeolInputModes: Set<String> = [
         hangyeolKoreanInputMode
     ]
@@ -203,223 +146,290 @@ public final class InputSourceManager: @unchecked Sendable {
         return plan.result
     }
 
-    /// Register and enable the installed Hangyeol bundle in the current GUI
-    /// user's TIS domain. This is installer-only and must stay off app startup
-    /// and the typing hot path.
-    @discardableResult
-    public func prepareInstalledInputSource(
-        at appURL: URL
-    ) -> InputSourceInstallationResult {
-        let changeMonitor = InputSourceChangeMonitor()
-        _ = cleanupStaleInputSources()
-        let registrationStatus = TISRegisterInputSource(appURL as CFURL)
-        let discoveredRecords = installationRecords(
-            waitingUntil: { $0.hasRequiredCandidates },
-            changeMonitor: changeMonitor
-        )
-        let discoveryPlan = Self.installationPlan(from: discoveredRecords.map(\.candidate))
-
-        var firstEnableFailure: OSStatus?
-        // TIS may hand the installer a cached `isEnabled=true` record from the
-        // replaced bundle. Reassert both identities so the new registration is
-        // persisted instead of disappearing when the system cache refreshes.
-        for candidate in discoveryPlan.candidatesToEnable {
-            guard let source = discoveredRecords.first(where: {
-                $0.candidate.inputSourceID == candidate.inputSourceID
-            })?.source else {
-                firstEnableFailure = firstEnableFailure ?? OSStatus(paramErr)
-                continue
-            }
-
-            let status = TISEnableInputSource(source)
-            if status != noErr {
-                firstEnableFailure = firstEnableFailure ?? status
-            }
-        }
-
-        let enabledRecords = installationRecords(
-            waitingUntil: { $0.isEnabled },
-            changeMonitor: changeMonitor
-        )
-        let enabledPlan = Self.installationPlan(from: enabledRecords.map(\.candidate))
-
-        return InputSourceInstallationResult(
-            registrationStatus: registrationStatus,
-            firstEnableFailure: firstEnableFailure,
-            isLocallyVisibleAndEnabled: registrationStatus == noErr
-                && firstEnableFailure == nil
-                && enabledPlan.isEnabled
-        )
-    }
-
     /// Returns the TIS view visible to the current process. Installer readiness
     /// must call this from a process other than the one that requested
     /// activation so an uncommitted caller-local cache cannot pass the check.
     public func installedInputSourceStatus() -> InputSourceInstallationStatus {
-        let plan = Self.installationPlan(
-            from: hangyeolInstallationRecords().map(\.candidate)
+        let installedRoster = InputSourceLifecycleRules.roster(
+            from: hangyeolInstallationRecords(
+                includeAllInstalled: true
+            ).map(\.candidate),
+            identity: Self.installerIdentity
+        )
+        let enabledRoster = InputSourceLifecycleRules.roster(
+            from: hangyeolInstallationRecords(
+                includeAllInstalled: false
+            ).map(\.candidate),
+            identity: Self.installerIdentity
         )
         return InputSourceInstallationStatus(
-            hasRequiredCandidates: plan.hasRequiredCandidates,
-            isEnabled: plan.isEnabled
+            hasRequiredCandidates: installedRoster.hasUniquePair,
+            isEnabled: enabledRoster.isEnabled
         )
     }
 
-    /// Selects the enabled Hangyeol mode only after another process has proved
-    /// that the activation consent was persisted.
-    public func selectInstalledInputSource() -> InputSourceSelectionResult {
-        let changeMonitor = InputSourceChangeMonitor()
-        let records = hangyeolInstallationRecords()
-        let plan = Self.installationPlan(from: records.map(\.candidate))
-        guard plan.isEnabled,
-              let enabledMode = plan.enabledMode,
-              let modeSource = records.first(where: {
-                  $0.candidate.inputSourceID == enabledMode.inputSourceID
-              })?.source else {
-            return InputSourceSelectionResult(status: OSStatus(paramErr), isSelected: false)
-        }
+    /// Executes exactly one installer TIS phase. The installer coordinator runs
+    /// every action and verifier in a separate signed process so a caller-local
+    /// TIS cache can never satisfy its own success check.
+    public func runInstallerPhase(
+        _ phase: InstallerActivationPhase,
+        fallbackSourceID: String? = nil,
+        appURL: URL
+    ) -> Int32 {
+        switch phase {
+        case .register:
+            _ = cleanupStaleInputSources()
+            let status = TISRegisterInputSource(appURL as CFURL)
+            print("installer: register status=\(status) path=\(appURL.path)")
+            return status == noErr
+                ? InstallerPhaseExit.success
+                : InstallerPhaseExit.retryable
 
-        let status = TISSelectInputSource(modeSource)
-        if status == noErr && !isHangyeolSelected() {
-            _ = changeMonitor.waitForChange(
-                until: Date().addingTimeInterval(Self.postInstallSettlementTimeout)
+        case .verifyInstalled:
+            let roster = installationRoster(includeAllInstalled: true)
+            print(
+                "installer: verify-installed parent=\(roster.parentCount) "
+                    + "mode=\(roster.modeCount) ready=\(roster.hasUniquePair)"
             )
-        }
-        return InputSourceSelectionResult(
-            status: status,
-            isSelected: status == noErr && isHangyeolSelected()
-        )
-    }
+            return roster.hasUniquePair
+                ? InstallerPhaseExit.success
+                : InstallerPhaseExit.retryable
 
-    internal static func installationPlan(
-        from candidates: [InputSourceInstallationCandidate]
-    ) -> InputSourceInstallationPlan {
-        let orderedCandidates = installationCandidates(from: candidates)
-        let parent = orderedCandidates.first { installationRole(of: $0) == 0 }
-        let mode = orderedCandidates.first { installationRole(of: $0) == 1 }
-        return InputSourceInstallationPlan(
-            candidatesToEnable: orderedCandidates,
-            enabledMode: mode?.isEnabled == true ? mode : nil,
-            hasRequiredCandidates: parent != nil && mode != nil,
-            isEnabled: parent?.isEnabled == true && mode?.isEnabled == true
-        )
-    }
-
-    internal static func settleInstallationState<State>(
-        initial: State,
-        isSettled: (State) -> Bool,
-        waitForChange: () -> Bool,
-        reload: () -> State
-    ) -> State {
-        var state = initial
-        while !isSettled(state) {
-            let observedChange = waitForChange()
-            state = reload()
-            if !observedChange {
-                break
+        case .enableParent:
+            guard let record = uniqueRecord(
+                role: .parent,
+                includeAllInstalled: true
+            ) else {
+                return InstallerPhaseExit.retryable
             }
-        }
-        return state
-    }
+            let status = TISEnableInputSource(record.source)
+            print("installer: enable-parent status=\(status)")
+            return status == noErr
+                ? InstallerPhaseExit.success
+                : InstallerPhaseExit.retryable
 
-    internal static func installationCandidates(
-        from candidates: [InputSourceInstallationCandidate]
-    ) -> [InputSourceInstallationCandidate] {
-        candidates
-            .filter { installationRole(of: $0) != nil && $0.isEnableCapable }
-            .sorted {
-                (installationRole(of: $0) ?? Int.max)
-                    < (installationRole(of: $1) ?? Int.max)
+        case .verifyParent:
+            let roster = installationRoster(includeAllInstalled: false)
+            let ready = roster.parentCount == 1
+                && roster.parent?.isEnabled == true
+            print("installer: verify-parent ready=\(ready)")
+            return ready
+                ? InstallerPhaseExit.success
+                : InstallerPhaseExit.retryable
+
+        case .enableMode:
+            let enabledRoster = installationRoster(includeAllInstalled: false)
+            guard enabledRoster.parentCount == 1,
+                  enabledRoster.parent?.isEnabled == true,
+                  let record = uniqueRecord(
+                    role: .mode,
+                    includeAllInstalled: true
+                  ) else {
+                return InstallerPhaseExit.retryable
             }
+            let status = TISEnableInputSource(record.source)
+            print("installer: enable-mode status=\(status)")
+            return status == noErr
+                ? InstallerPhaseExit.success
+                : InstallerPhaseExit.retryable
+
+        case .verifyMode:
+            let roster = installationRoster(includeAllInstalled: false)
+            print("installer: verify-mode ready=\(roster.isEnabled)")
+            return roster.isEnabled
+                ? InstallerPhaseExit.success
+                : InstallerPhaseExit.retryable
+
+        case .selectMode:
+            guard installationRoster(includeAllInstalled: false).isEnabled,
+                  let record = uniqueRecord(
+                    role: .mode,
+                    includeAllInstalled: false
+                  ) else {
+                return InstallerPhaseExit.retryable
+            }
+            let status = TISSelectInputSource(record.source)
+            print("installer: select-mode status=\(status)")
+            return status == noErr
+                ? InstallerPhaseExit.success
+                : InstallerPhaseExit.retryable
+
+        case .verifySelected:
+            let selected = isHangyeolSelected()
+            print("installer: verify-selected ready=\(selected)")
+            return selected
+                ? InstallerPhaseExit.success
+                : InstallerPhaseExit.retryable
+
+        case .disableTemporaryFallback:
+            guard isHangyeolSelected(),
+                  let fallbackSourceID,
+                  let record = safeFallbackRecord(
+                    sourceID: fallbackSourceID
+                  ) else {
+                return InstallerPhaseExit.failed
+            }
+            guard record.candidate.isEnabled else {
+                return InstallerPhaseExit.success
+            }
+            let status = TISDisableInputSource(record.source)
+            print(
+                "installer: disable-temporary-fallback status=\(status)"
+            )
+            return status == noErr
+                ? InstallerPhaseExit.success
+                : InstallerPhaseExit.retryable
+
+        case .verifyTemporaryFallbackDisabled:
+            guard isHangyeolSelected(),
+                  let fallbackSourceID,
+                  let record = safeFallbackRecord(
+                    sourceID: fallbackSourceID
+                  ) else {
+                return InstallerPhaseExit.failed
+            }
+            let disabled = !record.candidate.isEnabled
+            print(
+                "installer: verify-temporary-fallback-disabled ready=\(disabled)"
+            )
+            return disabled
+                ? InstallerPhaseExit.success
+                : InstallerPhaseExit.retryable
+        }
     }
 
     private struct InputSourceInstallationRecord {
         let source: TISInputSource
-        let candidate: InputSourceInstallationCandidate
+        let candidate: InstallerInputSourceCandidate
     }
 
-    private static let postInstallSettlementTimeout: TimeInterval = 10
-
-    private func installationRecords(
-        waitingUntil condition: (InputSourceInstallationPlan) -> Bool,
-        changeMonitor: InputSourceChangeMonitor
-    ) -> [InputSourceInstallationRecord] {
-        let deadline = Date().addingTimeInterval(Self.postInstallSettlementTimeout)
-        return Self.settleInstallationState(
-            initial: hangyeolInstallationRecords(),
-            isSettled: { records in
-                condition(Self.installationPlan(from: records.map(\.candidate)))
-            },
-            waitForChange: {
-                changeMonitor.waitForChange(until: deadline)
-            },
-            reload: {
-                hangyeolInstallationRecords()
-            }
+    private func installationRoster(
+        includeAllInstalled: Bool
+    ) -> InstallerInputSourceRoster {
+        InputSourceLifecycleRules.roster(
+            from: hangyeolInstallationRecords(
+                includeAllInstalled: includeAllInstalled
+            ).map(\.candidate),
+            identity: Self.installerIdentity
         )
     }
 
-    private func isHangyeolSelected() -> Bool {
-        guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else {
-            return false
+    private func uniqueRecord(
+        role: InstallerInputSourceRole,
+        includeAllInstalled: Bool
+    ) -> InputSourceInstallationRecord? {
+        let matches = hangyeolInstallationRecords(
+            includeAllInstalled: includeAllInstalled
+        ).filter {
+            InputSourceLifecycleRules.role(
+                of: $0.candidate,
+                identity: Self.installerIdentity
+            ) == role
         }
-        return Self.stringProperty(kTISPropertyInputModeID, from: source)
-            == Self.hangyeolKoreanInputMode
+        return matches.count == 1 ? matches[0] : nil
     }
 
-    private func hangyeolInstallationRecords() -> [InputSourceInstallationRecord] {
+    private func isHangyeolSelected() -> Bool {
+        guard let source = TISCopyCurrentKeyboardInputSource()?
+            .takeRetainedValue(),
+              let record = Self.installationRecord(for: source) else {
+            return false
+        }
+        return Self.installerIdentity.owns(record.candidate)
+            && InputSourceLifecycleRules.role(
+                of: record.candidate,
+                identity: Self.installerIdentity
+            ) == .mode
+    }
+
+    private func safeFallbackRecord(
+        sourceID: String
+    ) -> InputSourceInstallationRecord? {
+        let filter = [
+            kTISPropertyInputSourceID as String: sourceID
+        ] as CFDictionary
+        guard let sources = TISCreateInputSourceList(
+            filter,
+            true
+        )?.takeRetainedValue() as? [TISInputSource] else {
+            return nil
+        }
+        let records = sources.compactMap(Self.installationRecord(for:))
+            .filter { $0.candidate.sourceID == sourceID }
+        guard records.count == 1 else { return nil }
+        let safe = InputSourceLifecycleRules.safeFallbackCandidates(
+            from: [records[0].candidate],
+            identity: Self.installerIdentity
+        )
+        return safe.count == 1 ? records[0] : nil
+    }
+
+    private func hangyeolInstallationRecords(
+        includeAllInstalled: Bool
+    ) -> [InputSourceInstallationRecord] {
         let filter = [
             kTISPropertyBundleID as String: Self.hangyeolBundleID
         ] as CFDictionary
-        guard let sources = TISCreateInputSourceList(filter, true)?.takeRetainedValue()
+        guard let sources = TISCreateInputSourceList(
+            filter,
+            includeAllInstalled
+        )?.takeRetainedValue()
             as? [TISInputSource] else {
             return []
         }
 
-        return sources.compactMap { source in
-            guard let inputSourceID = Self.stringProperty(
-                kTISPropertyInputSourceID,
-                from: source
-            ), let inputSourceType = Self.stringProperty(
-                kTISPropertyInputSourceType,
-                from: source
-            ) else {
-                return nil
-            }
-            return InputSourceInstallationRecord(
-                source: source,
-                candidate: InputSourceInstallationCandidate(
-                    inputSourceID: inputSourceID,
-                    inputModeID: Self.stringProperty(kTISPropertyInputModeID, from: source),
-                    inputSourceType: inputSourceType,
-                    isEnabled: Self.boolProperty(kTISPropertyInputSourceIsEnabled, from: source),
-                    isEnableCapable: Self.boolProperty(
-                        kTISPropertyInputSourceIsEnableCapable,
-                        from: source
-                    ),
-                    isSelectCapable: Self.boolProperty(
-                        kTISPropertyInputSourceIsSelectCapable,
-                        from: source
-                    )
-                )
-            )
-        }
+        return sources.compactMap(Self.installationRecord(for:))
     }
 
-    private static func installationRole(
-        of candidate: InputSourceInstallationCandidate
-    ) -> Int? {
-        if candidate.inputSourceID == hangyeolBundleID,
-           candidate.inputSourceType == kTISTypeKeyboardInputMethodModeEnabled as String,
-           !candidate.isSelectCapable {
-            return 0
+    private static func installationRecord(
+        for source: TISInputSource
+    ) -> InputSourceInstallationRecord? {
+        guard let inputSourceID = stringProperty(
+            kTISPropertyInputSourceID,
+            from: source
+        ), let inputSourceType = stringProperty(
+            kTISPropertyInputSourceType,
+            from: source
+        ) else {
+            return nil
         }
-        if candidate.inputModeID == hangyeolKoreanInputMode,
-           candidate.inputSourceType == kTISTypeKeyboardInputMode as String,
-           candidate.isSelectCapable {
-            return 1
+        return InputSourceInstallationRecord(
+            source: source,
+            candidate: InstallerInputSourceCandidate(
+                sourceID: inputSourceID,
+                bundleID: stringProperty(kTISPropertyBundleID, from: source),
+                modeID: stringProperty(kTISPropertyInputModeID, from: source),
+                kind: installerSourceKind(inputSourceType),
+                isEnabled: boolProperty(
+                    kTISPropertyInputSourceIsEnabled,
+                    from: source
+                ),
+                isEnableCapable: boolProperty(
+                    kTISPropertyInputSourceIsEnableCapable,
+                    from: source
+                ),
+                isSelectCapable: boolProperty(
+                    kTISPropertyInputSourceIsSelectCapable,
+                    from: source
+                ),
+                isASCIICapable: boolProperty(
+                    kTISPropertyInputSourceIsASCIICapable,
+                    from: source
+                )
+            )
+        )
+    }
+
+    private static func installerSourceKind(
+        _ sourceType: String
+    ) -> InstallerInputSourceKind {
+        if sourceType == kTISTypeKeyboardInputMethodModeEnabled as String {
+            return .inputMethodParent
         }
-        return nil
+        if sourceType == kTISTypeKeyboardInputMode as String {
+            return .inputMode
+        }
+        return .other
     }
 
     private static func stringProperty(

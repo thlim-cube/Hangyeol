@@ -2,48 +2,61 @@ import Foundation
 import InputMethodKit
 import Cocoa
 import HangyeolCore
+import HangyeolInstallerSupport
 
-private func isInputSourceAuthoritativelyReady() -> Bool {
-    guard let executableURL = Bundle.main.executableURL else { return false }
-    let probe = Process()
-    let completion = DispatchSemaphore(value: 0)
-    probe.executableURL = executableURL
-    probe.arguments = [PostInstallPreparation.statusArgument]
-    probe.standardOutput = FileHandle.nullDevice
-    probe.standardError = FileHandle.nullDevice
-    probe.terminationHandler = { _ in completion.signal() }
-    do {
-        try probe.run()
-        guard completion.wait(timeout: .now() + 2) == .success else {
-            probe.terminate()
-            return false
-        }
-        return probe.terminationStatus == EXIT_SUCCESS
-    } catch {
-        return false
+if let command = PostInstallPreparation.command(
+    arguments: CommandLine.arguments
+) {
+    let version = Bundle.main.object(
+        forInfoDictionaryKey: "CFBundleShortVersionString"
+    ) as? String ?? ""
+    let build = Bundle.main.object(
+        forInfoDictionaryKey: "CFBundleVersion"
+    ) as? String ?? ""
+    guard let executableURL = Bundle.main.executableURL else {
+        exit(PostInstallPreparation.failureExitCode)
     }
-}
 
-private func openInputSourceSettingsAfterPreparationFailure() {
-    guard let settingsURL = URL(
-        string: "x-apple.systempreferences:com.apple.preference.keyboard?InputSources"
-    ) else {
-        return
+    switch command {
+    case .launchProbe:
+        exit(EXIT_SUCCESS)
+    case .status:
+        let status = InputSourceManager.shared.installedInputSourceStatus()
+        print(
+            "Hangyeol post-install status: candidates=\(status.hasRequiredCandidates) "
+                + "enabled=\(status.isEnabled) ready=\(status.isReady)"
+        )
+        exit(status.isReady ? EXIT_SUCCESS : PostInstallPreparation.failureExitCode)
+    case let .scheduleRepair(
+        installationKind,
+        shouldSelect,
+        temporaryFallbackSourceID
+    ):
+        let scheduled = PostInstallPreparation.scheduleActivationRepair(
+            installationKind: installationKind,
+            shouldSelect: shouldSelect,
+            temporaryFallbackSourceID: temporaryFallbackSourceID,
+            executableURL: executableURL,
+            version: version,
+            build: build
+        )
+        exit(scheduled ? EXIT_SUCCESS : PostInstallPreparation.failureExitCode)
+    case .repairPending:
+        let repaired = PostInstallPreparation.repairPendingActivation(
+            executableURL: executableURL,
+            version: version,
+            build: build
+        )
+        exit(repaired ? EXIT_SUCCESS : PostInstallPreparation.failureExitCode)
+    case let .phase(phase, sourceID):
+        exit(InputSourceManager.shared.runInstallerPhase(
+            phase,
+            fallbackSourceID: sourceID,
+            appURL: Bundle.main.bundleURL
+        ))
+    case .invalid:
+        exit(EX_USAGE)
     }
-    _ = NSWorkspace.shared.open(settingsURL)
-}
-
-if PostInstallPreparation.shouldRunLaunchProbe(arguments: CommandLine.arguments) {
-    exit(EXIT_SUCCESS)
-}
-
-if PostInstallPreparation.shouldCheckStatus(arguments: CommandLine.arguments) {
-    let status = InputSourceManager.shared.installedInputSourceStatus()
-    print(
-        "Hangyeol post-install status: candidates=\(status.hasRequiredCandidates) "
-            + "enabled=\(status.isEnabled) ready=\(status.isReady)"
-    )
-    exit(status.isReady ? EXIT_SUCCESS : PostInstallPreparation.failureExitCode)
 }
 
 _ = Legacy3xSettingsMigration.migrateInstalledPreferences()
@@ -195,62 +208,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         
         DebugLogger.log("Toggle key monitoring initialized")
     }
-}
-
-// MARK: - Main Entry Point
-
-if PostInstallPreparation.shouldPrepare(arguments: CommandLine.arguments) {
-    let restorePreviousSelection = PostInstallPreparation.selectedBeforeInstall()
-    let wasInstalledBeforeUpdate = PostInstallPreparation.installedBeforeInstall()
-    let hasInstallationSnapshot =
-        PostInstallPreparation.hasInstalledBeforeInstallSnapshot()
-
-    // The package script launches this helper only for a confirmed first
-    // installation. Keep a second fail-closed guard here so an existing login
-    // session can never be repaired or reloaded through this private command.
-    if !hasInstallationSnapshot || wasInstalledBeforeUpdate {
-        PostInstallPreparation.clearInstallationSnapshot()
-        print(
-            "Hangyeol post-install: kind=unconfirmed-or-existing "
-                + "action=next-login applied=false"
-        )
-        exit(EXIT_SUCCESS)
-    }
-
-    let result = InputSourceManager.shared.prepareInstalledInputSource(
-        at: Bundle.main.bundleURL
-    )
-    let authoritativeReady = PostInstallPreparation.waitForAuthoritativeStatus {
-        isInputSourceAuthoritativelyReady()
-    }
-    let shouldSelect = PostInstallPreparation.shouldSelectAfterActivation(
-        wasInstalledBeforeUpdate: wasInstalledBeforeUpdate,
-        restorePreviousSelection: restorePreviousSelection
-    )
-    let selection = authoritativeReady && shouldSelect
-        ? InputSourceManager.shared.selectInstalledInputSource()
-        : nil
-    let selectionSucceeded = !shouldSelect || selection?.isSelected == true
-    let isReady = authoritativeReady && selectionSucceeded
-    if isReady {
-        PostInstallPreparation.clearInstallationSnapshot()
-    } else {
-        openInputSourceSettingsAfterPreparationFailure()
-    }
-    let enableFailure = result.firstEnableFailure.map(String.init) ?? "none"
-    let selectionStatus = selection.map { String($0.status) } ?? "preserved"
-    print(
-        "Hangyeol post-install: kind=first-installation "
-            + "action=prepare "
-            + "registration=\(result.registrationStatus) "
-            + "enableFailure=\(enableFailure) "
-            + "locallyEnabled=\(result.isLocallyVisibleAndEnabled) "
-            + "authoritativeReady=\(authoritativeReady) "
-            + "selection=\(selectionStatus) "
-            + "selected=\(selection?.isSelected.description ?? "preserved") "
-            + "ready=\(isReady)"
-    )
-    exit(isReady ? EXIT_SUCCESS : PostInstallPreparation.failureExitCode)
 }
 
 let app = NSApplication.shared

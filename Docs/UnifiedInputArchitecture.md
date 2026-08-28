@@ -232,4 +232,4 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build -c release 
 - Caps Lock은 macOS 입력 소스 설정이 소유한다는 정책
 - GoodNotes Return 중복/누락 보정
 - 앱 비활성 시 조합 강제 commit — host-무관 멱등 안전망(과거 KakaoTalk 하드코딩을 일반화: `InputSession.handleAppDeactivation()` → `finalize(.appDeactivate)`)
-- 일반 앱 시작·typing hot path·업데이트에서는 Hangyeol 자신을 `TISEnableInputSource` 하지 않는 보수화(최초 설치만 서명된 설치 helper가 담당)
+- 일반 앱 시작·typing hot path에서는 Hangyeol 자신을 `TISEnableInputSource` 하지 않는다. 설치 때만 사용자별 1회성 복구 작업이 action과 별도-process verifier를 짝지어 등록·활성화를 수행하며, 실패한 generation은 다음 로그인까지 보존한다.

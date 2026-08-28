@@ -20,6 +20,7 @@ PKG_SIGN="Developer ID Installer: Chanwoo Park (M4U438VG59)"
 KEYCHAIN_PROFILE="HangyeolNotary"
 RAW_PKG="$TMP_ROOT/Hangyeol_Debug.raw.pkg"
 CLEAN_PKG="$TMP_ROOT/Hangyeol_Debug.unsigned.pkg"
+SCRIPTS_DIR="$TMP_ROOT/Scripts"
 
 cleanup() {
     /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
@@ -35,6 +36,7 @@ echo "=========================================="
 
 echo "[1/6] Building debug..."
 swift build -c debug
+swift build -c debug --product HangyeolInstallerHelper
 
 echo "[2/6] Creating bundle structure..."
 if [ -d "$LEGACY_PAYLOAD_DIR/$APP_BUNDLE" ]; then
@@ -68,6 +70,10 @@ xattr -cr "$PAYLOAD_DIR/$APP_BUNDLE" 2>/dev/null || true
 
 echo "Verifying App Signature..."
 codesign -vv -d "$PAYLOAD_DIR/$APP_BUNDLE"
+bash Tools/stage_package_scripts.sh \
+    debug \
+    "$SCRIPTS_DIR" \
+    "$APP_SIGN"
 
 APP_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Info.plist)
 PKG_VERSION="${APP_VERSION}-debug"
@@ -80,7 +86,7 @@ plutil -replace 0.BundleHasStrictIdentifier -bool NO "$COMPONENT_PLIST"
 pkgbuild --root "$PAYLOAD_DIR" \
          --component-plist "$COMPONENT_PLIST" \
          --install-location "$INSTALL_DIR" \
-         --scripts "Packaging/scripts" \
+         --scripts "$SCRIPTS_DIR" \
          --identifier "com.thlim.hangyeol" \
          --version "$PKG_VERSION" \
          "$RAW_PKG"
@@ -88,7 +94,7 @@ pkgbuild --root "$PAYLOAD_DIR" \
 bash Tools/rebuild_clean_package.sh \
     "$RAW_PKG" \
     "$PAYLOAD_DIR" \
-    Packaging/scripts \
+    "$SCRIPTS_DIR" \
     "$CLEAN_PKG"
 rm -f "$PKG_OUTPUT"
 productsign --sign "$PKG_SIGN" "$CLEAN_PKG" "$PKG_OUTPUT"

@@ -232,8 +232,10 @@ public final class HangyeolE2ERunner {
 
         guard failures.isEmpty, !identities.isEmpty else {
             failures.append(
-                "업데이트 전 실행 파일이 남아 있습니다. 로그아웃 후 로그인하거나 "
-                    + "재시동한 뒤 같은 PKG로 다시 검증하세요."
+                "실행 중인 한결이 PKG와 일치하지 않습니다. "
+                    + "~/Library/Logs/Hangyeol/installation.log와 "
+                    + "input-source-activation-pending.plist를 확인하고, "
+                    + "보류 상태라면 다시 로그인한 뒤 같은 PKG로 검증하세요."
             )
             throw HangyeolE2EError.preflight(failures)
         }

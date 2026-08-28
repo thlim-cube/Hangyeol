@@ -1,36 +1,56 @@
 import Foundation
 import Testing
 @testable import HangyeolCore
+@testable import HangyeolInstallerSupport
 
 @Suite("Post-install Preparation")
 struct PostInstallPreparationTests {
-    @Test("Recognizes only the private installer preparation argument")
-    func recognizesPreparationArgument() {
-        #expect(PostInstallPreparation.shouldPrepare(arguments: ["Hangyeol", "--post-install-prepare"]))
-        #expect(!PostInstallPreparation.shouldPrepare(arguments: ["Hangyeol"]))
-        #expect(!PostInstallPreparation.shouldPrepare(arguments: ["Hangyeol", "--unrelated"]))
-    }
-
-    @Test("Recognizes only the private external status argument")
-    func recognizesStatusArgument() {
-        #expect(PostInstallPreparation.shouldCheckStatus(
+    @Test("Parses one exact private installer command and rejects mixed commands")
+    func parsesPrivateInstallerCommands() {
+        #expect(PostInstallPreparation.command(
             arguments: ["Hangyeol", "--post-install-status"]
-        ))
-        #expect(!PostInstallPreparation.shouldCheckStatus(arguments: ["Hangyeol"]))
-        #expect(!PostInstallPreparation.shouldCheckStatus(
-            arguments: ["Hangyeol", "--post-install-prepare"]
-        ))
-    }
-
-    @Test("Recognizes only the private signed-app launch probe argument")
-    func recognizesLaunchProbeArgument() {
-        #expect(PostInstallPreparation.shouldRunLaunchProbe(
+        ) == .status)
+        #expect(PostInstallPreparation.command(
             arguments: ["Hangyeol", "--verify-launch"]
+        ) == .launchProbe)
+        #expect(PostInstallPreparation.command(arguments: [
+            "Hangyeol",
+            "--schedule-input-source-repair",
+            "ordinary-update",
+            "true",
+            "-"
+        ]) == .scheduleRepair(
+            installationKind: .ordinaryUpdate,
+            shouldSelect: true,
+            temporaryFallbackSourceID: nil
         ))
-        #expect(!PostInstallPreparation.shouldRunLaunchProbe(arguments: ["Hangyeol"]))
-        #expect(!PostInstallPreparation.shouldRunLaunchProbe(
-            arguments: ["Hangyeol", "--post-install-prepare"]
+        #expect(PostInstallPreparation.command(arguments: [
+            "Hangyeol",
+            "--installer-register"
+        ]) == .phase(.register, sourceID: nil))
+        #expect(PostInstallPreparation.command(arguments: [
+            "Hangyeol",
+            "--installer-disable-temporary-fallback",
+            "com.apple.keylayout.ABC"
+        ]) == .phase(
+            .disableTemporaryFallback,
+            sourceID: "com.apple.keylayout.ABC"
         ))
+        #expect(PostInstallPreparation.command(arguments: [
+            "Hangyeol",
+            "--schedule-input-source-repair",
+            "ordinary-update",
+            "false",
+            "com.apple.keylayout.ABC"
+        ]) == .invalid)
+        #expect(PostInstallPreparation.command(arguments: [
+            "Hangyeol",
+            "--installer-register",
+            "--installer-verify-installed"
+        ]) == .invalid)
+        #expect(PostInstallPreparation.command(
+            arguments: ["Hangyeol", "--unrelated"]
+        ) == nil)
     }
 
     @Test("Pending setup is consumed exactly once")
@@ -58,6 +78,14 @@ struct PostInstallPreparationTests {
         defaults.set("bundle", forKey: PostInstallPreparation.installedBundleIdentifierKey)
         defaults.set("connection", forKey: PostInstallPreparation.installedConnectionNameKey)
         defaults.set("{}", forKey: PostInstallPreparation.installedInputModeSchemaKey)
+        defaults.set(
+            "com.apple.keylayout.ABC",
+            forKey: PostInstallPreparation.fallbackInputSourceIDKey
+        )
+        defaults.set(
+            false,
+            forKey: PostInstallPreparation.fallbackWasEnabledKey
+        )
 
         #expect(PostInstallPreparation.selectedBeforeInstall(in: defaults))
         #expect(!PostInstallPreparation.installedBeforeInstall(in: defaults))
@@ -78,73 +106,137 @@ struct PostInstallPreparationTests {
         #expect(defaults.object(
             forKey: PostInstallPreparation.installedInputModeSchemaKey
         ) == nil)
+        #expect(defaults.object(
+            forKey: PostInstallPreparation.fallbackInputSourceIDKey
+        ) == nil)
+        #expect(defaults.object(
+            forKey: PostInstallPreparation.fallbackWasEnabledKey
+        ) == nil)
     }
 
-    @Test("Activation waits for a separate authoritative success")
-    func waitsForAuthoritativeActivation() {
-        var probes = [false, true, true]
-        var waitCount = 0
-
-        let ready = PostInstallPreparation.settleAuthoritativeStatus(
-            attempts: 5,
-            probe: { probes.removeFirst() },
-            waitAfterIncompleteProbe: { waitCount += 1 }
+    @Test("Every action is followed by an external verifier before advancing")
+    func verifiesEveryActivationBoundary() {
+        let boundaries = InputSourceLifecycleRules.activationBoundaries(
+            shouldSelect: false
         )
+        var phases: [InstallerActivationPhase] = []
+        var installedVerifierCount = 0
+        var waitAttempts: [Int] = []
 
-        #expect(ready)
-        #expect(waitCount == 2)
-        #expect(probes.isEmpty)
-    }
-
-    @Test("Activation rejects an isolated external success")
-    func rejectsTransientExternalSuccess() {
-        var probes = [true, false, true, true]
-        var waitCount = 0
-
-        let ready = PostInstallPreparation.settleAuthoritativeStatus(
-            attempts: 4,
-            probe: { probes.removeFirst() },
-            waitAfterIncompleteProbe: { waitCount += 1 }
-        )
-
-        #expect(ready)
-        #expect(waitCount == 3)
-        #expect(probes.isEmpty)
-    }
-
-    @Test("Activation never accepts caller-local success after the probe budget")
-    func rejectsUnpersistedActivation() {
-        var probeCount = 0
-        var waitCount = 0
-
-        let ready = PostInstallPreparation.settleAuthoritativeStatus(
+        let ready = PostInstallPreparation.convergeActivation(
+            boundaries: boundaries,
             attempts: 3,
-            probe: {
-                probeCount += 1
-                return false
+            runPhase: { phase in
+                phases.append(phase)
+                if phase == .verifyInstalled {
+                    installedVerifierCount += 1
+                    return installedVerifierCount == 1
+                        ? InstallerPhaseExit.retryable
+                        : InstallerPhaseExit.success
+                }
+                return InstallerPhaseExit.success
             },
-            waitAfterIncompleteProbe: { waitCount += 1 }
+            waitBeforeRetry: { waitAttempts.append($0) }
+        )
+
+        #expect(ready)
+        #expect(phases == [
+            .register,
+            .verifyInstalled,
+            .register,
+            .verifyInstalled,
+            .enableParent,
+            .verifyParent,
+            .enableMode,
+            .verifyMode
+        ])
+        #expect(waitAttempts == [1])
+    }
+
+    @Test("A failed boundary cannot execute later TIS writes")
+    func stopsAfterFailedBoundary() {
+        var phases: [InstallerActivationPhase] = []
+        let ready = PostInstallPreparation.convergeActivation(
+            boundaries: InputSourceLifecycleRules.activationBoundaries(
+                shouldSelect: true
+            ),
+            attempts: 2,
+            runPhase: { phase in
+                phases.append(phase)
+                return phase == .verifyInstalled
+                    ? InstallerPhaseExit.retryable
+                    : InstallerPhaseExit.success
+            },
+            waitBeforeRetry: { _ in }
         )
 
         #expect(!ready)
-        #expect(probeCount == 3)
-        #expect(waitCount == 2)
+        #expect(!phases.contains(.enableParent))
+        #expect(!phases.contains(.selectMode))
     }
 
-    @Test("First install selects Hangyeol while updates restore only prior selection")
-    func selectionPolicyUsesThePreinstallSnapshot() {
-        #expect(PostInstallPreparation.shouldSelectAfterActivation(
-            wasInstalledBeforeUpdate: false,
-            restorePreviousSelection: false
+    @Test("Scheduling publishes a one-shot agent before its generation marker")
+    func schedulesOneShotActivationRepair() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HangyeolActivation.\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let executable = URL(
+            fileURLWithPath:
+                "/Library/Input Methods/Hangyeol.app/Contents/MacOS/Hangyeol"
+        )
+
+        #expect(!PostInstallPreparation.scheduleActivationRepair(
+            installationKind: .ordinaryUpdate,
+            shouldSelect: false,
+            temporaryFallbackSourceID: "com.apple.keylayout.ABC",
+            executableURL: executable,
+            version: "3.0.6",
+            build: "89",
+            homeDirectory: home
         ))
-        #expect(PostInstallPreparation.shouldSelectAfterActivation(
-            wasInstalledBeforeUpdate: true,
-            restorePreviousSelection: true
+
+        #expect(PostInstallPreparation.scheduleActivationRepair(
+            installationKind: .ordinaryUpdate,
+            shouldSelect: true,
+            temporaryFallbackSourceID: "com.apple.keylayout.ABC",
+            executableURL: executable,
+            version: "3.0.6",
+            build: "89",
+            homeDirectory: home
         ))
-        #expect(!PostInstallPreparation.shouldSelectAfterActivation(
-            wasInstalledBeforeUpdate: true,
-            restorePreviousSelection: false
-        ))
+
+        let marker = home.appendingPathComponent(
+            "Library/Application Support/Hangyeol/"
+                + "input-source-activation-pending.plist"
+        )
+        let agent = home.appendingPathComponent(
+            "Library/LaunchAgents/"
+                + PostInstallPreparation.activationAgentLabel + ".plist"
+        )
+        let request = try PropertyListDecoder().decode(
+            PendingInputSourceActivation.self,
+            from: Data(contentsOf: marker)
+        )
+        let agentValues = try #require(
+            PropertyListSerialization.propertyList(
+                from: Data(contentsOf: agent),
+                format: nil
+            ) as? [String: Any]
+        )
+
+        #expect(request.installationKind == .ordinaryUpdate)
+        #expect(request.shouldSelect)
+        #expect(
+            request.temporaryFallbackSourceID
+                == "com.apple.keylayout.ABC"
+        )
+        #expect(request.version == "3.0.6")
+        #expect(agentValues["RunAtLoad"] as? Bool == true)
+        #expect(agentValues["KeepAlive"] == nil)
+        #expect((agentValues["ProgramArguments"] as? [String]) == [
+            executable.path,
+            PostInstallPreparation.repairPendingArgument
+        ])
     }
 }
 
@@ -222,21 +314,35 @@ struct InstallerSessionContractTests {
         #expect(try classifyInstallation(wasInstalled: "") == "registration-change")
     }
 
-    @Test("Preinstall migrates only the console user's current and retired product")
-    func preinstallIsUserScoped() throws {
+    @Test("Preinstall leaves the active source before terminating only Hangyeol processes")
+    func preinstallHandsOffTheActiveInputSource() throws {
         let source = try script(named: "preinstall")
-        let snapshotRange = try #require(source.range(of: "HangyeolSelectedBeforeInstall"))
-        let installedVersionRange = try #require(
-            source.range(of: "Print :CFBundleShortVersionString")
+        let packagedSignatureRange = try #require(
+            source.range(of: "codesign --verify --strict \"$PACKAGED_HELPER\"")
         )
-        let retiredStopRange = try #require(
-            source.range(of: "pkill -x -u \"$USER_ID\" PriType")
+        let stagingRange = try #require(
+            source.range(of: "/private/tmp/hangyeol-preinstall.XXXXXX")
+        )
+        let prepareRange = try #require(source.range(of: "--prepare-update"))
+        let snapshotRange = try #require(
+            source.range(of: "HangyeolSelectedBeforeInstall")
+        )
+        let terminateRange = try #require(
+            source.range(of: "pkill -TERM -x -u \"$USER_ID\"")
+        )
+        let waitRange = try #require(
+            source.range(of: "--wait-for-process-exit 3")
+        )
+        let forceRange = try #require(
+            source.range(of: "pkill -KILL -x -u \"$USER_ID\"")
         )
 
-        #expect(source.contains("pkill -x -u"))
-        #expect(source.contains("AppleSelectedInputSources"))
+        #expect(source.contains("for process_name in Hangyeol PriType PriTypeV2"))
+        #expect(source.contains("selected-before"))
+        #expect(source.contains("fallback-source-id"))
+        #expect(source.contains("fallback-was-enabled"))
         #expect(source.contains("HangyeolInstalledBeforeInstall"))
-        #expect(source.contains("defaults write com.thlim.inputmethod.Hangyeol"))
+        #expect(source.contains("com.thlim.inputmethod.Hangyeol"))
         #expect(source.contains(Misordered3xIdentity.bundleID))
         #expect(source.contains("com.meapri.hangyeol.inputmethod"))
         #expect(source.contains(Legacy2xIdentity.bundleID))
@@ -246,66 +352,62 @@ struct InstallerSessionContractTests {
         #expect(source.contains("pkgutil --forget com.meapri.PriTypeV2"))
         #expect(source.contains("tccutil reset Accessibility"))
         #expect(source.contains("2.8.24|2.8.25"))
-        #expect(installedVersionRange.lowerBound < snapshotRange.lowerBound)
-        #expect(snapshotRange.lowerBound < retiredStopRange.lowerBound)
-        #expect(!source.contains("pkill -x -u \"$USER_ID\" Hangyeol"))
+        #expect(packagedSignatureRange.lowerBound < stagingRange.lowerBound)
+        #expect(stagingRange.lowerBound < prepareRange.lowerBound)
+        #expect(prepareRange.lowerBound < snapshotRange.lowerBound)
+        #expect(snapshotRange.lowerBound < terminateRange.lowerBound)
+        #expect(terminateRange.lowerBound < waitRange.lowerBound)
+        #expect(waitRange.lowerBound < forceRange.lowerBound)
         #expect(!source.contains("/bin/rm -rf \"/Library/Input Methods/Hangyeol.app\""))
+        #expect(!source.contains("TextInputMenuAgent"))
+        #expect(!source.contains("TextInputSwitcher"))
+        #expect(!source.contains("keyboardservicesd"))
+        #expect(!source.contains("imklaunchagent"))
+        #expect(!source.contains("cfprefsd"))
         #expect(!source.contains("killall"))
         #expect(!source.contains("sleep "))
         #expect(!source.contains("for user_home in /Users/*"))
     }
 
-    @Test("Postinstall prepares only a first installation without blocking PackageKit")
+    @Test("Postinstall delegates every installation kind to a one-shot user repair job")
     func postinstallDelegatesActivationOutsidePackageKit() throws {
         let source = try script(named: "postinstall")
-        let settingsMarkerRange = try #require(
-            source.range(of: "HangyeolPendingPostInstallSetup")
+        let validationRange = try #require(
+            source.range(of: "codesign --verify --strict \"$APP_PATH\"")
         )
-        let settingsLaunchRange = try #require(
-            source.range(of: "run_as_console_user /usr/bin/open \"$APP_PATH\"")
+        let classificationRange = try #require(
+            source.range(of: "classify_hangyeol_installation")
         )
-        let preparationLaunchRange = try #require(
-            source.range(of: "run_as_console_user /usr/bin/open -n -g \"$APP_PATH\"")
+        let scheduleRange = try #require(
+            source.range(of: "--schedule-input-source-repair")
         )
-        let preparationArgumentRange = try #require(
-            source.range(of: "--args --post-install-prepare")
+        let bootoutRange = try #require(
+            source.range(of: "launchctl bootout")
         )
-        let registrationChangeRange = try #require(
-            source.range(of: "registration-change|*)")
+        let bootstrapRange = try #require(
+            source.range(of: "launchctl bootstrap")
         )
-        let ordinaryUpdateRange = try #require(
-            source.range(of: "ordinary-update)")
-        )
-        let firstInstallationRange = try #require(
-            source.range(of: "first-installation)")
-        )
-        let ordinaryUpdateBranch = source[
-            ordinaryUpdateRange.lowerBound..<firstInstallationRange.lowerBound
-        ]
-        let firstInstallationBranch = source[
-            firstInstallationRange.lowerBound..<registrationChangeRange.lowerBound
-        ]
 
         #expect(source.contains("launchctl asuser"))
         #expect(source.contains("sudo -H -u"))
         #expect(source.contains("postinstall_classification.sh"))
-        #expect(source.components(separatedBy: "--post-install-prepare").count - 1 == 1)
-        #expect(!source.contains("--post-install-kind"))
-        #expect(!source.contains("--post-install-notify"))
-        #expect(!source.contains("--post-install-status"))
+        #expect(source.contains("HangyeolSelectedBeforeInstall"))
+        #expect(source.contains("HangyeolFallbackInputSourceID"))
+        #expect(source.contains("HangyeolFallbackWasEnabled"))
+        #expect(source.contains("SHOULD_SELECT=true"))
+        #expect(source.contains("TEMPORARY_FALLBACK_SOURCE_ID"))
+        #expect(source.contains("HangyeolPendingPostInstallSetup"))
+        #expect(source.contains("com.thlim.hangyeol.activation-repair"))
         #expect(source.contains("ordinary-update)"))
-        #expect(source.contains("registration-change|*)"))
-        #expect(ordinaryUpdateBranch.contains("clear_installation_snapshot"))
-        #expect(!ordinaryUpdateBranch.contains("/usr/bin/open"))
-        #expect(!ordinaryUpdateBranch.contains("--post-install-prepare"))
-        #expect(firstInstallationBranch.contains("--post-install-prepare"))
-        #expect(settingsMarkerRange.lowerBound < settingsLaunchRange.lowerBound)
-        #expect(settingsLaunchRange.lowerBound < registrationChangeRange.lowerBound)
-        #expect(settingsLaunchRange.lowerBound < preparationLaunchRange.lowerBound)
-        #expect(preparationLaunchRange.lowerBound < preparationArgumentRange.lowerBound)
+        #expect(source.contains("registration-change)"))
+        #expect(validationRange.lowerBound < classificationRange.lowerBound)
+        #expect(classificationRange.lowerBound < scheduleRange.lowerBound)
+        #expect(scheduleRange.lowerBound < bootoutRange.lowerBound)
+        #expect(bootoutRange.lowerBound < bootstrapRange.lowerBound)
+        #expect(!source.contains("--post-install-prepare"))
+        #expect(!source.contains("--installer-register"))
         #expect(!source.contains("open -W"))
-        #expect(!source.contains("PREPARE_STATUS"))
-        #expect(!source.contains("pkill -x -u \"$USER_ID\" Hangyeol"))
+        #expect(!source.contains("pkill"))
         #expect(!source.contains("lsregister"))
         #expect(!source.contains("kickstart -k"))
         #expect(!source.contains("TextInputMenuAgent"))
@@ -328,6 +430,8 @@ struct InstallerSessionContractTests {
         #expect(source.contains("HangyeolInstalledBundleIdentifier"))
         #expect(source.contains("HangyeolInstalledConnectionName"))
         #expect(source.contains("HangyeolInstalledInputModeSchema"))
+        #expect(source.contains("HangyeolFallbackInputSourceID"))
+        #expect(source.contains("HangyeolFallbackWasEnabled"))
         #expect(!source.contains("HangyeolRunningProcessIdentifierBeforeInstall"))
         #expect(!source.contains("pgrep -x -u \"$USER_ID\" Hangyeol"))
     }
@@ -361,7 +465,15 @@ struct InstallerSessionContractTests {
             )
 
             #expect(analyzeRange.lowerBound < strictIdentifierRange.lowerBound)
+            #expect(source.contains("--product HangyeolInstallerHelper"))
+            #expect(source.contains("Tools/stage_package_scripts.sh"))
+            #expect(source.contains("--scripts \"$SCRIPTS_DIR\""))
         }
+
+        let staging = try repositoryFile(named: "Tools/stage_package_scripts.sh")
+        #expect(staging.contains("HangyeolInstallerHelper"))
+        #expect(staging.contains("codesign --force --options runtime"))
+        #expect(staging.contains("codesign --verify --strict --verbose=2"))
     }
 
     @Test("Installed app presents settings independently of Accessibility permission")
@@ -373,32 +485,34 @@ struct InstallerSessionContractTests {
         )
 
         #expect(source.contains("if shouldShowSettingsAfterInstall {"))
-        #expect(source.contains("waitForAuthoritativeStatus"))
-        #expect(source.contains("shouldSelectAfterActivation"))
+        #expect(source.contains("case let .scheduleRepair"))
+        #expect(source.contains("case .repairPending"))
+        #expect(source.contains("case let .phase(phase, sourceID)"))
         #expect(!source.contains("applicationShouldTerminate"))
         #expect(!source.contains("prepareForApplicationTermination"))
-        #expect(source.contains("openInputSourceSettingsAfterPreparationFailure"))
         #expect(!source.contains("Task.detached(priority: .utility) {\n            _ = InputSourceManager.shared.cleanupStaleInputSources()"))
         #expect(!source.contains("&& !IOKitManager.hasAccessibilityPermission()"))
     }
 
-    @Test("An existing or unconfirmed installation exits before TIS preparation")
-    func nonFirstInstallationPreservesCurrentSession() throws {
+    @Test("Private installer commands exit before the normal IMK server starts")
+    func privateCommandsStayOutsideTheInteractiveRuntime() throws {
         let source = try String(
             contentsOf: repoRoot
                 .appendingPathComponent("Sources/Hangyeol/main.swift"),
             encoding: .utf8
         )
-        let preservationRange = try #require(
-            source.range(of: "if !hasInstallationSnapshot || wasInstalledBeforeUpdate {")
+        let commandRange = try #require(
+            source.range(of: "if let command = PostInstallPreparation.command")
         )
-        let repairRange = try #require(
-            source.range(of: "prepareInstalledInputSource")
+        let applicationRange = try #require(
+            source.range(of: "let app = NSApplication.shared")
         )
+        let serverRange = try #require(source.range(of: "_ = IMKServer("))
 
-        #expect(preservationRange.lowerBound < repairRange.lowerBound)
-        #expect(source.contains("action=next-login applied=false"))
-        #expect(!source.contains("PostInstallRuntimeReloader"))
-        #expect(!source.contains("waitForRuntimeReplacementStatus"))
+        #expect(commandRange.lowerBound < serverRange.lowerBound)
+        #expect(commandRange.lowerBound < applicationRange.lowerBound)
+        #expect(source.contains("exit(repaired ? EXIT_SUCCESS"))
+        #expect(source.contains("exit(InputSourceManager.shared.runInstallerPhase"))
+        #expect(!source.contains("--post-install-prepare"))
     }
 }
