@@ -190,8 +190,8 @@ struct PostInstallPreparationTests {
             shouldSelect: false,
             temporaryFallbackSourceID: "com.apple.keylayout.ABC",
             executableURL: executable,
-            version: "3.0.6",
-            build: "89",
+            version: "3.0.7",
+            build: "90",
             homeDirectory: home
         ))
 
@@ -200,8 +200,8 @@ struct PostInstallPreparationTests {
             shouldSelect: true,
             temporaryFallbackSourceID: "com.apple.keylayout.ABC",
             executableURL: executable,
-            version: "3.0.6",
-            build: "89",
+            version: "3.0.7",
+            build: "90",
             homeDirectory: home
         ))
 
@@ -230,7 +230,7 @@ struct PostInstallPreparationTests {
             request.temporaryFallbackSourceID
                 == "com.apple.keylayout.ABC"
         )
-        #expect(request.version == "3.0.6")
+        #expect(request.version == "3.0.7")
         #expect(agentValues["RunAtLoad"] as? Bool == true)
         #expect(agentValues["KeepAlive"] == nil)
         #expect((agentValues["ProgramArguments"] as? [String]) == [
@@ -263,6 +263,19 @@ struct InstallerSessionContractTests {
             contentsOf: repoRoot.appendingPathComponent(name),
             encoding: .utf8
         )
+    }
+
+    private func absoluteCommandPaths(in source: String) throws -> Set<String> {
+        let expression = try NSRegularExpression(
+            pattern: #"(?m)(?:^|[\s;|&(])(/(?:bin|sbin|usr/bin|usr/sbin|usr/libexec)/[A-Za-z0-9._+-]+)"#
+        )
+        let sourceRange = NSRange(source.startIndex..., in: source)
+        return Set(expression.matches(in: source, range: sourceRange).compactMap {
+            guard let range = Range($0.range(at: 1), in: source) else {
+                return nil
+            }
+            return String(source[range])
+        })
     }
 
     private func classifyInstallation(
@@ -367,6 +380,22 @@ struct InstallerSessionContractTests {
         #expect(!source.contains("killall"))
         #expect(!source.contains("sleep "))
         #expect(!source.contains("for user_home in /Users/*"))
+    }
+
+    @Test("Installer scripts reference only commands available on macOS")
+    func installerAbsoluteCommandPathsExist() throws {
+        for scriptName in ["preinstall", "postinstall"] {
+            let commands = try absoluteCommandPaths(
+                in: script(named: scriptName)
+            )
+            #expect(!commands.isEmpty)
+            for command in commands {
+                #expect(
+                    FileManager.default.isExecutableFile(atPath: command),
+                    "\(scriptName) references missing executable \(command)"
+                )
+            }
+        }
     }
 
     @Test("Postinstall delegates every installation kind to a one-shot user repair job")

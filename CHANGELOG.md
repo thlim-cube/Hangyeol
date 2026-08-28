@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.7] - 2026-08-28
+
+### Fixed
+- 설치 전 스크립트가 macOS에 없는 `/bin/printf`를 호출해 패키지 설치가 중단되던 문제를 수정하고, 설치 스크립트의 절대 명령 경로가 현재 macOS에서 실행 가능한지 검증하는 회귀 테스트를 추가했습니다.
+
 ## [3.0.6] - 2026-08-28
 
 ### Fixed

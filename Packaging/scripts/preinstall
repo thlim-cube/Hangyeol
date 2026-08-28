@@ -84,11 +84,11 @@ if [ -n "$CURRENT_USER" ]; then
             echo "Hangyeol could not select a safe fallback input source." >&2
             exit 1
         fi
-        SELECTED_BEFORE=$(/bin/printf '%s\n' "$PREPARE_OUTPUT" \
+        SELECTED_BEFORE=$(/usr/bin/printf '%s\n' "$PREPARE_OUTPUT" \
             | /usr/bin/awk -F= '$1 == "selected-before" { print $2 }')
-        FALLBACK_SOURCE_ID=$(/bin/printf '%s\n' "$PREPARE_OUTPUT" \
+        FALLBACK_SOURCE_ID=$(/usr/bin/printf '%s\n' "$PREPARE_OUTPUT" \
             | /usr/bin/awk -F= '$1 == "fallback-source-id" { print $2 }')
-        FALLBACK_WAS_ENABLED=$(/bin/printf '%s\n' "$PREPARE_OUTPUT" \
+        FALLBACK_WAS_ENABLED=$(/usr/bin/printf '%s\n' "$PREPARE_OUTPUT" \
             | /usr/bin/awk -F= '$1 == "fallback-was-enabled" { print $2 }')
         case "$SELECTED_BEFORE" in
             true)
