@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.9] - 2026-08-28
+
+### Fixed
+- 설치 복구 명령이 정상 IMK 서버를 만들기 전에 TIS 등록·활성화·선택을 끝내려 해, 각 명령은 성공해도 짧은 프로세스 종료 후 입력 소스가 사라지고 ABC만 남던 문제를 수정했습니다. 복구 LaunchAgent가 먼저 현재 로그인 세션의 IMK 런타임을 시작한 뒤 백그라운드에서 TIS 상태를 수렴합니다.
+
 ## [3.0.8] - 2026-08-28
 
 ### Fixed

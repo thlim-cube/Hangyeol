@@ -245,8 +245,8 @@ struct PostInstallPreparationTests {
             shouldSelect: false,
             temporaryFallbackSourceID: "com.apple.keylayout.ABC",
             executableURL: executable,
-            version: "3.0.8",
-            build: "91",
+            version: "3.0.9",
+            build: "92",
             homeDirectory: home
         ))
 
@@ -255,8 +255,8 @@ struct PostInstallPreparationTests {
             shouldSelect: true,
             temporaryFallbackSourceID: "com.apple.keylayout.ABC",
             executableURL: executable,
-            version: "3.0.8",
-            build: "91",
+            version: "3.0.9",
+            build: "92",
             homeDirectory: home
         ))
 
@@ -285,7 +285,7 @@ struct PostInstallPreparationTests {
             request.temporaryFallbackSourceID
                 == "com.apple.keylayout.ABC"
         )
-        #expect(request.version == "3.0.8")
+        #expect(request.version == "3.0.9")
         #expect(agentValues["RunAtLoad"] as? Bool == true)
         #expect(agentValues["KeepAlive"] == nil)
         #expect((agentValues["ProgramArguments"] as? [String]) == [
@@ -578,8 +578,8 @@ struct InstallerSessionContractTests {
         #expect(!source.contains("&& !IOKitManager.hasAccessibilityPermission()"))
     }
 
-    @Test("Successful repair continues into the normal IMK runtime")
-    func repairedSessionStartsInteractiveRuntime() throws {
+    @Test("Installer repair starts only after the normal IMK server")
+    func repairedSessionStartsServerBeforeTISWrites() throws {
         let source = try String(
             contentsOf: repoRoot
                 .appendingPathComponent("Sources/Hangyeol/main.swift"),
@@ -592,10 +592,20 @@ struct InstallerSessionContractTests {
             source.range(of: "let app = NSApplication.shared")
         )
         let serverRange = try #require(source.range(of: "_ = IMKServer("))
+        let scheduledRepairRange = try #require(
+            source.range(of: "schedulePendingInputSourceRepair()")
+        )
+        let repairRange = try #require(
+            source.range(of: "PostInstallPreparation.repairPendingActivation(")
+        )
 
         #expect(commandRange.lowerBound < serverRange.lowerBound)
         #expect(commandRange.lowerBound < applicationRange.lowerBound)
-        #expect(source.contains(
+        #expect(serverRange.lowerBound < scheduledRepairRange.lowerBound)
+        #expect(scheduledRepairRange.lowerBound < repairRange.lowerBound)
+        #expect(source.contains("pendingInstallerRepair = PendingInstallerRepair("))
+        #expect(source.contains("DispatchQueue.global(qos: .userInitiated).async"))
+        #expect(!source.contains(
             "guard PostInstallPreparation.repairPendingActivation("
         ))
         #expect(!source.contains("exit(repaired ? EXIT_SUCCESS"))

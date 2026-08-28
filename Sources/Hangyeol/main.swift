@@ -4,6 +4,14 @@ import Cocoa
 import HangyeolCore
 import HangyeolInstallerSupport
 
+struct PendingInstallerRepair: Sendable {
+    let executableURL: URL
+    let version: String
+    let build: String
+}
+
+var pendingInstallerRepair: PendingInstallerRepair?
+
 if let command = PostInstallPreparation.command(
     arguments: CommandLine.arguments
 ) {
@@ -42,16 +50,11 @@ if let command = PostInstallPreparation.command(
         )
         exit(scheduled ? EXIT_SUCCESS : PostInstallPreparation.failureExitCode)
     case .repairPending:
-        guard PostInstallPreparation.repairPendingActivation(
+        pendingInstallerRepair = PendingInstallerRepair(
             executableURL: executableURL,
             version: version,
             build: build
-        ) else {
-            exit(PostInstallPreparation.failureExitCode)
-        }
-        // A successful repair now owns the current GUI session. Continue into
-        // the normal runtime so this same process initializes IMKServer instead
-        // of leaving macOS to discover the replacement at the next login.
+        )
     case let .phase(phase, sourceID):
         exit(InputSourceManager.shared.runInstallerPhase(
             phase,
@@ -75,9 +78,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     private var hasLaunchedBefore = false
     private var workspaceActivationObserver: NSObjectProtocol?
     private let shouldShowSettingsAfterInstall: Bool
+    private let pendingInstallerRepair: PendingInstallerRepair?
 
-    init(shouldShowSettingsAfterInstall: Bool) {
+    init(
+        shouldShowSettingsAfterInstall: Bool,
+        pendingInstallerRepair: PendingInstallerRepair?
+    ) {
         self.shouldShowSettingsAfterInstall = shouldShowSettingsAfterInstall
+        self.pendingInstallerRepair = pendingInstallerRepair
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -102,6 +110,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         // Initialize IMK Server
         _ = IMKServer(name: kConnectionName, bundleIdentifier: Bundle.main.bundleIdentifier)
         DebugLogger.log("IMKServer initialized")
+
+        schedulePendingInputSourceRepair()
 
         // Observe only real TIS ownership/input-source transitions. Ordinary app,
         // tab, and field activation must keep Hangyeol's process-wide mode intact.
@@ -152,6 +162,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             SettingsWindowController.shared.showSettings()
         }
         return true
+    }
+
+    private func schedulePendingInputSourceRepair() {
+        guard let pendingInstallerRepair else { return }
+
+        // Let applicationDidFinishLaunching return to the Aqua run loop before
+        // any TIS write. The persistent IMK server must exist while the separate
+        // action and verifier processes converge the current login session.
+        DispatchQueue.main.async {
+            DispatchQueue.global(qos: .userInitiated).async {
+                let repaired = PostInstallPreparation.repairPendingActivation(
+                    executableURL: pendingInstallerRepair.executableURL,
+                    version: pendingInstallerRepair.version,
+                    build: pendingInstallerRepair.build
+                )
+                DebugLogger.log(
+                    "Post-install input-source repair completed = \(repaired)"
+                )
+            }
+        }
     }
     
     private func setupIOKit() {
@@ -216,7 +246,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
 let app = NSApplication.shared
 let delegate = AppDelegate(
-    shouldShowSettingsAfterInstall: PostInstallPreparation.consumePending()
+    shouldShowSettingsAfterInstall: PostInstallPreparation.consumePending(),
+    pendingInstallerRepair: pendingInstallerRepair
 )
 app.delegate = delegate
 app.run()
