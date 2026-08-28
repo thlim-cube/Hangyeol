@@ -114,8 +114,8 @@ struct PostInstallPreparationTests {
         ) == nil)
     }
 
-    @Test("Every action is followed by an external verifier before advancing")
-    func verifiesEveryActivationBoundary() {
+    @Test("Every boundary verifies before writing and verifies again after repair")
+    func verifiesBeforeEveryActivationWrite() {
         let boundaries = InputSourceLifecycleRules.activationBoundaries(
             shouldSelect: false
         )
@@ -126,6 +126,7 @@ struct PostInstallPreparationTests {
         let ready = PostInstallPreparation.convergeActivation(
             boundaries: boundaries,
             attempts: 3,
+            verifyBeforeWriting: true,
             runPhase: { phase in
                 phases.append(phase)
                 if phase == .verifyInstalled {
@@ -141,8 +142,62 @@ struct PostInstallPreparationTests {
 
         #expect(ready)
         #expect(phases == [
+            .verifyInstalled,
             .register,
             .verifyInstalled,
+            .verifyParent,
+            .verifyMode
+        ])
+        #expect(waitAttempts.isEmpty)
+    }
+
+    @Test("An already-ready ordinary update performs no TIS writes")
+    func skipsWritesForReadyOrdinaryUpdate() {
+        var phases: [InstallerActivationPhase] = []
+
+        let ready = PostInstallPreparation.convergeActivation(
+            boundaries: InputSourceLifecycleRules.activationBoundaries(
+                shouldSelect: true,
+                hasTemporaryFallback: true
+            ),
+            attempts: 3,
+            verifyBeforeWriting: true,
+            runPhase: { phase in
+                phases.append(phase)
+                return InstallerPhaseExit.success
+            },
+            waitBeforeRetry: { _ in }
+        )
+
+        #expect(ready)
+        #expect(phases == [
+            .verifyInstalled,
+            .verifyParent,
+            .verifyMode,
+            .verifySelected,
+            .verifyTemporaryFallbackDisabled
+        ])
+    }
+
+    @Test("A registration change always performs its required TIS writes")
+    func registrationChangeDoesNotTrustExistingRegistration() {
+        var phases: [InstallerActivationPhase] = []
+
+        let ready = PostInstallPreparation.convergeActivation(
+            boundaries: InputSourceLifecycleRules.activationBoundaries(
+                shouldSelect: false
+            ),
+            attempts: 3,
+            verifyBeforeWriting: false,
+            runPhase: { phase in
+                phases.append(phase)
+                return InstallerPhaseExit.success
+            },
+            waitBeforeRetry: { _ in }
+        )
+
+        #expect(ready)
+        #expect(phases == [
             .register,
             .verifyInstalled,
             .enableParent,
@@ -150,7 +205,6 @@ struct PostInstallPreparationTests {
             .enableMode,
             .verifyMode
         ])
-        #expect(waitAttempts == [1])
     }
 
     @Test("A failed boundary cannot execute later TIS writes")
@@ -161,6 +215,7 @@ struct PostInstallPreparationTests {
                 shouldSelect: true
             ),
             attempts: 2,
+            verifyBeforeWriting: true,
             runPhase: { phase in
                 phases.append(phase)
                 return phase == .verifyInstalled
@@ -190,8 +245,8 @@ struct PostInstallPreparationTests {
             shouldSelect: false,
             temporaryFallbackSourceID: "com.apple.keylayout.ABC",
             executableURL: executable,
-            version: "3.0.7",
-            build: "90",
+            version: "3.0.8",
+            build: "91",
             homeDirectory: home
         ))
 
@@ -200,8 +255,8 @@ struct PostInstallPreparationTests {
             shouldSelect: true,
             temporaryFallbackSourceID: "com.apple.keylayout.ABC",
             executableURL: executable,
-            version: "3.0.7",
-            build: "90",
+            version: "3.0.8",
+            build: "91",
             homeDirectory: home
         ))
 
@@ -230,7 +285,7 @@ struct PostInstallPreparationTests {
             request.temporaryFallbackSourceID
                 == "com.apple.keylayout.ABC"
         )
-        #expect(request.version == "3.0.7")
+        #expect(request.version == "3.0.8")
         #expect(agentValues["RunAtLoad"] as? Bool == true)
         #expect(agentValues["KeepAlive"] == nil)
         #expect((agentValues["ProgramArguments"] as? [String]) == [
@@ -523,8 +578,8 @@ struct InstallerSessionContractTests {
         #expect(!source.contains("&& !IOKitManager.hasAccessibilityPermission()"))
     }
 
-    @Test("Private installer commands exit before the normal IMK server starts")
-    func privateCommandsStayOutsideTheInteractiveRuntime() throws {
+    @Test("Successful repair continues into the normal IMK runtime")
+    func repairedSessionStartsInteractiveRuntime() throws {
         let source = try String(
             contentsOf: repoRoot
                 .appendingPathComponent("Sources/Hangyeol/main.swift"),
@@ -540,7 +595,10 @@ struct InstallerSessionContractTests {
 
         #expect(commandRange.lowerBound < serverRange.lowerBound)
         #expect(commandRange.lowerBound < applicationRange.lowerBound)
-        #expect(source.contains("exit(repaired ? EXIT_SUCCESS"))
+        #expect(source.contains(
+            "guard PostInstallPreparation.repairPendingActivation("
+        ))
+        #expect(!source.contains("exit(repaired ? EXIT_SUCCESS"))
         #expect(source.contains("exit(InputSourceManager.shared.runInstallerPhase"))
         #expect(!source.contains("--post-install-prepare"))
     }

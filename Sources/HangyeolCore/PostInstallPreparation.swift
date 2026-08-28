@@ -277,6 +277,8 @@ public enum PostInstallPreparation {
             let activated = convergeActivation(
                 boundaries: boundaries,
                 attempts: activationRetryDelays.count,
+                verifyBeforeWriting:
+                    request.installationKind == .ordinaryUpdate,
                 runPhase: {
                     runInstallerPhaseProcess(
                         $0,
@@ -323,11 +325,23 @@ public enum PostInstallPreparation {
     internal static func convergeActivation(
         boundaries: [InstallerActivationBoundary],
         attempts: Int,
+        verifyBeforeWriting: Bool,
         runPhase: (InstallerActivationPhase) -> Int32,
         waitBeforeRetry: (Int) -> Void
     ) -> Bool {
         guard attempts > 0 else { return false }
         for boundary in boundaries {
+            if verifyBeforeWriting {
+                let initialVerificationStatus = runPhase(boundary.verify)
+                print(
+                    "installer: boundary=\(boundary.verify.rawValue) "
+                        + "preflight=\(initialVerificationStatus)"
+                )
+                if initialVerificationStatus == InstallerPhaseExit.success {
+                    continue
+                }
+            }
+
             var verified = false
             for attempt in 0..<attempts {
                 let actionStatus = runPhase(boundary.action)

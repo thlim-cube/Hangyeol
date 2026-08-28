@@ -42,12 +42,16 @@ if let command = PostInstallPreparation.command(
         )
         exit(scheduled ? EXIT_SUCCESS : PostInstallPreparation.failureExitCode)
     case .repairPending:
-        let repaired = PostInstallPreparation.repairPendingActivation(
+        guard PostInstallPreparation.repairPendingActivation(
             executableURL: executableURL,
             version: version,
             build: build
-        )
-        exit(repaired ? EXIT_SUCCESS : PostInstallPreparation.failureExitCode)
+        ) else {
+            exit(PostInstallPreparation.failureExitCode)
+        }
+        // A successful repair now owns the current GUI session. Continue into
+        // the normal runtime so this same process initializes IMKServer instead
+        // of leaving macOS to discover the replacement at the next login.
     case let .phase(phase, sourceID):
         exit(InputSourceManager.shared.runInstallerPhase(
             phase,

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.8] - 2026-08-28
+
+### Fixed
+- 일반 업데이트에서 이미 등록·활성화·선택된 입력 소스를 먼저 검증해 불필요한 TIS 쓰기와 재승인 요청을 피하고, 설치 복구 프로세스가 성공 후 정상 IMK 런타임으로 이어져 같은 로그인 세션에서 교체된 한결을 바로 사용하도록 수정했습니다.
+
 ## [3.0.7] - 2026-08-28
 
 ### Fixed

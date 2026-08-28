@@ -143,9 +143,10 @@ if [ "$SHOULD_SELECT" = true ] \
     TEMPORARY_FALLBACK_SOURCE_ID="$FALLBACK_SOURCE_ID"
 fi
 
-# The installed executable writes a generation-tagged marker and a per-user,
-# one-shot LaunchAgent. PackageKit only schedules it; each TIS action and its
-# verifier execute later in separate processes owned by the GUI user.
+# The installed executable writes a generation-tagged marker and a per-user
+# LaunchAgent. PackageKit only schedules it; each TIS action and its verifier
+# execute later in separate processes owned by the GUI user. After successful
+# convergence, the agent process continues as the normal IMK runtime.
 if ! run_as_console_user "$EXECUTABLE" \
     --schedule-input-source-repair \
     "$INSTALLATION_KIND" \
