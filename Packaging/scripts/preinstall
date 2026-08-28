@@ -20,6 +20,9 @@ if [ -n "$CURRENT_USER" ]; then
         }
 
         INSTALLED_VERSION=""
+        INSTALLED_BUNDLE_IDENTIFIER=""
+        INSTALLED_CONNECTION_NAME=""
+        INSTALLED_INPUT_MODE_SCHEMA=""
         HANGYEOL_WAS_INSTALLED=false
         for installed_info_plist in \
             "/Library/Input Methods/Hangyeol.app/Contents/Info.plist" \
@@ -29,6 +32,15 @@ if [ -n "$CURRENT_USER" ]; then
                 HANGYEOL_WAS_INSTALLED=true
                 INSTALLED_VERSION=$(/usr/libexec/PlistBuddy \
                     -c "Print :CFBundleShortVersionString" \
+                    "$installed_info_plist" 2>/dev/null || true)
+                INSTALLED_BUNDLE_IDENTIFIER=$(/usr/libexec/PlistBuddy \
+                    -c "Print :CFBundleIdentifier" \
+                    "$installed_info_plist" 2>/dev/null || true)
+                INSTALLED_CONNECTION_NAME=$(/usr/libexec/PlistBuddy \
+                    -c "Print :InputMethodConnectionName" \
+                    "$installed_info_plist" 2>/dev/null || true)
+                INSTALLED_INPUT_MODE_SCHEMA=$(/usr/bin/plutil \
+                    -extract ComponentInputModeDict json -o - \
                     "$installed_info_plist" 2>/dev/null || true)
                 break
             fi
@@ -62,11 +74,19 @@ if [ -n "$CURRENT_USER" ]; then
             HangyeolSelectedBeforeInstall -bool "$HANGYEOL_WAS_SELECTED" || true
         run_as_console_user /usr/bin/defaults write com.thlim.inputmethod.Hangyeol \
             HangyeolInstalledBeforeInstall -bool "$HANGYEOL_WAS_INSTALLED" || true
+        run_as_console_user /usr/bin/defaults write com.thlim.inputmethod.Hangyeol \
+            HangyeolInstalledBundleIdentifier -string \
+            "$INSTALLED_BUNDLE_IDENTIFIER" || true
+        run_as_console_user /usr/bin/defaults write com.thlim.inputmethod.Hangyeol \
+            HangyeolInstalledConnectionName -string \
+            "$INSTALLED_CONNECTION_NAME" || true
+        run_as_console_user /usr/bin/defaults write com.thlim.inputmethod.Hangyeol \
+            HangyeolInstalledInputModeSchema -string \
+            "$INSTALLED_INPUT_MODE_SCHEMA" || true
 
-        # Keep the current Hangyeol IMK server alive during an update. Existing
-        # host applications own connections to that process; terminating it
-        # before a replacement session exists leaves Chrome and Electron apps
-        # attached to a stale controller until logout or restart.
+        # Keep the current Hangyeol IMK server alive while PackageKit replaces
+        # the bundle. Existing host connections and TIS candidates remain owned
+        # by that process until the next login starts the installed executable.
         /usr/bin/pkill -x -u "$USER_ID" PriType 2>/dev/null || true
         /usr/bin/pkill -x -u "$USER_ID" PriTypeV2 2>/dev/null || true
 

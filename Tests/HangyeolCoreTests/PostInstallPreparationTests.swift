@@ -11,17 +11,6 @@ struct PostInstallPreparationTests {
         #expect(!PostInstallPreparation.shouldPrepare(arguments: ["Hangyeol", "--unrelated"]))
     }
 
-    @Test("Recognizes only the bounded installer notification argument")
-    func recognizesInstallerNotificationArgument() {
-        #expect(PostInstallPreparation.shouldMarkPending(
-            arguments: ["Hangyeol", "--post-install-notify"]
-        ))
-        #expect(!PostInstallPreparation.shouldMarkPending(arguments: ["Hangyeol"]))
-        #expect(!PostInstallPreparation.shouldMarkPending(
-            arguments: ["Hangyeol", "--post-install-prepare"]
-        ))
-    }
-
     @Test("Recognizes only the private external status argument")
     func recognizesStatusArgument() {
         #expect(PostInstallPreparation.shouldCheckStatus(
@@ -61,15 +50,34 @@ struct PostInstallPreparationTests {
         let suiteName = "PostInstallPreparationTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
+        #expect(!PostInstallPreparation.hasInstalledBeforeInstallSnapshot(
+            in: defaults
+        ))
         defaults.set(true, forKey: PostInstallPreparation.selectedBeforeInstallKey)
-        defaults.set(true, forKey: PostInstallPreparation.installedBeforeInstallKey)
+        defaults.set(false, forKey: PostInstallPreparation.installedBeforeInstallKey)
+        defaults.set("bundle", forKey: PostInstallPreparation.installedBundleIdentifierKey)
+        defaults.set("connection", forKey: PostInstallPreparation.installedConnectionNameKey)
+        defaults.set("{}", forKey: PostInstallPreparation.installedInputModeSchemaKey)
 
         #expect(PostInstallPreparation.selectedBeforeInstall(in: defaults))
-        #expect(PostInstallPreparation.installedBeforeInstall(in: defaults))
+        #expect(!PostInstallPreparation.installedBeforeInstall(in: defaults))
+        #expect(PostInstallPreparation.hasInstalledBeforeInstallSnapshot(in: defaults))
 
         PostInstallPreparation.clearInstallationSnapshot(in: defaults)
         #expect(!PostInstallPreparation.selectedBeforeInstall(in: defaults))
         #expect(!PostInstallPreparation.installedBeforeInstall(in: defaults))
+        #expect(!PostInstallPreparation.hasInstalledBeforeInstallSnapshot(
+            in: defaults
+        ))
+        #expect(defaults.object(
+            forKey: PostInstallPreparation.installedBundleIdentifierKey
+        ) == nil)
+        #expect(defaults.object(
+            forKey: PostInstallPreparation.installedConnectionNameKey
+        ) == nil)
+        #expect(defaults.object(
+            forKey: PostInstallPreparation.installedInputModeSchemaKey
+        ) == nil)
     }
 
     @Test("Activation waits for a separate authoritative success")
@@ -165,6 +173,55 @@ struct InstallerSessionContractTests {
         )
     }
 
+    private func classifyInstallation(
+        wasInstalled: String,
+        previousBundleIdentifier: String = ProductIdentity.bundleID,
+        previousConnectionName: String = ProductIdentity.connectionName,
+        previousInputModeSchema: String = "{\"mode\":\"Hang\"}",
+        currentBundleIdentifier: String = ProductIdentity.bundleID,
+        currentConnectionName: String = ProductIdentity.connectionName,
+        currentInputModeSchema: String = "{\"mode\":\"Hang\"}"
+    ) throws -> String {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [
+            repoRoot.appendingPathComponent(
+                "Packaging/scripts/postinstall_classification.sh"
+            ).path,
+            wasInstalled,
+            previousBundleIdentifier,
+            previousConnectionName,
+            previousInputModeSchema,
+            currentBundleIdentifier,
+            currentConnectionName,
+            currentInputModeSchema
+        ]
+        process.standardOutput = output
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == EXIT_SUCCESS)
+        return String(
+            data: output.fileHandleForReading.readDataToEndOfFile(),
+            encoding: .utf8
+        )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    @Test("Installer classification fails closed without an explicit first-install snapshot")
+    func classifiesInstallerSessionWithoutLaunchingHangyeol() throws {
+        #expect(try classifyInstallation(wasInstalled: "1") == "ordinary-update")
+        #expect(try classifyInstallation(
+            wasInstalled: "1",
+            currentInputModeSchema: "{\"mode\":\"Hang\",\"new\":true}"
+        ) == "registration-change")
+        #expect(try classifyInstallation(
+            wasInstalled: "1",
+            previousInputModeSchema: ""
+        ) == "registration-change")
+        #expect(try classifyInstallation(wasInstalled: "0") == "first-installation")
+        #expect(try classifyInstallation(wasInstalled: "") == "registration-change")
+    }
+
     @Test("Preinstall migrates only the console user's current and retired product")
     func preinstallIsUserScoped() throws {
         let source = try script(named: "preinstall")
@@ -198,11 +255,11 @@ struct InstallerSessionContractTests {
         #expect(!source.contains("for user_home in /Users/*"))
     }
 
-    @Test("Postinstall delegates activation without blocking PackageKit")
+    @Test("Postinstall prepares only a first installation without blocking PackageKit")
     func postinstallDelegatesActivationOutsidePackageKit() throws {
         let source = try script(named: "postinstall")
         let settingsMarkerRange = try #require(
-            source.range(of: "--post-install-notify")
+            source.range(of: "HangyeolPendingPostInstallSetup")
         )
         let settingsLaunchRange = try #require(
             source.range(of: "run_as_console_user /usr/bin/open \"$APP_PATH\"")
@@ -213,13 +270,37 @@ struct InstallerSessionContractTests {
         let preparationArgumentRange = try #require(
             source.range(of: "--args --post-install-prepare")
         )
+        let registrationChangeRange = try #require(
+            source.range(of: "registration-change|*)")
+        )
+        let ordinaryUpdateRange = try #require(
+            source.range(of: "ordinary-update)")
+        )
+        let firstInstallationRange = try #require(
+            source.range(of: "first-installation)")
+        )
+        let ordinaryUpdateBranch = source[
+            ordinaryUpdateRange.lowerBound..<firstInstallationRange.lowerBound
+        ]
+        let firstInstallationBranch = source[
+            firstInstallationRange.lowerBound..<registrationChangeRange.lowerBound
+        ]
 
         #expect(source.contains("launchctl asuser"))
         #expect(source.contains("sudo -H -u"))
+        #expect(source.contains("postinstall_classification.sh"))
         #expect(source.components(separatedBy: "--post-install-prepare").count - 1 == 1)
-        #expect(source.components(separatedBy: "--post-install-notify").count - 1 == 1)
+        #expect(!source.contains("--post-install-kind"))
+        #expect(!source.contains("--post-install-notify"))
         #expect(!source.contains("--post-install-status"))
+        #expect(source.contains("ordinary-update)"))
+        #expect(source.contains("registration-change|*)"))
+        #expect(ordinaryUpdateBranch.contains("clear_installation_snapshot"))
+        #expect(!ordinaryUpdateBranch.contains("/usr/bin/open"))
+        #expect(!ordinaryUpdateBranch.contains("--post-install-prepare"))
+        #expect(firstInstallationBranch.contains("--post-install-prepare"))
         #expect(settingsMarkerRange.lowerBound < settingsLaunchRange.lowerBound)
+        #expect(settingsLaunchRange.lowerBound < registrationChangeRange.lowerBound)
         #expect(settingsLaunchRange.lowerBound < preparationLaunchRange.lowerBound)
         #expect(preparationLaunchRange.lowerBound < preparationArgumentRange.lowerBound)
         #expect(!source.contains("open -W"))
@@ -234,6 +315,21 @@ struct InstallerSessionContractTests {
         #expect(!source.contains("killall"))
         #expect(!source.contains("eval "))
         #expect(!source.contains("sleep "))
+    }
+
+    @Test("Preinstall snapshots only the registration identity needed for classification")
+    func preinstallCapturesUpdateClassificationEvidence() throws {
+        let source = try script(named: "preinstall")
+
+        #expect(source.contains("Print :CFBundleIdentifier"))
+        #expect(source.contains("Print :InputMethodConnectionName"))
+        #expect(source.contains("/usr/bin/plutil"))
+        #expect(source.contains("-extract ComponentInputModeDict json -o -"))
+        #expect(source.contains("HangyeolInstalledBundleIdentifier"))
+        #expect(source.contains("HangyeolInstalledConnectionName"))
+        #expect(source.contains("HangyeolInstalledInputModeSchema"))
+        #expect(!source.contains("HangyeolRunningProcessIdentifierBeforeInstall"))
+        #expect(!source.contains("pgrep -x -u \"$USER_ID\" Hangyeol"))
     }
 
     @Test("Signing paths do not attach the restricted InputMethodKit entitlement")
@@ -279,8 +375,30 @@ struct InstallerSessionContractTests {
         #expect(source.contains("if shouldShowSettingsAfterInstall {"))
         #expect(source.contains("waitForAuthoritativeStatus"))
         #expect(source.contains("shouldSelectAfterActivation"))
+        #expect(!source.contains("applicationShouldTerminate"))
+        #expect(!source.contains("prepareForApplicationTermination"))
         #expect(source.contains("openInputSourceSettingsAfterPreparationFailure"))
         #expect(!source.contains("Task.detached(priority: .utility) {\n            _ = InputSourceManager.shared.cleanupStaleInputSources()"))
         #expect(!source.contains("&& !IOKitManager.hasAccessibilityPermission()"))
+    }
+
+    @Test("An existing or unconfirmed installation exits before TIS preparation")
+    func nonFirstInstallationPreservesCurrentSession() throws {
+        let source = try String(
+            contentsOf: repoRoot
+                .appendingPathComponent("Sources/Hangyeol/main.swift"),
+            encoding: .utf8
+        )
+        let preservationRange = try #require(
+            source.range(of: "if !hasInstallationSnapshot || wasInstalledBeforeUpdate {")
+        )
+        let repairRange = try #require(
+            source.range(of: "prepareInstalledInputSource")
+        )
+
+        #expect(preservationRange.lowerBound < repairRange.lowerBound)
+        #expect(source.contains("action=next-login applied=false"))
+        #expect(!source.contains("PostInstallRuntimeReloader"))
+        #expect(!source.contains("waitForRuntimeReplacementStatus"))
     }
 }

@@ -37,11 +37,6 @@ if PostInstallPreparation.shouldRunLaunchProbe(arguments: CommandLine.arguments)
     exit(EXIT_SUCCESS)
 }
 
-if PostInstallPreparation.shouldMarkPending(arguments: CommandLine.arguments) {
-    PostInstallPreparation.markPending()
-    exit(EXIT_SUCCESS)
-}
-
 if PostInstallPreparation.shouldCheckStatus(arguments: CommandLine.arguments) {
     let status = InputSourceManager.shared.installedInputSourceStatus()
     print(
@@ -207,6 +202,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 if PostInstallPreparation.shouldPrepare(arguments: CommandLine.arguments) {
     let restorePreviousSelection = PostInstallPreparation.selectedBeforeInstall()
     let wasInstalledBeforeUpdate = PostInstallPreparation.installedBeforeInstall()
+    let hasInstallationSnapshot =
+        PostInstallPreparation.hasInstalledBeforeInstallSnapshot()
+
+    // The package script launches this helper only for a confirmed first
+    // installation. Keep a second fail-closed guard here so an existing login
+    // session can never be repaired or reloaded through this private command.
+    if !hasInstallationSnapshot || wasInstalledBeforeUpdate {
+        PostInstallPreparation.clearInstallationSnapshot()
+        print(
+            "Hangyeol post-install: kind=unconfirmed-or-existing "
+                + "action=next-login applied=false"
+        )
+        exit(EXIT_SUCCESS)
+    }
+
     let result = InputSourceManager.shared.prepareInstalledInputSource(
         at: Bundle.main.bundleURL
     )
@@ -230,7 +240,9 @@ if PostInstallPreparation.shouldPrepare(arguments: CommandLine.arguments) {
     let enableFailure = result.firstEnableFailure.map(String.init) ?? "none"
     let selectionStatus = selection.map { String($0.status) } ?? "preserved"
     print(
-        "Hangyeol post-install: registration=\(result.registrationStatus) "
+        "Hangyeol post-install: kind=first-installation "
+            + "action=prepare "
+            + "registration=\(result.registrationStatus) "
             + "enableFailure=\(enableFailure) "
             + "locallyEnabled=\(result.isLocallyVisibleAndEnabled) "
             + "authoritativeReady=\(authoritativeReady) "

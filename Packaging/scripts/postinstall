@@ -2,7 +2,11 @@
 # postinstall for Hangyeol.pkg
 
 APP_PATH="/Library/Input Methods/Hangyeol.app"
-APP_EXECUTABLE="$APP_PATH/Contents/MacOS/Hangyeol"
+INFO_PLIST="$APP_PATH/Contents/Info.plist"
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+
+# shellcheck source=postinstall_classification.sh
+. "$SCRIPT_DIR/postinstall_classification.sh"
 
 CURRENT_USER=$(/usr/bin/stat -f "%Su" /dev/console 2>/dev/null || true)
 case "$CURRENT_USER" in
@@ -21,28 +25,86 @@ run_as_console_user() {
 }
 
 # Retired 2.x servers cannot own the current bundle's IMK connection. The
-# current Hangyeol process is deliberately preserved: replacing its live
-# client connections is a login-session boundary, not a safe installer action.
+# current Hangyeol process and its TIS records are deliberately preserved.
 /usr/bin/pkill -x -u "$USER_ID" PriType 2>/dev/null || true
 /usr/bin/pkill -x -u "$USER_ID" PriTypeV2 2>/dev/null || true
 
-# Mark the settings presentation through a bounded helper command, then open
-# the app while PackageKit still has the logged-in user's GUI context.
-run_as_console_user "$APP_EXECUTABLE" --post-install-notify \
-    >/dev/null 2>&1 || true
-run_as_console_user /usr/bin/open "$APP_PATH" >/dev/null 2>&1 || true
+mark_post_install_pending() {
+    run_as_console_user /usr/bin/defaults write \
+        com.thlim.inputmethod.Hangyeol \
+        HangyeolPendingPostInstallSetup -bool true >/dev/null 2>&1 || true
+}
+clear_installation_snapshot() {
+    for key in \
+        HangyeolSelectedBeforeInstall \
+        HangyeolInstalledBeforeInstall \
+        HangyeolInstalledBundleIdentifier \
+        HangyeolInstalledConnectionName \
+        HangyeolInstalledInputModeSchema; do
+        run_as_console_user /usr/bin/defaults delete \
+            com.thlim.inputmethod.Hangyeol "$key" >/dev/null 2>&1 || true
+    done
+}
 
-# Input-source consent and TIS propagation are login-session work, not a
-# PackageKit transaction. LaunchServices owns this independent signed helper,
-# so Installer can finish while the helper waits for authoritative TIS state.
-run_as_console_user /usr/bin/open -n -g "$APP_PATH" \
-    --args --post-install-prepare >/dev/null 2>&1
-PREPARE_LAUNCH_STATUS=$?
+# Classify from plist/defaults only. In particular, an ordinary update must not
+# execute a second Hangyeol binary while the current IMK server owns clients.
+WAS_INSTALLED=$(run_as_console_user /usr/bin/defaults read \
+    com.thlim.inputmethod.Hangyeol \
+    HangyeolInstalledBeforeInstall 2>/dev/null || true)
+PREVIOUS_BUNDLE_IDENTIFIER=$(run_as_console_user /usr/bin/defaults read \
+    com.thlim.inputmethod.Hangyeol \
+    HangyeolInstalledBundleIdentifier 2>/dev/null || true)
+PREVIOUS_CONNECTION_NAME=$(run_as_console_user /usr/bin/defaults read \
+    com.thlim.inputmethod.Hangyeol \
+    HangyeolInstalledConnectionName 2>/dev/null || true)
+PREVIOUS_INPUT_MODE_SCHEMA=$(run_as_console_user /usr/bin/defaults read \
+    com.thlim.inputmethod.Hangyeol \
+    HangyeolInstalledInputModeSchema 2>/dev/null || true)
+CURRENT_BUNDLE_IDENTIFIER=$(/usr/libexec/PlistBuddy \
+    -c "Print :CFBundleIdentifier" "$INFO_PLIST" 2>/dev/null || true)
+CURRENT_CONNECTION_NAME=$(/usr/libexec/PlistBuddy \
+    -c "Print :InputMethodConnectionName" "$INFO_PLIST" 2>/dev/null || true)
+CURRENT_INPUT_MODE_SCHEMA=$(/usr/bin/plutil \
+    -extract ComponentInputModeDict json -o - "$INFO_PLIST" 2>/dev/null || true)
 
-if [ "$PREPARE_LAUNCH_STATUS" -ne 0 ]; then
-    run_as_console_user /usr/bin/open \
-        "x-apple.systempreferences:com.apple.preference.keyboard?InputSources" \
-        >/dev/null 2>&1 || true
-fi
+INSTALLATION_KIND=$(classify_hangyeol_installation \
+    "$WAS_INSTALLED" \
+    "$PREVIOUS_BUNDLE_IDENTIFIER" \
+    "$PREVIOUS_CONNECTION_NAME" \
+    "$PREVIOUS_INPUT_MODE_SCHEMA" \
+    "$CURRENT_BUNDLE_IDENTIFIER" \
+    "$CURRENT_CONNECTION_NAME" \
+    "$CURRENT_INPUT_MODE_SCHEMA")
+
+# First registration and registration-schema changes are login-session
+# boundaries. An ordinary update keeps the existing TIS records untouched and
+# does not reopen Settings just because the executable changed.
+case "$INSTALLATION_KIND" in
+    ordinary-update)
+        # Do not launch any second Hangyeol process. Replacing an active IMK
+        # runtime can remove its TIS candidates for the rest of this login.
+        clear_installation_snapshot
+        ;;
+    first-installation)
+        mark_post_install_pending
+        run_as_console_user /usr/bin/open "$APP_PATH" >/dev/null 2>&1 || true
+        # LaunchServices owns this independent signed helper so PackageKit never
+        # waits for input-source consent or authoritative TIS propagation.
+        run_as_console_user /usr/bin/open -n -g "$APP_PATH" \
+            --args --post-install-prepare >/dev/null 2>&1
+        PREPARE_LAUNCH_STATUS=$?
+        if [ "$PREPARE_LAUNCH_STATUS" -ne 0 ]; then
+            run_as_console_user /usr/bin/open \
+                "x-apple.systempreferences:com.apple.preference.keyboard?InputSources" \
+                >/dev/null 2>&1 || true
+        fi
+        ;;
+    registration-change|*)
+        # Preserve the current IMK runtime and TIS records until the next login.
+        # The pending marker lets that fresh runtime present Settings once.
+        mark_post_install_pending
+        clear_installation_snapshot
+        ;;
+esac
 
 exit 0

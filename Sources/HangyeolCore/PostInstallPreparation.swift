@@ -2,7 +2,6 @@ import Foundation
 
 public enum PostInstallPreparation {
     public static let argument = "--post-install-prepare"
-    public static let notificationArgument = "--post-install-notify"
     public static let statusArgument = "--post-install-status"
     public static let launchProbeArgument = "--verify-launch"
     public static let failureExitCode: Int32 = 10
@@ -14,13 +13,12 @@ public enum PostInstallPreparation {
     private static let pendingSetupKey = "HangyeolPendingPostInstallSetup"
     internal static let selectedBeforeInstallKey = "HangyeolSelectedBeforeInstall"
     internal static let installedBeforeInstallKey = "HangyeolInstalledBeforeInstall"
+    internal static let installedBundleIdentifierKey = "HangyeolInstalledBundleIdentifier"
+    internal static let installedConnectionNameKey = "HangyeolInstalledConnectionName"
+    internal static let installedInputModeSchemaKey = "HangyeolInstalledInputModeSchema"
 
     public static func shouldPrepare(arguments: [String]) -> Bool {
         arguments.dropFirst().contains(argument)
-    }
-
-    public static func shouldMarkPending(arguments: [String]) -> Bool {
-        arguments.dropFirst().contains(notificationArgument)
     }
 
     public static func shouldCheckStatus(arguments: [String]) -> Bool {
@@ -107,11 +105,20 @@ public enum PostInstallPreparation {
         defaults.bool(forKey: installedBeforeInstallKey)
     }
 
+    public static func hasInstalledBeforeInstallSnapshot(
+        in defaults: UserDefaults = .standard
+    ) -> Bool {
+        defaults.object(forKey: installedBeforeInstallKey) != nil
+    }
+
     public static func clearInstallationSnapshot(
         in defaults: UserDefaults = .standard
     ) {
         defaults.removeObject(forKey: selectedBeforeInstallKey)
         defaults.removeObject(forKey: installedBeforeInstallKey)
+        defaults.removeObject(forKey: installedBundleIdentifierKey)
+        defaults.removeObject(forKey: installedConnectionNameKey)
+        defaults.removeObject(forKey: installedInputModeSchemaKey)
         defaults.synchronize()
     }
 }

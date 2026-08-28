@@ -278,28 +278,28 @@ HostSurfaceResolver        capability 우선 surface 분류
 
 ## 설치 후 적용 흐름
 
-PKG 스크립트는 시스템 전체 프로세스를 이름으로 종료하지 않는다. `preinstall`은 `/dev/console`의 실제 로그인 사용자와 UID를 확인한 뒤 사용자 영역의 중복 번들, 시스템 영역의 2.x 번들, 이전 이름의 2.x 프로세스만 정리한다. 실행 중인 한결 IMK 서버는 기존 Chrome·Electron client 연결을 유지하도록 종료하지 않는다. 현재 `/Library/Input Methods/Hangyeol.app`은 지우지 않고 PackageKit의 atomic update 대상으로 남긴다. 컴포넌트 패키지는 `BundleHasStrictIdentifier=false`로 생성해 이전 `com.meapri` 및 잘못 배치된 `com.thlim.hangyeol.inputmethod` 번들도 같은 표준 경로에서 `com.thlim.inputmethod.Hangyeol`로 교체하며, 식별자 불일치로 만들어졌던 `Hangyeol.localized` 잔여 경로는 preinstall에서 정리한다. 설치된 앱은 Dock 아이콘 없이 설정 창을 열 수 있도록 `LSUIElement=true`로 실행된다. `postinstall`은 다음 순서로 적용한다.
+PKG 스크립트는 시스템 전체 프로세스를 이름으로 종료하지 않는다. `preinstall`은 `/dev/console`의 실제 로그인 사용자와 UID를 확인한 뒤 사용자 영역의 중복 번들, 시스템 영역의 2.x 번들, 이전 이름의 2.x 프로세스만 정리한다. 현재 `/Library/Input Methods/Hangyeol.app`은 지우지 않고 PackageKit의 atomic update 대상으로 남긴다. 동시에 설치 전 bundle ID, IMK connection, `ComponentInputModeDict`, 선택 상태를 snapshot으로 남긴다. 컴포넌트 패키지는 `BundleHasStrictIdentifier=false`로 생성해 이전 식별자 번들도 같은 표준 경로에서 `com.thlim.inputmethod.Hangyeol`로 교체하며, `Hangyeol.localized` 잔여 경로는 preinstall에서 정리한다. 설치된 앱은 Dock 아이콘 없이 설정 창을 열 수 있도록 `LSUIElement=true`로 실행된다.
 
 ```text
 postinstall (root)
-  ├─ launchctl asuser + sudo -u <console user>
-  │    └─ Hangyeol --post-install-prepare
-  │         ├─ HIToolbox 세 컬렉션의 stale Hangyeol 항목 동기 정리
-  │         ├─ TISRegisterInputSource(/Library/Input Methods/Hangyeol.app)
-  │         ├─ 부모 입력기 → 한글 mode 순서로 TISEnableInputSource
-  │         ├─ 서명된 helper를 유지한 채 macOS 활성화 동의 대기
-  │         ├─ 별도 Hangyeol --post-install-status 프로세스에서 활성화 검증
-  │         ├─ 첫 설치 또는 업데이트 전 선택 상태 복구 시 한글 mode 선택
-  │         └─ 설치 안내 pending 기록 후 IMK 초기화 없이 종료
-  ├─ 새 프로세스에서 --post-install-status 최종 검증
-  └─ 같은 사용자 세션에서 Hangyeol 실행
-       ├─ 설치 pending을 소비해 설정 창을 한 번 표시
-       └─ 손쉬운 사용 미허용 시 별도로 macOS 승인 요청 표시
+  ├─ 설치 전 snapshot과 설치된 Info.plist 비교
+  │    ├─ first-installation
+  │    │    ├─ 설정 안내 pending 기록
+  │    │    └─ PackageKit 밖의 helper에서 TIS 준비
+  │    ├─ registration-change
+  │    │    └─ 현재 runtime·TIS를 보존하고 다음 로그인 적용
+  │    └─ ordinary-update
+  │         └─ 설정·runtime·TIS를 건드리지 않고 snapshot만 정리
+  └─ first-installation의 Hangyeol --post-install-prepare
+       ├─ stale 항목 정리
+       ├─ TISRegisterInputSource + TISEnableInputSource
+       ├─ 별도 status 프로세스에서 authoritative ready 검증
+       └─ 준비되지 않으면 입력 소스 설정 열기
 ```
 
-설치 전 선택과 기존 설치 여부는 `preinstall`이 별도 snapshot으로 보존한다. 설치 준비를 호출한 프로세스의 TIS 캐시는 활성화 동의가 저장되기 전에도 enabled 상태를 반환할 수 있으므로 성공 근거로 쓰지 않는다. 별도 프로세스에서 Hangyeol parent와 한글 mode가 모두 보이고 활성화된 뒤에만 선택 snapshot을 복구한다. 준비되지 않으면 입력 소스 설정을 복구 화면으로 연다.
+동일 등록 구조는 bundle ID, `InputMethodConnectionName`, `plutil`로 직렬화한 `ComponentInputModeDict`가 모두 일치해야 성립한다. 값이 누락되거나 하나라도 바뀌면 보수적으로 등록 변경으로 분류한다. 최초 설치에서만 별도 프로세스가 Hangyeol parent와 한글 mode의 authoritative ready 상태를 확인한 뒤 선택 snapshot을 복구한다. 준비되지 않으면 입력 소스 설정을 복구 화면으로 연다.
 
-`TISRegisterInputSource`와 `TISEnableInputSource`는 검증된 입력기 설치 코드에 macOS가 제공하는 표준 등록 경로이며 일반 앱 시작에서는 호출하지 않는다. 입력기 agent나 실행 중인 한결 IMK 서버를 재시작하지 않으므로, 업데이트된 실행 파일은 다음 로그인 또는 재시동부터 새 client 연결에 사용된다. 손쉬운 사용 권한(TCC)은 여전히 사용자 승인 경계이므로 설치기가 TCC 데이터베이스를 수정하지 않는다. ABC와 다른 입력 소스도 자동 삭제하지 않으며, 설정의 명시적 `ABC 끄기` 동작만 사용자가 요청했을 때 실행한다.
+`TISRegisterInputSource`와 `TISEnableInputSource`는 최초 설치에만 사용한다. 일반 업데이트 중 실행 중인 입력기를 종료·재실행하면 같은 로그인 세션에서 parent·mode 후보가 사라질 수 있고, 사용자 승인 뒤 등록 API를 다시 호출해도 복구되지 않는 실제 호스트 동작을 확인했다. 따라서 일반 업데이트는 기존 IMK 서버와 TIS 레코드를 유지하고 새 실행 파일은 다음 로그인 또는 재시동부터 사용한다. `forceTerminate`, `pkill Hangyeol`, `TextInputMenuAgent`·`imklaunchagent` 재시작은 사용하지 않는다. 손쉬운 사용 권한(TCC)은 여전히 사용자 승인 경계이므로 설치기가 TCC 데이터베이스를 수정하지 않는다. ABC와 다른 입력 소스도 자동 삭제하지 않으며, 설정의 명시적 `ABC 끄기` 동작만 사용자가 요청했을 때 실행한다.
 
 ## 의존 라이브러리
 
