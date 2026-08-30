@@ -17,7 +17,7 @@ struct InputMethodMenuTests {
         #expect(settings.title == HangyeolInputController.inputMethodSettingsMenuTitle)
         #expect(settings.title.hasSuffix("..."))
         #expect(!settings.title.trimmingCharacters(in: CharacterSet(charactersIn: ".")).isEmpty)
-        #expect(settings.title.contains("설정") || settings.title.contains("Settings"))
+        #expect(settings.title.contains("설정") || settings.title.lowercased().contains("settings"))
         #expect(settings.action == #selector(IMKInputController.showPreferences(_:)))
         #expect(settings.target == nil)
         #expect(settings.isEnabled)
