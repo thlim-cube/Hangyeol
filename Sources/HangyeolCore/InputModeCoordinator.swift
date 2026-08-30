@@ -163,14 +163,17 @@ public final class InputModeCoordinator: @unchecked Sendable {
             observeCurrentSystemOwnership()
         }
 
-        guard let controller = activeControllerProvider() else {
-            DebugLogger.event("toggle.deferred", metadata: [
-                .state("reason", "controller_handoff")
-            ])
+        if let controller = activeControllerProvider() {
+            _ = reconcilePendingToggleIfNeeded(for: controller)
             return
         }
 
-        _ = reconcilePendingToggleIfNeeded(for: controller)
+        DebugLogger.event("toggle.deferred", metadata: [
+            .state("reason", "controller_handoff")
+        ])
+        // Keep the physical intent queued. A new IMK client, such as a freshly
+        // opened window, must apply it on the next activate/keyDown instead of
+        // discarding the press because the previous field still owns the session.
     }
 
     /// Apply every queued physical toggle before the current controller interprets

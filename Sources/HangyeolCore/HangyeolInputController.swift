@@ -765,6 +765,9 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         // Activation is evidence that Hangyeol is the selected source, but it only
         // records a real ownership boundary. It never resets mode or commits text.
         InputModeCoordinator.shared.observeHangyeolActivation()
+        if session != nil {
+            _ = InputModeCoordinator.shared.reconcilePendingToggleIfNeeded(for: self)
+        }
         // Activation is still unclassified. A layout mismatch must not commit old
         // preedit through the retained delegate before the secure-input gate.
         let currentLayoutId = ConfigurationManager.shared.keyboardId
@@ -1293,7 +1296,7 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         menu.autoenablesItems = false
 
         let settingsItem = NSMenuItem(
-            title: "\(L10n.app.name) \(L10n.settings.title)...",
+            title: inputMethodSettingsMenuTitle,
             action: #selector(IMKInputController.showPreferences(_:)),
             keyEquivalent: ""
         )
@@ -1303,7 +1306,7 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         menu.addItem(NSMenuItem.separator())
 
         let aboutItem = NSMenuItem(
-            title: "\(L10n.app.name) \(L10n.about.title)",
+            title: inputMethodAboutMenuTitle,
             action: #selector(showAbout(_:)),
             keyEquivalent: ""
         )
@@ -1311,6 +1314,22 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         menu.addItem(aboutItem)
 
         return menu
+    }
+
+    static var inputMethodSettingsMenuTitle: String {
+        let name = L10n.app.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = L10n.settings.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedName = name.isEmpty ? ProductIdentity.displayName : name
+        let resolvedTitle = title.isEmpty ? "설정" : title
+        return "\(resolvedName) \(resolvedTitle)..."
+    }
+
+    static var inputMethodAboutMenuTitle: String {
+        let name = L10n.app.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = L10n.about.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedName = name.isEmpty ? ProductIdentity.displayName : name
+        let resolvedTitle = title.isEmpty ? "정보" : title
+        return "\(resolvedName) \(resolvedTitle)"
     }
 
     override public func showPreferences(_ sender: Any!) {

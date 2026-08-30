@@ -348,6 +348,29 @@ struct InputModeOwnershipTests {
         #expect(client.markCalls.count == markCountBefore)
     }
 
+    @Test("A toggle without an active controller stays queued for the next window")
+    @MainActor
+    func toggleWithoutActiveControllerStaysQueuedForNewWindow() {
+        let coordinator = InputModeCoordinator(
+            activeControllerProvider: { nil },
+            capsLockOwnershipProvider: { false }
+        )
+        DispatchQueue.global().sync {
+            coordinator.requestToggle(source: .customKey)
+        }
+
+        var applied = false
+        #expect(coordinator.reconcilePendingToggleIfNeeded { _, _ in
+            applied = true
+            return true
+        })
+        #expect(applied)
+        #expect(!coordinator.reconcilePendingToggleIfNeeded { _, _ in
+            Issue.record("The queued new-window toggle must be consumed exactly once")
+            return true
+        })
+    }
+
     @Test("A toggle survives field handoff and applies before the first keyDown")
     @MainActor
     func toggleSurvivesFieldHandoffBeforeFirstKeyDown() {
@@ -475,6 +498,8 @@ struct ProcessWideInputOwnershipTests {
         #expect(policyUse.lowerBound < sessionResolution.lowerBound)
         #expect(lateHandoff.lowerBound < sessionResolution.lowerBound)
         #expect(!source.contains("guard Self.sharedController == nil,"))
+        #expect(source.contains("if session != nil {"))
+        #expect(source.contains("reconcilePendingToggleIfNeeded(for: self)"))
     }
 
     @Test("A first keyDown claims ownership even while the previous owner remains visible")

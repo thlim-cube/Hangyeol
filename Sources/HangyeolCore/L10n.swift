@@ -14,30 +14,57 @@ public enum L10n {
     /// Returns the bundle containing localized resources
     /// Uses robust fallback logic for both development and distribution environments
     private static let bundle: Bundle = {
-        // 1. Try to find the SPM resource bundle in app's Resources directory (distribution)
-        if let resourceURL = Bundle.main.resourceURL,
-           let resourceBundle = Bundle(url: resourceURL.appendingPathComponent("Hangyeol_HangyeolCore.bundle")) {
+        if let resourceBundle = installedCoreResourceBundle() {
             return resourceBundle
         }
-        
-        // 2. Try Bundle.module for SPM development environment
         #if SWIFT_PACKAGE
         return Bundle.module
         #else
-        // 3. Fallback to main bundle (localization files directly in Resources)
         return Bundle.main
         #endif
     }()
-    
-    /// Helper to get localized string
+
+    private static func installedCoreResourceBundle() -> Bundle? {
+        let candidates = [
+            Bundle.main.resourceURL?
+                .appendingPathComponent("Hangyeol_HangyeolCore.bundle"),
+            Bundle.main.bundleURL
+                .appendingPathComponent("Contents/Resources/Hangyeol_HangyeolCore.bundle"),
+            Bundle.main.bundleURL
+                .appendingPathComponent("Hangyeol_HangyeolCore.bundle")
+        ].compactMap { $0 }
+
+        for url in candidates {
+            if let bundle = Bundle(url: url), bundle.url(
+                forResource: "Localizable",
+                withExtension: "strings"
+            ) != nil {
+                return bundle
+            }
+        }
+        return nil
+    }
+
+    /// Helper to get localized string. Missing keys must not become menu titles.
+    static func localized(
+        _ key: String,
+        fallback: String
+    ) -> String {
+        let value = bundle.localizedString(forKey: key, value: "\u{0}", table: nil)
+        if value == "\u{0}" || value == key || value.isEmpty {
+            return fallback
+        }
+        return value
+    }
+
     private static func localized(_ key: String) -> String {
-        NSLocalizedString(key, bundle: bundle, comment: "")
+        localized(key, fallback: key)
     }
     
     // MARK: - Settings
     
     public enum settings {
-        public static var title: String { localized("settings.title") }
+        public static var title: String { localized("settings.title", fallback: "설정") }
         public static var footer: String { localized("settings.footer") }
     }
 
@@ -119,7 +146,7 @@ public enum L10n {
     // MARK: - About
     
     public enum about {
-        public static var title: String { localized("about.title") }
+        public static var title: String { localized("about.title", fallback: "정보") }
         public static var description: String { localized("about.description") }
         public static var version: String { localized("about.version") }
     }
@@ -127,7 +154,7 @@ public enum L10n {
     // MARK: - App
     
     public enum app {
-        public static var name: String { localized("app.name") }
+        public static var name: String { localized("app.name", fallback: ProductIdentity.displayName) }
         public static var copyright: String { localized("app.copyright") }
         public static var quit: String { localized("app.quit") }
     }

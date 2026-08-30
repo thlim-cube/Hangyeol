@@ -1,4 +1,5 @@
 import Cocoa
+import Foundation
 import InputMethodKit
 import Testing
 @testable import HangyeolCore
@@ -13,7 +14,10 @@ struct InputMethodMenuTests {
         #expect(menu.items.count == 3)
 
         let settings = menu.items[0]
-        #expect(settings.title == "\(L10n.app.name) \(L10n.settings.title)...")
+        #expect(settings.title == HangyeolInputController.inputMethodSettingsMenuTitle)
+        #expect(settings.title.hasSuffix("..."))
+        #expect(!settings.title.trimmingCharacters(in: CharacterSet(charactersIn: ".")).isEmpty)
+        #expect(settings.title.contains("설정") || settings.title.contains("Settings"))
         #expect(settings.action == #selector(IMKInputController.showPreferences(_:)))
         #expect(settings.target == nil)
         #expect(settings.isEnabled)
@@ -21,7 +25,8 @@ struct InputMethodMenuTests {
         #expect(menu.items[1].isSeparatorItem)
 
         let about = menu.items[2]
-        #expect(about.title == "\(L10n.app.name) \(L10n.about.title)")
+        #expect(about.title == HangyeolInputController.inputMethodAboutMenuTitle)
+        #expect(!about.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         #expect(about.action != nil)
         #expect(about.target == nil)
         #expect(about.isEnabled)
