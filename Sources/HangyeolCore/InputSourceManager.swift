@@ -264,31 +264,33 @@ public final class InputSourceManager: @unchecked Sendable {
         case .disableTemporaryFallback:
             guard isHangyeolSelected(),
                   let fallbackSourceID,
-                  let record = safeFallbackRecord(
-                    sourceID: fallbackSourceID
-                  ) else {
+                  let record = fallbackRecord(sourceID: fallbackSourceID) else {
                 return InstallerPhaseExit.failed
             }
-            guard record.candidate.isEnabled else {
-                return InstallerPhaseExit.success
+            if record.candidate.isEnabled {
+                let status = TISDisableInputSource(record.source)
+                print(
+                    "installer: disable-temporary-fallback status=\(status)"
+                )
             }
-            let status = TISDisableInputSource(record.source)
-            print(
-                "installer: disable-temporary-fallback status=\(status)"
+            let removed = removeEnabledKeyboardLayout(
+                matching: fallbackSourceID
             )
-            return status == noErr
+            print(
+                "installer: disable-temporary-fallback removed-from-enabled=\(removed)"
+            )
+            return removed
                 ? InstallerPhaseExit.success
                 : InstallerPhaseExit.retryable
 
         case .verifyTemporaryFallbackDisabled:
             guard isHangyeolSelected(),
-                  let fallbackSourceID,
-                  let record = safeFallbackRecord(
-                    sourceID: fallbackSourceID
-                  ) else {
+                  fallbackSourceID != nil else {
                 return InstallerPhaseExit.failed
             }
-            let disabled = !record.candidate.isEnabled
+            let disabled = !isEnabledKeyboardLayoutPresent(
+                matching: fallbackSourceID!
+            )
             print(
                 "installer: verify-temporary-fallback-disabled ready=\(disabled)"
             )
@@ -342,7 +344,7 @@ public final class InputSourceManager: @unchecked Sendable {
             ) == .mode
     }
 
-    private func safeFallbackRecord(
+    private func fallbackRecord(
         sourceID: String
     ) -> InputSourceInstallationRecord? {
         let filter = [
@@ -362,6 +364,57 @@ public final class InputSourceManager: @unchecked Sendable {
             identity: Self.installerIdentity
         )
         return safe.count == 1 ? records[0] : nil
+    }
+
+    private func isEnabledKeyboardLayoutPresent(matching sourceID: String) -> Bool {
+        enabledKeyboardLayouts().contains { Self.keyboardLayout($0, matches: sourceID) }
+    }
+
+    @discardableResult
+    private func removeEnabledKeyboardLayout(matching sourceID: String) -> Bool {
+        guard let defaults = UserDefaults(suiteName: "com.apple.HIToolbox") else {
+            return false
+        }
+        let original = defaults.array(forKey: "AppleEnabledInputSources") as? [[String: Any]] ?? []
+        let filtered = Self.removingKeyboardLayout(original, matching: sourceID)
+        guard !Self.inputSourcesEqual(filtered, original) else {
+            return true
+        }
+        defaults.set(filtered, forKey: "AppleEnabledInputSources")
+        defaults.synchronize()
+        CFPreferencesAppSynchronize("com.apple.HIToolbox" as CFString)
+        return true
+    }
+
+    private func enabledKeyboardLayouts() -> [[String: Any]] {
+        UserDefaults(suiteName: "com.apple.HIToolbox")?
+            .array(forKey: "AppleEnabledInputSources") as? [[String: Any]] ?? []
+    }
+
+    internal static func removingKeyboardLayout(
+        _ sources: [[String: Any]],
+        matching sourceID: String
+    ) -> [[String: Any]] {
+        sources.filter { !keyboardLayout($0, matches: sourceID) }
+    }
+
+    internal static func keyboardLayout(
+        _ source: [String: Any],
+        matches sourceID: String
+    ) -> Bool {
+        if (source["InputSourceKind"] as? String) != "Keyboard Layout" {
+            return false
+        }
+        if sourceID == "com.apple.keylayout.ABC" {
+            let layoutID = source["KeyboardLayout ID"] as? Int
+                ?? (source["KeyboardLayout ID"] as? NSNumber)?.intValue
+            return (source["KeyboardLayout Name"] as? String) == "ABC"
+                || layoutID == abcKeyboardLayoutID
+        }
+        if let layoutName = sourceID.split(separator: ".").last {
+            return (source["KeyboardLayout Name"] as? String) == String(layoutName)
+        }
+        return false
     }
 
     private func hangyeolInstallationRecords(

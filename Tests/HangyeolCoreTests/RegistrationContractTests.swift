@@ -81,8 +81,8 @@ struct RegistrationContractTests {
         #expect(info["InputMethodConnectionName"] as? String == ProductIdentity.connectionName)
         #expect(info["InputMethodServerControllerClass"] as? String == "HangyeolInputController")
         #expect(info["CFBundleName"] as? String == ProductIdentity.systemName)
-        #expect(info["CFBundleShortVersionString"] as? String == "3.0.10")
-        #expect(info["CFBundleVersion"] as? String == "93")
+        #expect(info["CFBundleShortVersionString"] as? String == "3.0.11")
+        #expect(info["CFBundleVersion"] as? String == "94")
         let repertoire = info["tsInputMethodCharacterRepertoireKey"] as? [String]
         #expect(repertoire == ["Hang"], "single-mode registration must declare Hang only")
     }

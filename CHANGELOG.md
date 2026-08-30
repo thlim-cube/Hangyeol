@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.11] - 2026-08-31
+
+### Fixed
+- ABC를 꺼 둔 설치에서 임시 fallback 복원이 TIS 비활성만 확인하고 끝나, 사용자 목록의 ABC와 설치 복구가 남던 문제를 수정했습니다. 한결이 선택된 뒤 설정 창의 `ABC 끄기`와 같이 HIToolbox enabled 목록에서 ABC를 제거한 다음에만 복구를 완료합니다.
+
 ## [3.0.10] - 2026-08-30
 
 ### Fixed

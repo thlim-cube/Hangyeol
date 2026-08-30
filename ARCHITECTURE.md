@@ -306,7 +306,7 @@ activation repair (console user, PackageKit 밖)
   ├─ enable-parent → 별도 process verify-parent
   ├─ enable-mode → 별도 process verify-mode
   ├─ 필요할 때 select-mode → 별도 process verify-selected
-  ├─ 임시 fallback이 있으면 disable → 별도 process disabled 검증
+  ├─ 임시 ABC fallback이 있으면 TIS disable 후 HIToolbox enabled 목록에서 제거 → 별도 process disabled 검증
   ├─ 성공: snapshot·marker·LaunchAgent 정리
   └─ 실패: marker·LaunchAgent 유지, 다음 로그인에서 재시도
 ```

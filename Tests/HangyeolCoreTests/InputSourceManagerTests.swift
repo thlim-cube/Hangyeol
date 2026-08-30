@@ -168,6 +168,43 @@ struct InputSourceManagerTests {
         #expect(plan.result.didChange)
     }
 
+    @Test("Temporary ABC fallback is gone only after HIToolbox enabled list drops it")
+    func temporaryABCFallbackUsesEnabledListNotTISCache() {
+        let abc: [String: Any] = [
+            "InputSourceKind": "Keyboard Layout",
+            "KeyboardLayout ID": 252,
+            "KeyboardLayout Name": "ABC"
+        ]
+        let hangyeol: [String: Any] = [
+            "Bundle ID": "com.thlim.inputmethod.Hangyeol",
+            "InputSourceKind": "Input Mode",
+            "Input Mode": "com.thlim.inputmethod.Hangyeol"
+        ]
+        let korean: [String: Any] = [
+            "Bundle ID": "com.apple.inputmethod.Korean",
+            "Input Mode": "com.apple.inputmethod.Korean.2SetKorean",
+            "InputSourceKind": "Input Mode"
+        ]
+
+        #expect(InputSourceManager.keyboardLayout(abc, matches: "com.apple.keylayout.ABC"))
+        #expect(!InputSourceManager.keyboardLayout(hangyeol, matches: "com.apple.keylayout.ABC"))
+        #expect(!InputSourceManager.keyboardLayout(korean, matches: "com.apple.keylayout.ABC"))
+        let removed = InputSourceManager.removingKeyboardLayout(
+            [abc, hangyeol, korean],
+            matching: "com.apple.keylayout.ABC"
+        )
+        #expect(removed.count == 2)
+        #expect(removed.contains { ($0["Bundle ID"] as? String) == "com.thlim.inputmethod.Hangyeol" })
+        #expect(removed.contains { ($0["Bundle ID"] as? String) == "com.apple.inputmethod.Korean" })
+        #expect(!removed.contains { ($0["KeyboardLayout Name"] as? String) == "ABC" })
+        let alreadyRemoved = InputSourceManager.removingKeyboardLayout(
+            [hangyeol, korean],
+            matching: "com.apple.keylayout.ABC"
+        )
+        #expect(alreadyRemoved.count == 2)
+        #expect(!alreadyRemoved.contains { ($0["KeyboardLayout Name"] as? String) == "ABC" })
+    }
+
     @Test("Authoritative status requires both registered candidates to be enabled")
     func authoritativeStatusRequiresCompleteActivation() {
         let ready = InputSourceInstallationStatus(
