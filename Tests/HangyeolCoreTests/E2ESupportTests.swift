@@ -89,6 +89,11 @@ struct E2ESupportTests {
         #expect(fields["Authority"] == "Apple Development: TaeHyeon Lim (9FRJXJNGZK)")
     }
 
+    @Test("Running-code validation uses Security dynamic validity")
+    func runningCodeDynamicValidity() throws {
+        try ArtifactInspector.validateRunningCode(pid: getpid())
+    }
+
     @Test("Artifact comparison ignores extraction paths and reports identity drift")
     func artifactComparison() {
         let installed = identity(path: "/Library/Input Methods/Hangyeol.app")

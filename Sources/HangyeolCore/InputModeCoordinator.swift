@@ -84,6 +84,7 @@ public final class InputModeCoordinator: @unchecked Sendable {
 
     private var ownershipTracker = InputModeOwnershipTracker()
     private var ownershipObserverTokens: [NSObjectProtocol] = []
+    private var isReconcilingToggle = false
     private let pendingToggleQueue: PendingInputModeToggleQueue
     private let activeControllerProvider: () -> HangyeolInputController?
     private let capsLockOwnershipProvider: () -> Bool
@@ -192,6 +193,9 @@ public final class InputModeCoordinator: @unchecked Sendable {
         perform: (ToggleSource, ToggleLatencyTrace) -> Bool
     ) -> Bool {
         assert(Thread.isMainThread, "Custom mode toggles must be reconciled on the main thread")
+        guard !isReconcilingToggle else { return false }
+        isReconcilingToggle = true
+        defer { isReconcilingToggle = false }
         var appliedAny = false
 
         while let pending = pendingToggleQueue.firstForMainProcessing() {

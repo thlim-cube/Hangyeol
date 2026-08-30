@@ -371,6 +371,62 @@ struct InputModeOwnershipTests {
         })
     }
 
+    @Test("A reentrant activation cannot apply the same toggle twice")
+    @MainActor
+    func reentrantActivationConsumesToggleExactlyOnce() {
+        let coordinator = InputModeCoordinator(
+            activeControllerProvider: { nil },
+            capsLockOwnershipProvider: { false }
+        )
+        coordinator.requestToggle(source: .customKey)
+
+        var outerApplyCount = 0
+        var reentrantApplyCount = 0
+        var reentrantResult: Bool?
+        let outerResult = coordinator.reconcilePendingToggleIfNeeded { _, _ in
+            reentrantResult = coordinator.reconcilePendingToggleIfNeeded { _, _ in
+                reentrantApplyCount += 1
+                return true
+            }
+            outerApplyCount += 1
+            return true
+        }
+
+        #expect(outerResult)
+        #expect(reentrantResult == false)
+        #expect(outerApplyCount == 1)
+        #expect(reentrantApplyCount == 0)
+        #expect(!coordinator.reconcilePendingToggleIfNeeded { _, _ in
+            Issue.record("The completed toggle must not be visible after reentry")
+            return true
+        })
+    }
+
+    @Test("A deferred toggle is retried exactly once at the next boundary")
+    @MainActor
+    func failedToggleTransactionRemainsQueued() {
+        let coordinator = InputModeCoordinator(
+            activeControllerProvider: { nil },
+            capsLockOwnershipProvider: { false }
+        )
+        coordinator.requestToggle(source: .customKey)
+
+        var applyCount = 0
+        #expect(!coordinator.reconcilePendingToggleIfNeeded { _, _ in
+            applyCount += 1
+            return false
+        })
+        #expect(coordinator.reconcilePendingToggleIfNeeded { _, _ in
+            applyCount += 1
+            return true
+        })
+        #expect(applyCount == 2)
+        #expect(!coordinator.reconcilePendingToggleIfNeeded { _, _ in
+            Issue.record("The successful retry must consume the toggle")
+            return true
+        })
+    }
+
     @Test("A toggle survives field handoff and applies before the first keyDown")
     @MainActor
     func toggleSurvivesFieldHandoffBeforeFirstKeyDown() {

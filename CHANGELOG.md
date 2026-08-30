@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.13] - 2026-08-31
+
+### Fixed
+- Chrome에서 Tab으로 필드를 옮긴 직후 연속된 same-client activation이 두 번 발생하면 첫 자모가 유실되던 문제를 수정했습니다. 각 activation은 계속 분석을 무효화하되, 한 입력 경계에서 최대 3회 안에 얻은 첫 안정된 필드 분석만 허용하고 계속 바뀌면 쓰기를 차단합니다.
+- 새 창 활성화가 전환 적용 중 재진입해 같은 전환 의도를 두 번 적용하던 문제를 수정했습니다. 메인 스레드의 한 전환 트랜잭션이 끝날 때까지 중첩 적용을 차단하고, 실패한 전환은 다음 안전한 입력 경계까지 유지합니다.
+- macOS 26에서 실행 중인 IMK 서버가 유효해도 `codesign --verify +PID`가 `Invalid argument`로 실패하던 E2E 사전 검사를 Security.framework의 동적 코드 검증 API로 교체했습니다.
+
 ## [3.0.12] - 2026-08-31
 
 ### Fixed

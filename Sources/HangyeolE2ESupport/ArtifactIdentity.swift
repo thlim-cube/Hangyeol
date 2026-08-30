@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import HangyeolCore
 
 public struct AppArtifactIdentity: Equatable, Sendable, CustomStringConvertible {
@@ -47,6 +48,7 @@ public enum ArtifactInspectionError: LocalizedError {
     case malformedInfoPlist(String)
     case missingInfoKey(String, String)
     case commandFailed(String, Int32, String)
+    case dynamicCodeInvalid(pid_t, OSStatus)
     case packagedAppMissing(String)
     case unexpectedProduct(String)
 
@@ -62,6 +64,8 @@ public enum ArtifactInspectionError: LocalizedError {
             "Info.plist의 \(key) 값이 없습니다: \(path)"
         case let .commandFailed(command, status, output):
             "명령 실패(\(status)): \(command)\n\(output)"
+        case let .dynamicCodeInvalid(pid, status):
+            "실행 중인 코드의 동적 서명이 유효하지 않습니다: pid=\(pid), status=\(status)"
         case let .packagedAppMissing(path):
             "PKG payload에서 Hangyeol.app을 찾을 수 없습니다: \(path)"
         case let .unexpectedProduct(details):
@@ -165,10 +169,7 @@ public enum ArtifactInspector {
     /// bundle path alone is insufficient after an atomic package update because a
     /// live IMK server can continue executing the unlinked previous binary.
     public static func inspectRunningProcess(pid: pid_t) throws -> RunningArtifactIdentity {
-        _ = try run(
-            executable: "/usr/bin/codesign",
-            arguments: ["--verify", "--strict", "--verbose=2", "+\(pid)"]
-        )
+        try validateRunningCode(pid: pid)
         let signature = try run(
             executable: "/usr/bin/codesign",
             arguments: ["-dv", "--verbose=4", "+\(pid)"]
@@ -193,6 +194,34 @@ public enum ArtifactInspector {
             teamIdentifier: fields["TeamIdentifier"] ?? "",
             signingAuthority: fields["Authority"] ?? ""
         )
+    }
+
+    /// `codesign --verify +PID` can print `dynamically valid` and still exit 1
+    /// with `Invalid argument` on macOS 26. Validate the live code object through
+    /// Security.framework, whose dynamic-code API is the source of truth.
+    static func validateRunningCode(pid: pid_t) throws {
+        let attributes = [
+            kSecGuestAttributePid: NSNumber(value: pid)
+        ] as CFDictionary
+        var runningCode: SecCode?
+        let lookupStatus = SecCodeCopyGuestWithAttributes(
+            nil,
+            attributes,
+            SecCSFlags(),
+            &runningCode
+        )
+        guard lookupStatus == errSecSuccess, let runningCode else {
+            throw ArtifactInspectionError.dynamicCodeInvalid(pid, lookupStatus)
+        }
+
+        let validityStatus = SecCodeCheckValidity(
+            runningCode,
+            SecCSFlags(),
+            nil
+        )
+        guard validityStatus == errSecSuccess else {
+            throw ArtifactInspectionError.dynamicCodeInvalid(pid, validityStatus)
+        }
     }
 
     public static func compare(

@@ -936,9 +936,9 @@ struct InputSessionFinalizeTests {
         }
     }
 
-    @Test("Tab handoff 분석 중 activation은 오래된 분석을 폐기하고 첫 keyDown에서 재분석한다")
-    func tabActivationDuringFieldAnalysisRetriesOnce() {
-        let (session, _, client) = makeMarkedSession()
+    @Test("Tab handoff 분석 중 연속 activation 뒤 안정된 분석으로 첫 음절을 유지한다")
+    func tabActivationDuringFieldAnalysisUsesBoundedRetry() {
+        let (session, composer, client) = makeMarkedSession()
         session.observeHostFieldBoundaryKeyDown(
             keyCode: KeyCode.tab,
             passedToHost: true
@@ -947,16 +947,46 @@ struct InputSessionFinalizeTests {
 
         #expect(session.refreshContextForInputBoundary { _ in
             analysisCount += 1
-            if analysisCount == 1 {
+            if analysisCount <= 2 {
                 session.markContextStaleForSameClientReactivation()
             }
             return self.context(bundleId: client.bundleID, documentAccessSafe: true)
         })
 
-        #expect(analysisCount == 2)
+        #expect(analysisCount == 3)
         #expect(!session.contextNeedsRefresh)
         _ = session.prepareForNonSecureClientWrites()
         #expect(session.captureContextStateLease() != nil)
+
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: session.adapter
+        )
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "P", keyCode: 35)!,
+            delegate: session.adapter
+        )
+        #expect(client.markedText == "계")
+    }
+
+    @Test("Tab handoff 분석이 계속 바뀌면 제한 소진 후 쓰기를 허용하지 않는다")
+    func tabActivationDuringEveryFieldAnalysisFailsClosed() {
+        let (session, _, client) = makeMarkedSession()
+        session.observeHostFieldBoundaryKeyDown(
+            keyCode: KeyCode.tab,
+            passedToHost: true
+        )
+        var analysisCount = 0
+
+        #expect(!session.refreshContextForInputBoundary { _ in
+            analysisCount += 1
+            session.markContextStaleForSameClientReactivation()
+            return self.context(bundleId: client.bundleID, documentAccessSafe: true)
+        })
+
+        #expect(analysisCount == 3)
+        #expect(session.contextNeedsRefresh)
+        #expect(session.captureContextStateLease() == nil)
     }
 
     @Test("Stale activation layout refresh does not write")

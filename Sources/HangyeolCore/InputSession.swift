@@ -45,6 +45,11 @@ enum CompositionFinalizeReason: String {
 /// in-progress composition against this client. Ordinary key handling may commit
 /// through `HangulComposer`; lifecycle callers use this idempotent, host-agnostic path.
 final class InputSession: @unchecked Sendable {
+    /// Chrome emitted two consecutive same-client activations during one observed
+    /// Tab handoff analysis. One additional attempt lets the first stable snapshot
+    /// win while a continuously changing field still remains fail-closed.
+    private static let maxContextRefreshAttemptsPerInputBoundary = 3
+
     struct FocusLossActivation: Equatable {
         fileprivate let generation: UInt64
     }
@@ -355,18 +360,18 @@ final class InputSession: @unchecked Sendable {
     func refreshContextForInputBoundary(
         using analyze: (IMKTextInput) -> ClientContext
     ) -> Bool {
-        if refreshContextIfNeeded(using: analyze) {
-            armFocusLossFinalizer()
-            return true
-        }
-        // A same-client activation can synchronously re-enter while the first full
-        // field analysis calls IMK client APIs. Retry once in the same keyDown so the
-        // first physical key is not dropped; repeated churn still leaves the session
-        // stale and therefore unable to write.
-        if contextNeedsRefresh,
-           refreshContextIfNeeded(using: analyze) {
-            armFocusLossFinalizer()
-            return true
+        if contextNeedsRefresh {
+            // A same-client activation can synchronously re-enter while full field
+            // analysis calls IMK client APIs. Keep every activation as a revision
+            // invalidation, but accept the first complete stable snapshot within the
+            // observed bound. Exhaustion leaves the session stale and unable to write.
+            for _ in 0..<Self.maxContextRefreshAttemptsPerInputBoundary {
+                if refreshContextIfNeeded(using: analyze) {
+                    armFocusLossFinalizer()
+                    return true
+                }
+                guard contextNeedsRefresh else { break }
+            }
         }
         guard context.isLightweight, context.isFinder else { return false }
         let revision = contextStateRevision

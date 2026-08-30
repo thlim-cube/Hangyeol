@@ -245,8 +245,8 @@ struct PostInstallPreparationTests {
             shouldSelect: false,
             temporaryFallbackSourceID: "com.apple.keylayout.ABC",
             executableURL: executable,
-            version: "3.0.12",
-            build: "95",
+            version: "3.0.13",
+            build: "96",
             homeDirectory: home
         ))
 
@@ -255,8 +255,8 @@ struct PostInstallPreparationTests {
             shouldSelect: true,
             temporaryFallbackSourceID: "com.apple.keylayout.ABC",
             executableURL: executable,
-            version: "3.0.12",
-            build: "95",
+            version: "3.0.13",
+            build: "96",
             homeDirectory: home
         ))
 
@@ -285,7 +285,7 @@ struct PostInstallPreparationTests {
             request.temporaryFallbackSourceID
                 == "com.apple.keylayout.ABC"
         )
-        #expect(request.version == "3.0.12")
+        #expect(request.version == "3.0.13")
         #expect(agentValues["RunAtLoad"] as? Bool == true)
         #expect(agentValues["KeepAlive"] == nil)
         #expect((agentValues["ProgramArguments"] as? [String]) == [
