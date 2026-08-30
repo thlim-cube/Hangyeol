@@ -266,7 +266,7 @@ HostSurfaceResolver        capability 우선 surface 분류
 | **UpdateNotifier** | `UNUserNotificationCenter`를 사용해 업데이트 알림을 표시한다. 알림 클릭 시 릴리즈 페이지를 연다. |
 | **InputModeCoordinator** | 한/영 전환 조율 계층. custom 전환키 요청과 macOS 소유권 경계를 추적하되 mode를 직접 쓰지 않는다. 소유권 정합화는 pending으로 보관했다가 Secure Input 검사를 통과한 controller의 단일 전환 트랜잭션으로 넘긴다. |
 | **InputSourceManager** | TIS(Text Input Source) API를 사용해 시스템 입력 소스 목록 조회, 설치 전용 등록·활성화, stale entry 정리를 담당한다. custom 한/영 전환 hot path에는 참여하지 않는다. |
-| **PostInstallPreparation** | 사용자별 activation marker·LaunchAgent와 세대 lock을 관리한다. 각 TIS action과 verifier를 별도 프로세스로 실행하며, 성공한 세대만 marker와 설치 snapshot을 정리한다. 일반 앱 실행과 분리되어 IMK 서버나 키 감시기를 시작하지 않는다. |
+| **PostInstallPreparation** | 사용자별 activation marker·LaunchAgent와 세대 lock을 관리한다. 각 TIS action과 verifier를 별도 프로세스로 실행하며, 성공한 세대만 marker와 설치 snapshot을 정리한다. 현재 세션 적용은 PackageKit이 한결 IMK를 `open`한 뒤 그 서버가 마커를 소비하는 경로이고, LaunchAgent는 다음 로그인 재시도다. |
 | **CompositionHelpers** | libhangul의 `[UInt32]`(UCSChar) 배열을 Swift `String`으로 변환하고 NFC 정규화(`precomposedStringWithCanonicalMapping`)를 수행하는 유틸리티. |
 | **DebugLogger** | 입력 파이프라인은 DEBUG 전용 `event` API를 사용한다. 이벤트명·필드명·상태값은 `StaticString`이고 값은 bool/count/duration/opaque trace/status code로 제한되어 타이핑 문자, preedit, 문서 내용, bundle ID를 전달할 수 없다. Release에서는 metadata 평가까지 생략되는 no-op이다. |
 | **ToggleLatencyTrace** | DEBUG에서만 물리 전환 요청부터 main 실행·finalize·layout override·mode write·첫 handle까지 monotonic 지연을 구조화해 기록한다. Release에는 clock read, 할당, 로그, 보존 상태가 없다. |
@@ -296,9 +296,11 @@ postinstall (root)
   ├─ 설치된 bundle ID·코드 서명 검증
   ├─ 설치 전 snapshot과 새 Info.plist로 installation kind 분류
   ├─ 사용자별 generation marker와 RunAtLoad LaunchAgent 생성
-  └─ LaunchAgent bootstrap 후 즉시 종료
+  ├─ 한결 소유 프로세스만 종료한 뒤 교체된 앱을 현재 Aqua 세션에서 `open`
+  └─ `open` 실패 시에만 LaunchAgent bootstrap, 성공 시 즉시 종료
 
 activation repair (console user, PackageKit 밖)
+  ├─ 현재 세션 IMK DidFinishLaunching 또는 다음 로그인 LaunchAgent
   ├─ generation/version/build와 단독 실행 lock 확인
   ├─ register → 별도 process verify-installed
   ├─ enable-parent → 별도 process verify-parent
@@ -311,7 +313,7 @@ activation repair (console user, PackageKit 밖)
 
 동일 등록 구조는 bundle ID, `InputMethodConnectionName`, `plutil`로 직렬화한 `ComponentInputModeDict`가 모두 일치해야 성립한다. 값이 누락되거나 하나라도 바뀌면 보수적으로 등록 변경으로 분류한다. 설치 종류와 관계없이 정확히 하나의 Hangyeol parent와 한글 mode가 installed·enabled roster에서 확인되어야 성공한다. 최초 설치 또는 설치 전에 한결이 실제 선택돼 있던 업데이트만 마지막 선택 단계까지 실행한다. 사용자가 ABC나 다른 입력 소스를 쓰고 있었다면 해당 선택을 유지한다.
 
-각 action 직후 verifier는 반드시 새 프로세스에서 TIS를 다시 읽는다. action을 호출한 프로세스의 로컬 캐시는 성공 근거가 될 수 없다. 한 경계가 끝나지 않으면 이후 enable·select를 실행하지 않으며, marker를 남겨 다음 로그인에 같은 generation을 다시 시도한다. 이 흐름은 `forceTerminate`나 macOS 입력 관련 agent 재시작 없이 새 실행 파일을 현재 세션에 적용하려는 보수적 복구다. 손쉬운 사용 권한(TCC)은 여전히 사용자 승인 경계이므로 현재 한결 identity의 권한을 설치기가 대신 허용하거나 초기화하지 않는다. ABC와 다른 입력 소스도 자동 삭제하지 않으며, 설정의 명시적 `ABC 끄기` 동작만 사용자가 요청했을 때 실행한다.
+각 action 직후 verifier는 반드시 새 프로세스에서 TIS를 다시 읽는다. action을 호출한 프로세스의 로컬 캐시는 성공 근거가 될 수 없다. 한 경계가 끝나지 않으면 이후 enable·select를 실행하지 않으며, marker를 남겨 다음 로그인에 같은 generation을 다시 시도한다. 이 흐름은 macOS 입력 관련 agent를 재시작하지 않고, 한결 IMK만 현재 세션에서 다시 띄워 새 실행 파일을 적용한다. `open`이 실패하면 marker와 LaunchAgent를 남겨 다음 로그인에 같은 generation을 다시 시도한다. 손쉬운 사용 권한(TCC)은 여전히 사용자 승인 경계이므로 현재 한결 identity의 권한을 설치기가 대신 허용하거나 초기화하지 않는다. ABC와 다른 입력 소스도 자동 삭제하지 않으며, 설정의 명시적 `ABC 끄기` 동작만 사용자가 요청했을 때 실행한다.
 
 ## 의존 라이브러리
 

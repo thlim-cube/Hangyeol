@@ -232,6 +232,14 @@ public enum PostInstallPreparation {
         }
     }
 
+    public static func hasPendingActivation(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> Bool {
+        FileManager.default.fileExists(
+            atPath: activationPaths(homeDirectory: homeDirectory).marker.path
+        )
+    }
+
     public static func repairPendingActivation(
         executableURL: URL,
         version: String,

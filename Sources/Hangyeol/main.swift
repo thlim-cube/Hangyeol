@@ -165,23 +165,48 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     }
 
     private func schedulePendingInputSourceRepair() {
-        guard let pendingInstallerRepair else { return }
+        let pending: PendingInstallerRepair?
+        if let pendingInstallerRepair {
+            pending = pendingInstallerRepair
+        } else if PostInstallPreparation.hasPendingActivation() {
+            pending = Self.currentInstallerIdentity()
+        } else {
+            pending = nil
+        }
+        guard let pending else { return }
 
-        // Let applicationDidFinishLaunching return to the Aqua run loop before
-        // any TIS write. The persistent IMK server must exist while the separate
-        // action and verifier processes converge the current login session.
+        // Ordinary launches consume a matching marker if PackageKit started the
+        // replacement IMK with `open`. `--repair-pending-input-source` still
+        // owns the next-login retry. Do not look at the LaunchAgent plist
+        // alone: that file is written before the marker.
         DispatchQueue.main.async {
             DispatchQueue.global(qos: .userInitiated).async {
                 let repaired = PostInstallPreparation.repairPendingActivation(
-                    executableURL: pendingInstallerRepair.executableURL,
-                    version: pendingInstallerRepair.version,
-                    build: pendingInstallerRepair.build
+                    executableURL: pending.executableURL,
+                    version: pending.version,
+                    build: pending.build
                 )
                 DebugLogger.log(
                     "Post-install input-source repair completed = \(repaired)"
                 )
             }
         }
+    }
+
+    private static func currentInstallerIdentity() -> PendingInstallerRepair? {
+        guard let executableURL = Bundle.main.executableURL else { return nil }
+        let version = Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleShortVersionString"
+        ) as? String ?? ""
+        let build = Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleVersion"
+        ) as? String ?? ""
+        guard !version.isEmpty, !build.isEmpty else { return nil }
+        return PendingInstallerRepair(
+            executableURL: executableURL,
+            version: version,
+            build: build
+        )
     }
     
     private func setupIOKit() {

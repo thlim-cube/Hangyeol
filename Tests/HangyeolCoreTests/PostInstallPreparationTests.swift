@@ -245,8 +245,8 @@ struct PostInstallPreparationTests {
             shouldSelect: false,
             temporaryFallbackSourceID: "com.apple.keylayout.ABC",
             executableURL: executable,
-            version: "3.0.9",
-            build: "92",
+            version: "3.0.10",
+            build: "93",
             homeDirectory: home
         ))
 
@@ -255,8 +255,8 @@ struct PostInstallPreparationTests {
             shouldSelect: true,
             temporaryFallbackSourceID: "com.apple.keylayout.ABC",
             executableURL: executable,
-            version: "3.0.9",
-            build: "92",
+            version: "3.0.10",
+            build: "93",
             homeDirectory: home
         ))
 
@@ -285,13 +285,23 @@ struct PostInstallPreparationTests {
             request.temporaryFallbackSourceID
                 == "com.apple.keylayout.ABC"
         )
-        #expect(request.version == "3.0.9")
+        #expect(request.version == "3.0.10")
         #expect(agentValues["RunAtLoad"] as? Bool == true)
         #expect(agentValues["KeepAlive"] == nil)
         #expect((agentValues["ProgramArguments"] as? [String]) == [
             executable.path,
             PostInstallPreparation.repairPendingArgument
         ])
+        #expect(PostInstallPreparation.hasPendingActivation(homeDirectory: home))
+    }
+
+    @Test("Ordinary launches ignore a missing activation marker")
+    func ordinaryLaunchIgnoresMissingActivationMarker() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HangyeolActivationMissing.\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        #expect(!PostInstallPreparation.hasPendingActivation(homeDirectory: home))
     }
 }
 
@@ -465,6 +475,12 @@ struct InstallerSessionContractTests {
         let scheduleRange = try #require(
             source.range(of: "--schedule-input-source-repair")
         )
+        let terminateRange = try #require(
+            source.range(of: "pkill -TERM -x -u \"$USER_ID\"")
+        )
+        let openRange = try #require(
+            source.range(of: "run_as_console_user /usr/bin/open \"$APP_PATH\"")
+        )
         let bootoutRange = try #require(
             source.range(of: "launchctl bootout")
         )
@@ -486,12 +502,14 @@ struct InstallerSessionContractTests {
         #expect(source.contains("registration-change)"))
         #expect(validationRange.lowerBound < classificationRange.lowerBound)
         #expect(classificationRange.lowerBound < scheduleRange.lowerBound)
-        #expect(scheduleRange.lowerBound < bootoutRange.lowerBound)
+        #expect(source.contains("for process_name in Hangyeol PriType PriTypeV2"))
+        #expect(scheduleRange.lowerBound < terminateRange.lowerBound)
+        #expect(terminateRange.lowerBound < openRange.lowerBound)
+        #expect(openRange.lowerBound < bootoutRange.lowerBound)
         #expect(bootoutRange.lowerBound < bootstrapRange.lowerBound)
         #expect(!source.contains("--post-install-prepare"))
         #expect(!source.contains("--installer-register"))
         #expect(!source.contains("open -W"))
-        #expect(!source.contains("pkill"))
         #expect(!source.contains("lsregister"))
         #expect(!source.contains("kickstart -k"))
         #expect(!source.contains("TextInputMenuAgent"))
@@ -604,6 +622,8 @@ struct InstallerSessionContractTests {
         #expect(serverRange.lowerBound < scheduledRepairRange.lowerBound)
         #expect(scheduledRepairRange.lowerBound < repairRange.lowerBound)
         #expect(source.contains("pendingInstallerRepair = PendingInstallerRepair("))
+        #expect(source.contains("PostInstallPreparation.hasPendingActivation()"))
+        #expect(source.contains("pending = Self.currentInstallerIdentity()"))
         #expect(source.contains("DispatchQueue.global(qos: .userInitiated).async"))
         #expect(!source.contains(
             "guard PostInstallPreparation.repairPendingActivation("

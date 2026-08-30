@@ -145,8 +145,9 @@ fi
 
 # The installed executable writes a generation-tagged marker and a per-user
 # LaunchAgent. PackageKit only schedules it; each TIS action and its verifier
-# execute later in separate processes owned by the GUI user after the agent has
-# started the persistent IMK runtime for the current login session.
+# execute later in separate processes owned by the GUI user after the current
+# login session has a persistent IMK runtime. The 2.8.18 contract starts that
+# runtime with `open`; the LaunchAgent is only a next-login retry.
 if ! run_as_console_user "$EXECUTABLE" \
     --schedule-input-source-repair \
     "$INSTALLATION_KIND" \
@@ -164,9 +165,20 @@ if [ ! -f "$ACTIVATION_AGENT" ]; then
     exit 0
 fi
 
-# Replace only Hangyeol's prior repair job. No Apple text-input process or
-# unrelated application is restarted. bootstrap returns after submission; the
-# potentially slow TIS convergence remains outside PackageKit.
+# Same-session apply follows the 2.8.18 contract: stop only this product's
+# auto-relaunched IMK, then `open` the replacement so DidFinishLaunching can
+# consume the marker. Do not bootstrap the repair agent now; a second Hangyeol
+# process would race the Aqua connection. The LaunchAgent remains a next-login
+# retry if this session cannot start the app.
+for process_name in Hangyeol PriType PriTypeV2; do
+    /usr/bin/pkill -TERM -x -u "$USER_ID" "$process_name" \
+        2>/dev/null || true
+done
+if run_as_console_user /usr/bin/open "$APP_PATH"; then
+    exit 0
+fi
+
+echo "Hangyeol could not start in the current login session." >&2
 /bin/launchctl bootout "gui/$USER_ID/$ACTIVATION_LABEL" \
     >/dev/null 2>&1 || true
 if ! /bin/launchctl bootstrap "gui/$USER_ID" "$ACTIVATION_AGENT"; then

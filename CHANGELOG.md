@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.10] - 2026-08-30
+
+### Fixed
+- 설치 직후 같은 로그인 세션에서 한결 IMK를 다시 띄우지 않고 LaunchAgent bootstrap에만 맡겨, 설정 창과 입력 소스가 다음 로그인까지 비던 문제를 수정했습니다. 2.8.18과 같이 PackageKit이 교체한 앱을 `open`으로 기동하고, TIS 복구는 그 IMK 서버가 마커를 소비한 뒤에 수행합니다. LaunchAgent는 `open` 실패 시 다음 로그인 재시도로만 남습니다.
+
 ## [3.0.9] - 2026-08-28
 
 ### Fixed
