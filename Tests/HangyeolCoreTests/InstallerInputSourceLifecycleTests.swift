@@ -117,16 +117,17 @@ struct InstallerInputSourceLifecycleTests {
             .verifyMode,
             .verifySelected
         ])
-        #expect(InputSourceLifecycleRules.activationBoundaries(
+        #expect(InputSourceLifecycleRules.temporaryFallbackBoundary(
             shouldSelect: true,
             hasTemporaryFallback: true
-        ).suffix(2).map(\.verify) == [
-            .verifySelected,
-            .verifyTemporaryFallbackDisabled
-        ])
-        #expect(!InputSourceLifecycleRules.activationBoundaries(
+        )?.verify == .verifyTemporaryFallbackDisabled)
+        #expect(InputSourceLifecycleRules.temporaryFallbackBoundary(
             shouldSelect: false,
             hasTemporaryFallback: true
-        ).contains { $0.action == .disableTemporaryFallback })
+        ) == nil)
+        #expect(InputSourceLifecycleRules.temporaryFallbackBoundary(
+            shouldSelect: true,
+            hasTemporaryFallback: false
+        ) == nil)
     }
 }

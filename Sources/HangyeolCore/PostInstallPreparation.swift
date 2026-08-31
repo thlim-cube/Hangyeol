@@ -60,16 +60,25 @@ public enum PostInstallPreparation {
 
     private static let activationRetryDelays: [TimeInterval] = [
         0,
-        0.2,
         0.5,
         1,
+        2,
+        2,
+        2,
+        2,
         2
     ]
+    private static let requiredStableActivationPasses = 5
+    private static let fallbackRetirementPhaseTimeout: DispatchTimeInterval =
+        .seconds(1)
 
     private struct ActivationPaths {
         let supportDirectory: URL
         let marker: URL
-        let lock: URL
+        // Keep long TIS work separate so publishing a newer generation never
+        // waits behind verifier retries or process timeouts.
+        let repairLock: URL
+        let generationLock: URL
         let agent: URL
         let logDirectory: URL
         let log: URL
@@ -220,12 +229,17 @@ public enum PostInstallPreparation {
                 executableURL: executableURL,
                 logURL: paths.log
             )
-            try writeAtomically(agentData, to: paths.agent)
-            try writeAtomically(
-                PropertyListEncoder().encode(request),
-                to: paths.marker
-            )
-            return true
+            return try withActivationLock(
+                at: paths.generationLock,
+                operation: F_LOCK
+            ) {
+                try writeAtomically(agentData, to: paths.agent)
+                try writeAtomically(
+                    PropertyListEncoder().encode(request),
+                    to: paths.marker
+                )
+                return true
+            }
         } catch {
             fputs("installer: failed to schedule activation repair: \(error)\n", stderr)
             return false
@@ -250,84 +264,216 @@ public enum PostInstallPreparation {
         let paths = activationPaths(homeDirectory: homeDirectory)
         do {
             try ensureDirectory(paths.supportDirectory)
-            let lockDescriptor = Darwin.open(
-                paths.lock.path,
-                O_CREAT | O_RDWR,
-                S_IRUSR | S_IWUSR
-            )
-            guard lockDescriptor >= 0 else {
-                throw PreparationError.lockUnavailable
-            }
-            defer { Darwin.close(lockDescriptor) }
-            guard Darwin.lockf(lockDescriptor, F_TLOCK, 0) == 0 else {
-                throw PreparationError.lockUnavailable
-            }
-            defer { Darwin.lockf(lockDescriptor, F_ULOCK, 0) }
-
-            guard FileManager.default.fileExists(atPath: paths.marker.path) else {
-                _ = removeFileIfPresent(paths.agent)
-                return true
-            }
-            let requestData = try Data(contentsOf: paths.marker)
-            let request = try PropertyListDecoder().decode(
-                PendingInputSourceActivation.self,
-                from: requestData
-            )
-            guard request.version == version, request.build == build else {
-                throw PreparationError.invalidRequest
-            }
-
-            let boundaries = InputSourceLifecycleRules.activationBoundaries(
-                shouldSelect: request.shouldSelect,
-                hasTemporaryFallback:
-                    request.temporaryFallbackSourceID != nil
-            )
-            let activated = convergeActivation(
-                boundaries: boundaries,
-                attempts: activationRetryDelays.count,
-                verifyBeforeWriting:
-                    request.installationKind == .ordinaryUpdate,
-                runPhase: {
-                    runInstallerPhaseProcess(
-                        $0,
-                        temporaryFallbackSourceID:
-                            request.temporaryFallbackSourceID,
-                        executableURL: executableURL
-                    )
-                },
-                waitBeforeRetry: { attempt in
-                    let delay = activationRetryDelays[attempt]
-                    if delay > 0 {
-                        RunLoop.current.run(
-                            until: Date().addingTimeInterval(delay)
-                        )
+            return try withActivationLock(
+                at: paths.repairLock,
+                operation: F_LOCK
+            ) {
+                let request = try withActivationLock(
+                    at: paths.generationLock,
+                    operation: F_LOCK
+                ) { () -> PendingInputSourceActivation? in
+                    guard FileManager.default.fileExists(
+                        atPath: paths.marker.path
+                    ) else {
+                        _ = removeFileIfPresent(paths.agent)
+                        return nil
                     }
+                    let requestData = try Data(contentsOf: paths.marker)
+                    let pending = try PropertyListDecoder().decode(
+                        PendingInputSourceActivation.self,
+                        from: requestData
+                    )
+                    guard pending.version == version,
+                          pending.build == build else {
+                        throw PreparationError.invalidRequest
+                    }
+                    return pending
                 }
-            )
-            guard activated else { return false }
+                guard let request else { return true }
 
-            let currentData = try Data(contentsOf: paths.marker)
-            let currentRequest = try PropertyListDecoder().decode(
-                PendingInputSourceActivation.self,
-                from: currentData
-            )
-            guard currentRequest.token == request.token else {
-                print("installer: a newer activation request replaced this generation")
-                return false
+                let boundaries = InputSourceLifecycleRules.activationBoundaries(
+                    shouldSelect: request.shouldSelect
+                )
+                let fallbackBoundary = InputSourceLifecycleRules
+                    .temporaryFallbackBoundary(
+                        shouldSelect: request.shouldSelect,
+                        hasTemporaryFallback:
+                            request.temporaryFallbackSourceID != nil
+                    )
+                let activated = convergeStableActivation(
+                    boundaries: boundaries,
+                    attempts: activationRetryDelays.count,
+                    requiredStablePasses: requiredStableActivationPasses,
+                    verifyBeforeWriting:
+                        request.installationKind == .ordinaryUpdate,
+                    runPhase: {
+                        runInstallerPhaseProcess(
+                            $0,
+                            temporaryFallbackSourceID:
+                                request.temporaryFallbackSourceID,
+                            executableURL: executableURL
+                        )
+                    },
+                    waitBeforeRetry: { attempt in
+                        let delay = activationRetryDelays[attempt]
+                        if delay > 0 {
+                            RunLoop.current.run(
+                                until: Date().addingTimeInterval(delay)
+                            )
+                        }
+                    }
+                )
+                guard activated else { return false }
+
+                return try withActivationLock(
+                    at: paths.generationLock,
+                    operation: F_LOCK
+                ) {
+                    let currentData = try Data(contentsOf: paths.marker)
+                    let currentRequest = try PropertyListDecoder().decode(
+                        PendingInputSourceActivation.self,
+                        from: currentData
+                    )
+                    guard currentRequest.token == request.token else {
+                        print(
+                            "installer: a newer activation request replaced this generation"
+                        )
+                        return false
+                    }
+                    if let fallbackBoundary {
+                        guard retireTemporaryFallback(
+                            boundary: fallbackBoundary,
+                            runPhase: {
+                                runInstallerPhaseProcess(
+                                    $0,
+                                    temporaryFallbackSourceID:
+                                        request.temporaryFallbackSourceID,
+                                    executableURL: executableURL,
+                                    timeout: fallbackRetirementPhaseTimeout
+                                )
+                            }
+                        ) else {
+                            return false
+                        }
+                    }
+
+                    let retired = retireActivationRequest(
+                        removeMarker: { removeFileIfPresent(paths.marker) },
+                        removeAgent: { removeFileIfPresent(paths.agent) },
+                        clearSnapshot: {
+                            clearInstallationSnapshot(in: defaults)
+                        }
+                    )
+                    guard retired else { return false }
+                    print(
+                        "installer: activation repaired "
+                            + "kind=\(request.installationKind.rawValue) "
+                            + "selected=\(request.shouldSelect)"
+                    )
+                    return true
+                }
             }
-
-            guard removeFileIfPresent(paths.marker) else { return false }
-            clearInstallationSnapshot(in: defaults)
-            guard removeFileIfPresent(paths.agent) else { return false }
-            print(
-                "installer: activation repaired kind=\(request.installationKind.rawValue) "
-                    + "selected=\(request.shouldSelect)"
-            )
-            return true
         } catch {
             fputs("installer: pending activation repair failed: \(error)\n", stderr)
             return false
         }
+    }
+
+    internal static func retireActivationRequest(
+        removeMarker: () -> Bool,
+        removeAgent: () -> Bool,
+        clearSnapshot: () -> Void
+    ) -> Bool {
+        guard removeMarker() else { return false }
+        clearSnapshot()
+        if !removeAgent() {
+            fputs(
+                "installer: activation marker retired; stale repair agent will self-clean\n",
+                stderr
+            )
+        }
+        return true
+    }
+
+    internal static func retireTemporaryFallback(
+        boundary: InstallerActivationBoundary,
+        runPhase: (InstallerActivationPhase) -> Int32
+    ) -> Bool {
+        let actionStatus = runPhase(boundary.action)
+        let verifyStatus = runPhase(boundary.verify)
+        print(
+            "installer: fallback retirement action=\(actionStatus) "
+                + "verify=\(verifyStatus)"
+        )
+        return verifyStatus == InstallerPhaseExit.success
+    }
+
+    /// A single fresh verifier can observe caller-local TIS state before the
+    /// login session has settled. Require consecutive, independent passes and
+    /// repair any regression before retiring the temporary fallback.
+    internal static func convergeStableActivation(
+        boundaries: [InstallerActivationBoundary],
+        attempts: Int,
+        requiredStablePasses: Int,
+        verifyBeforeWriting: Bool,
+        runPhase: (InstallerActivationPhase) -> Int32,
+        waitBeforeRetry: (Int) -> Void
+    ) -> Bool {
+        guard !boundaries.isEmpty,
+              attempts > 0,
+              requiredStablePasses > 0,
+              requiredStablePasses <= attempts else {
+            return false
+        }
+        var stablePasses = 0
+        var needsConvergence = true
+
+        for attempt in 0..<attempts {
+            let converged: Bool
+            if needsConvergence {
+                converged = convergeActivation(
+                    boundaries: boundaries,
+                    attempts: 1,
+                    verifyBeforeWriting: verifyBeforeWriting || attempt > 0,
+                    runPhase: runPhase,
+                    waitBeforeRetry: { _ in }
+                )
+            } else {
+                converged = true
+            }
+            let verified = converged && verifyActivation(
+                boundaries: boundaries,
+                runPhase: runPhase
+            )
+            stablePasses = verified ? stablePasses + 1 : 0
+            needsConvergence = !verified
+            print(
+                "installer: stable activation pass=\(stablePasses) "
+                    + "attempt=\(attempt + 1)"
+            )
+            if stablePasses == requiredStablePasses {
+                return true
+            }
+            if attempt + 1 < attempts {
+                waitBeforeRetry(attempt + 1)
+            }
+        }
+        return false
+    }
+
+    private static func verifyActivation(
+        boundaries: [InstallerActivationBoundary],
+        runPhase: (InstallerActivationPhase) -> Int32
+    ) -> Bool {
+        for boundary in boundaries {
+            let status = runPhase(boundary.verify)
+            print(
+                "installer: stable verify=\(boundary.verify.rawValue) "
+                    + "status=\(status)"
+            )
+            guard status == InstallerPhaseExit.success else { return false }
+        }
+        return true
     }
 
     internal static func convergeActivation(
@@ -375,7 +521,8 @@ public enum PostInstallPreparation {
     private static func runInstallerPhaseProcess(
         _ phase: InstallerActivationPhase,
         temporaryFallbackSourceID: String?,
-        executableURL: URL
+        executableURL: URL,
+        timeout timeoutOverride: DispatchTimeInterval? = nil
     ) -> Int32 {
         let process = Process()
         let completion = DispatchSemaphore(value: 0)
@@ -397,11 +544,15 @@ public enum PostInstallPreparation {
         }
 
         let timeout: DispatchTimeInterval
-        switch phase {
-        case .enableParent, .enableMode:
-            timeout = .seconds(120)
-        default:
-            timeout = .seconds(10)
+        if let timeoutOverride {
+            timeout = timeoutOverride
+        } else {
+            switch phase {
+            case .enableParent, .enableMode:
+                timeout = .seconds(120)
+            default:
+                timeout = .seconds(10)
+            }
         }
         if completion.wait(timeout: .now() + timeout) == .timedOut {
             if process.isRunning {
@@ -431,8 +582,11 @@ public enum PostInstallPreparation {
             supportDirectory: supportDirectory,
             marker: supportDirectory
                 .appendingPathComponent("input-source-activation-pending.plist"),
-            lock: supportDirectory
+            repairLock: supportDirectory
                 .appendingPathComponent("input-source-activation-repair.lock"),
+            generationLock: supportDirectory.appendingPathComponent(
+                "input-source-activation-generation.lock"
+            ),
             agent: homeDirectory
                 .appendingPathComponent("Library/LaunchAgents")
                 .appendingPathComponent(activationAgentLabel + ".plist"),
@@ -492,6 +646,27 @@ public enum PostInstallPreparation {
         guard Darwin.chmod(url.path, S_IRUSR | S_IWUSR) == 0 else {
             throw PreparationError.invalidRequest
         }
+    }
+
+    private static func withActivationLock<T>(
+        at url: URL,
+        operation: Int32,
+        body: () throws -> T
+    ) throws -> T {
+        let descriptor = Darwin.open(
+            url.path,
+            O_CREAT | O_RDWR,
+            S_IRUSR | S_IWUSR
+        )
+        guard descriptor >= 0 else {
+            throw PreparationError.lockUnavailable
+        }
+        defer { Darwin.close(descriptor) }
+        guard Darwin.lockf(descriptor, operation, 0) == 0 else {
+            throw PreparationError.lockUnavailable
+        }
+        defer { Darwin.lockf(descriptor, F_ULOCK, 0) }
+        return try body()
     }
 
     private static func removeFileIfPresent(_ url: URL) -> Bool {

@@ -195,8 +195,7 @@ public enum InputSourceLifecycleRules {
     }
 
     public static func activationBoundaries(
-        shouldSelect: Bool,
-        hasTemporaryFallback: Bool = false
+        shouldSelect: Bool
     ) -> [InstallerActivationBoundary] {
         var boundaries = [
             InstallerActivationBoundary(
@@ -220,14 +219,17 @@ public enum InputSourceLifecycleRules {
                 )
             )
         }
-        if shouldSelect && hasTemporaryFallback {
-            boundaries.append(
-                InstallerActivationBoundary(
-                    action: .disableTemporaryFallback,
-                    verify: .verifyTemporaryFallbackDisabled
-                )
-            )
-        }
         return boundaries
+    }
+
+    public static func temporaryFallbackBoundary(
+        shouldSelect: Bool,
+        hasTemporaryFallback: Bool
+    ) -> InstallerActivationBoundary? {
+        guard shouldSelect && hasTemporaryFallback else { return nil }
+        return InstallerActivationBoundary(
+            action: .disableTemporaryFallback,
+            verify: .verifyTemporaryFallbackDisabled
+        )
     }
 }

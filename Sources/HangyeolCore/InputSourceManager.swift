@@ -284,7 +284,8 @@ public final class InputSourceManager: @unchecked Sendable {
                 : InstallerPhaseExit.retryable
 
         case .verifyTemporaryFallbackDisabled:
-            guard isHangyeolSelected(),
+            guard installationRoster(includeAllInstalled: false).isEnabled,
+                  isHangyeolSelected(),
                   fallbackSourceID != nil else {
                 return InstallerPhaseExit.failed
             }
