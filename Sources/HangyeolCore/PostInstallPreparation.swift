@@ -5,6 +5,7 @@ import HangyeolInstallerSupport
 public enum PostInstallCommand: Equatable, Sendable {
     case status
     case launchProbe
+    case waitForActivation
     case scheduleRepair(
         installationKind: InstallerInstallationKind,
         shouldSelect: Bool,
@@ -43,6 +44,8 @@ public struct PendingInputSourceActivation: Codable, Equatable, Sendable {
 public enum PostInstallPreparation {
     public static let statusArgument = "--post-install-status"
     public static let launchProbeArgument = "--verify-launch"
+    public static let waitForActivationArgument =
+        "--wait-for-input-source-activation"
     public static let scheduleRepairArgument = "--schedule-input-source-repair"
     public static let repairPendingArgument = "--repair-pending-input-source"
     public static let activationAgentLabel =
@@ -71,6 +74,10 @@ public enum PostInstallPreparation {
     private static let requiredStableActivationPasses = 5
     private static let fallbackRetirementPhaseTimeout: DispatchTimeInterval =
         .seconds(1)
+    private static let activationCompletionAttempts = 81
+    private static let activationCompletionPollInterval: TimeInterval = 0.25
+    private static let activationCompletionTimeoutNanoseconds: UInt64 =
+        20_000_000_000
 
     private struct ActivationPaths {
         let supportDirectory: URL
@@ -96,6 +103,7 @@ public enum PostInstallPreparation {
             [
                 statusArgument,
                 launchProbeArgument,
+                waitForActivationArgument,
                 scheduleRepairArgument,
                 repairPendingArgument
             ] + InstallerActivationPhase.allCases.map(\.rawValue)
@@ -109,6 +117,9 @@ public enum PostInstallPreparation {
         }
         if present[0] == launchProbeArgument {
             return arguments.count == 2 ? .launchProbe : .invalid
+        }
+        if present[0] == waitForActivationArgument {
+            return arguments.count == 2 ? .waitForActivation : .invalid
         }
         if present[0] == repairPendingArgument {
             return arguments.count == 2 ? .repairPending : .invalid
@@ -254,6 +265,56 @@ public enum PostInstallPreparation {
         )
     }
 
+    /// Keeps PackageKit's completion boundary behind the asynchronous IMK/TIS
+    /// repair. The repair removes its marker only after a fresh-process status
+    /// check, so the marker is the single durable completion boundary.
+    public static func waitForActivationCompletion(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> Bool {
+        let startedAt = DispatchTime.now().uptimeNanoseconds
+        let (deadline, overflow) = startedAt.addingReportingOverflow(
+            activationCompletionTimeoutNanoseconds
+        )
+        return waitForActivationCompletion(
+            attempts: activationCompletionAttempts,
+            isPending: {
+                hasPendingActivation(homeDirectory: homeDirectory)
+            },
+            hasTimeRemaining: {
+                overflow || DispatchTime.now().uptimeNanoseconds < deadline
+            },
+            waitBeforeRetry: {
+                RunLoop.current.run(
+                    until: Date().addingTimeInterval(
+                        activationCompletionPollInterval
+                    )
+                )
+            }
+        )
+    }
+
+    internal static func waitForActivationCompletion(
+        attempts: Int,
+        isPending: () -> Bool,
+        hasTimeRemaining: () -> Bool,
+        waitBeforeRetry: () -> Void
+    ) -> Bool {
+        guard attempts > 0 else { return false }
+        for attempt in 0..<attempts {
+            if !isPending(), !isPending() {
+                print(
+                    "installer: activation completion observed "
+                        + "attempt=\(attempt + 1)"
+                )
+                return true
+            }
+            guard attempt + 1 < attempts, hasTimeRemaining() else { break }
+            waitBeforeRetry()
+        }
+        fputs("installer: activation completion timed out\n", stderr)
+        return false
+    }
+
     public static func repairPendingActivation(
         executableURL: URL,
         version: String,
@@ -325,58 +386,81 @@ public enum PostInstallPreparation {
                 )
                 guard activated else { return false }
 
-                return try withActivationLock(
-                    at: paths.generationLock,
-                    operation: F_LOCK
-                ) {
-                    let currentData = try Data(contentsOf: paths.marker)
-                    let currentRequest = try PropertyListDecoder().decode(
-                        PendingInputSourceActivation.self,
-                        from: currentData
-                    )
-                    guard currentRequest.token == request.token else {
-                        print(
-                            "installer: a newer activation request replaced this generation"
-                        )
-                        return false
-                    }
-                    if let fallbackBoundary {
-                        guard retireTemporaryFallback(
-                            boundary: fallbackBoundary,
-                            runPhase: {
-                                runInstallerPhaseProcess(
-                                    $0,
-                                    temporaryFallbackSourceID:
-                                        request.temporaryFallbackSourceID,
-                                    executableURL: executableURL,
-                                    timeout: fallbackRetirementPhaseTimeout
+                return try retireActivationAfterFreshReadiness(
+                    verifyFreshReadiness: {
+                        runStatusProbeProcess(executableURL: executableURL)
+                    },
+                    retireActivation: {
+                        try withActivationLock(
+                            at: paths.generationLock,
+                            operation: F_LOCK
+                        ) {
+                            let currentData = try Data(contentsOf: paths.marker)
+                            let currentRequest = try PropertyListDecoder().decode(
+                                PendingInputSourceActivation.self,
+                                from: currentData
+                            )
+                            guard currentRequest.token == request.token else {
+                                print(
+                                    "installer: a newer activation request replaced this generation"
                                 )
+                                return false
                             }
-                        ) else {
-                            return false
+                            if let fallbackBoundary {
+                                guard retireTemporaryFallback(
+                                    boundary: fallbackBoundary,
+                                    runPhase: {
+                                        runInstallerPhaseProcess(
+                                            $0,
+                                            temporaryFallbackSourceID:
+                                                request.temporaryFallbackSourceID,
+                                            executableURL: executableURL,
+                                            timeout:
+                                                fallbackRetirementPhaseTimeout
+                                        )
+                                    }
+                                ) else {
+                                    return false
+                                }
+                            }
+
+                            let retired = retireActivationRequest(
+                                removeMarker: {
+                                    removeFileIfPresent(paths.marker)
+                                },
+                                removeAgent: {
+                                    removeFileIfPresent(paths.agent)
+                                },
+                                clearSnapshot: {
+                                    clearInstallationSnapshot(in: defaults)
+                                }
+                            )
+                            guard retired else { return false }
+                            print(
+                                "installer: activation repaired "
+                                    + "kind=\(request.installationKind.rawValue) "
+                                    + "selected=\(request.shouldSelect)"
+                            )
+                            return true
                         }
                     }
-
-                    let retired = retireActivationRequest(
-                        removeMarker: { removeFileIfPresent(paths.marker) },
-                        removeAgent: { removeFileIfPresent(paths.agent) },
-                        clearSnapshot: {
-                            clearInstallationSnapshot(in: defaults)
-                        }
-                    )
-                    guard retired else { return false }
-                    print(
-                        "installer: activation repaired "
-                            + "kind=\(request.installationKind.rawValue) "
-                            + "selected=\(request.shouldSelect)"
-                    )
-                    return true
-                }
+                )
             }
         } catch {
             fputs("installer: pending activation repair failed: \(error)\n", stderr)
             return false
         }
+    }
+
+    /// A fresh-process failure must leave both the temporary fallback and the
+    /// durable retry request untouched. Only readiness success may enter the
+    /// generation-checked retirement transaction.
+    internal static func retireActivationAfterFreshReadiness(
+        verifyFreshReadiness: () -> Bool,
+        retireActivation: () throws -> Bool
+    ) rethrows -> Bool {
+        guard verifyFreshReadiness() else { return false }
+        return try retireActivation()
     }
 
     internal static func retireActivationRequest(
@@ -569,6 +653,36 @@ public enum PostInstallPreparation {
             return InstallerPhaseExit.failed
         }
         return process.terminationStatus
+    }
+
+    private static func runStatusProbeProcess(
+        executableURL: URL
+    ) -> Bool {
+        let process = Process()
+        let completion = DispatchSemaphore(value: 0)
+        process.executableURL = executableURL
+        process.arguments = [statusArgument]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { _ in completion.signal() }
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
+        if completion.wait(timeout: .now() + .seconds(3)) == .timedOut {
+            if process.isRunning {
+                process.terminate()
+            }
+            if completion.wait(timeout: .now() + .milliseconds(500)) == .timedOut,
+               process.isRunning {
+                Darwin.kill(process.processIdentifier, SIGKILL)
+                _ = completion.wait(timeout: .now() + .seconds(1))
+            }
+            return false
+        }
+        return process.terminationReason == .exit
+            && process.terminationStatus == EXIT_SUCCESS
     }
 
     private static func activationPaths(

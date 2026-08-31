@@ -13,6 +13,9 @@ struct PostInstallPreparationTests {
         #expect(PostInstallPreparation.command(
             arguments: ["Hangyeol", "--verify-launch"]
         ) == .launchProbe)
+        #expect(PostInstallPreparation.command(
+            arguments: ["Hangyeol", "--wait-for-input-source-activation"]
+        ) == .waitForActivation)
         #expect(PostInstallPreparation.command(arguments: [
             "Hangyeol",
             "--schedule-input-source-repair",
@@ -63,6 +66,88 @@ struct PostInstallPreparationTests {
 
         #expect(PostInstallPreparation.consumePending(in: defaults))
         #expect(!PostInstallPreparation.consumePending(in: defaults))
+    }
+
+    @Test("Installer completion waits for two stable marker observations")
+    func waitsForStableMarkerRetirement() {
+        let pendingObservations = [true, false, false]
+        var pendingIndex = 0
+        var waits = 0
+
+        let completed = PostInstallPreparation.waitForActivationCompletion(
+            attempts: 2,
+            isPending: {
+                defer { pendingIndex += 1 }
+                return pendingObservations[pendingIndex]
+            },
+            hasTimeRemaining: { true },
+            waitBeforeRetry: { waits += 1 }
+        )
+
+        #expect(completed)
+        #expect(pendingIndex == pendingObservations.count)
+        #expect(waits == 1)
+    }
+
+    @Test("Installer completion obeys one global deadline and preserves the marker")
+    func activationCompletionDeadlinePreservesPendingRepair() {
+        var deadlineChecks = 0
+        var waits = 0
+
+        let completed = PostInstallPreparation.waitForActivationCompletion(
+            attempts: 100,
+            isPending: { true },
+            hasTimeRemaining: {
+                deadlineChecks += 1
+                return deadlineChecks == 1
+            },
+            waitBeforeRetry: { waits += 1 }
+        )
+
+        #expect(!completed)
+        #expect(deadlineChecks == 2)
+        #expect(waits == 1)
+    }
+
+    @Test("A newer repair generation prevents an older completion observation")
+    func newerPendingGenerationCancelsObservedCompletion() {
+        let pendingObservations = [false, true, false, false]
+        var pendingIndex = 0
+        var waits = 0
+
+        let completed = PostInstallPreparation.waitForActivationCompletion(
+            attempts: 2,
+            isPending: {
+                defer { pendingIndex += 1 }
+                return pendingObservations[pendingIndex]
+            },
+            hasTimeRemaining: { true },
+            waitBeforeRetry: { waits += 1 }
+        )
+
+        #expect(completed)
+        #expect(pendingIndex == pendingObservations.count)
+        #expect(waits == 1)
+    }
+
+    @Test("Fresh readiness failure preserves the temporary fallback and marker")
+    func freshReadinessFailureSkipsRetirementTransaction() {
+        var actions: [String] = []
+
+        let retired = PostInstallPreparation
+            .retireActivationAfterFreshReadiness(
+                verifyFreshReadiness: {
+                    actions.append("fresh-readiness")
+                    return false
+                },
+                retireActivation: {
+                    actions.append("fallback-and-marker")
+                    return true
+                }
+            )
+
+        #expect(!retired)
+        #expect(actions == ["fresh-readiness"])
     }
 
     @Test("Keeps the preinstall migration snapshot until preparation succeeds")
@@ -357,8 +442,8 @@ struct PostInstallPreparationTests {
             shouldSelect: false,
             temporaryFallbackSourceID: "com.apple.keylayout.ABC",
             executableURL: executable,
-            version: "3.0.14",
-            build: "97",
+            version: "3.0.15",
+            build: "98",
             homeDirectory: home
         ))
 
@@ -367,8 +452,8 @@ struct PostInstallPreparationTests {
             shouldSelect: true,
             temporaryFallbackSourceID: "com.apple.keylayout.ABC",
             executableURL: executable,
-            version: "3.0.14",
-            build: "97",
+            version: "3.0.15",
+            build: "98",
             homeDirectory: home
         ))
 
@@ -397,7 +482,7 @@ struct PostInstallPreparationTests {
             request.temporaryFallbackSourceID
                 == "com.apple.keylayout.ABC"
         )
-        #expect(request.version == "3.0.14")
+        #expect(request.version == "3.0.15")
         #expect(agentValues["RunAtLoad"] as? Bool == true)
         #expect(agentValues["KeepAlive"] == nil)
         #expect((agentValues["ProgramArguments"] as? [String]) == [
@@ -615,8 +700,8 @@ struct InstallerSessionContractTests {
         }
     }
 
-    @Test("Postinstall delegates every installation kind to a one-shot user repair job")
-    func postinstallDelegatesActivationOutsidePackageKit() throws {
+    @Test("Postinstall completes only after the one-shot user repair is ready")
+    func postinstallWaitsForActivationCompletion() throws {
         let source = try script(named: "postinstall")
         let validationRange = try #require(
             source.range(of: "codesign --verify --strict \"$APP_PATH\"")
@@ -630,8 +715,23 @@ struct InstallerSessionContractTests {
         let terminateRange = try #require(
             source.range(of: "pkill -TERM -x -u \"$USER_ID\"")
         )
+        let processExitRange = try #require(
+            source.range(of: "--wait-for-process-exit 3")
+        )
         let openRange = try #require(
             source.range(of: "run_as_console_user /usr/bin/open \"$APP_PATH\"")
+        )
+        let waitRange = try #require(
+            source.range(of: "--wait-for-input-source-activation")
+        )
+        let timeoutRange = try #require(source.range(
+            of: "activation did not complete in the current login session"
+        ))
+        let timeoutExitRange = try #require(
+            source.range(
+                of: "open_input_source_settings\n    exit 0\nfi",
+                range: timeoutRange.upperBound..<source.endIndex
+            )
         )
         let bootoutRange = try #require(
             source.range(of: "launchctl bootout")
@@ -656,7 +756,15 @@ struct InstallerSessionContractTests {
         #expect(classificationRange.lowerBound < scheduleRange.lowerBound)
         #expect(source.contains("for process_name in Hangyeol PriType PriTypeV2"))
         #expect(scheduleRange.lowerBound < terminateRange.lowerBound)
-        #expect(terminateRange.lowerBound < openRange.lowerBound)
+        #expect(terminateRange.lowerBound < processExitRange.lowerBound)
+        #expect(processExitRange.lowerBound < openRange.lowerBound)
+        #expect(source.contains("hangyeol-postinstall.XXXXXX"))
+        #expect(source.contains("codesign --verify --strict \"$STAGED_HELPER\""))
+        #expect(openRange.lowerBound < waitRange.lowerBound)
+        #expect(waitRange.lowerBound < timeoutRange.lowerBound)
+        #expect(timeoutRange.lowerBound < timeoutExitRange.lowerBound)
+        #expect(timeoutExitRange.lowerBound < bootoutRange.lowerBound)
+        #expect(source.contains("ACTIVATION_MARKER="))
         #expect(openRange.lowerBound < bootoutRange.lowerBound)
         #expect(bootoutRange.lowerBound < bootstrapRange.lowerBound)
         #expect(!source.contains("--post-install-prepare"))
@@ -741,6 +849,7 @@ struct InstallerSessionContractTests {
         #expect(source.contains("if shouldShowSettingsAfterInstall {"))
         #expect(source.contains("case let .scheduleRepair"))
         #expect(source.contains("case .repairPending"))
+        #expect(source.contains("case .waitForActivation"))
         #expect(source.contains("case let .phase(phase, sourceID)"))
         #expect(!source.contains("applicationShouldTerminate"))
         #expect(!source.contains("prepareForApplicationTermination"))
@@ -803,6 +912,9 @@ struct InstallerSessionContractTests {
         let fallbackRange = try #require(
             source.range(of: "if let fallbackBoundary {")
         )
+        let readinessRange = try #require(
+            source.range(of: "verifyFreshReadiness: {")
+        )
         let schedulingLockRange = try #require(
             source.range(of: "operation: F_LOCK")
         )
@@ -811,8 +923,9 @@ struct InstallerSessionContractTests {
         )
         let finalGenerationLockRange = try #require(
             source.range(
-                of: "return try withActivationLock(\n"
-                    + "                    at: paths.generationLock"
+                of: "try withActivationLock(\n"
+                    + "                            at: paths.generationLock",
+                range: readinessRange.upperBound..<source.endIndex
             )
         )
         let markerRemovalRange = try #require(
@@ -820,10 +933,11 @@ struct InstallerSessionContractTests {
         )
 
         #expect(stableRange.lowerBound < activatedGuardRange.lowerBound)
-        #expect(activatedGuardRange.lowerBound < fallbackRange.lowerBound)
-        #expect(fallbackRange.lowerBound < markerRemovalRange.lowerBound)
-        #expect(schedulingLockRange.lowerBound < repairLockRange.lowerBound)
+        #expect(activatedGuardRange.lowerBound < readinessRange.lowerBound)
+        #expect(readinessRange.lowerBound < finalGenerationLockRange.lowerBound)
         #expect(finalGenerationLockRange.lowerBound < fallbackRange.lowerBound)
+        #expect(finalGenerationLockRange.lowerBound < markerRemovalRange.lowerBound)
+        #expect(schedulingLockRange.lowerBound < repairLockRange.lowerBound)
         #expect(
             source.components(separatedBy: "at: paths.generationLock").count
                 == 4

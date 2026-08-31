@@ -28,6 +28,9 @@ if let command = PostInstallPreparation.command(
     switch command {
     case .launchProbe:
         exit(EXIT_SUCCESS)
+    case .waitForActivation:
+        let completed = PostInstallPreparation.waitForActivationCompletion()
+        exit(completed ? EXIT_SUCCESS : PostInstallPreparation.failureExitCode)
     case .status:
         let status = InputSourceManager.shared.installedInputSourceStatus()
         print(

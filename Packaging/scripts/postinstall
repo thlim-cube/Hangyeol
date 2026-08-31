@@ -10,6 +10,16 @@ EXECUTABLE="$APP_PATH/Contents/MacOS/Hangyeol"
 EXPECTED_BUNDLE_IDENTIFIER="com.thlim.inputmethod.Hangyeol"
 ACTIVATION_LABEL="com.thlim.hangyeol.activation-repair"
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+PACKAGED_HELPER="$SCRIPT_DIR/HangyeolInstallerHelper"
+STAGING_DIR=""
+STAGED_HELPER=""
+
+cleanup() {
+    if [ -n "$STAGING_DIR" ] && [ -d "$STAGING_DIR" ]; then
+        /bin/rm -rf "$STAGING_DIR"
+    fi
+}
+trap cleanup EXIT
 
 # shellcheck source=postinstall_classification.sh
 . "$SCRIPT_DIR/postinstall_classification.sh"
@@ -55,6 +65,24 @@ run_as_console_user() {
     /bin/launchctl asuser "$USER_ID" \
         /usr/bin/sudo -H -u "$CURRENT_USER" "$@"
 }
+
+if [ ! -x "$PACKAGED_HELPER" ] \
+    || ! /usr/bin/codesign --verify --strict "$PACKAGED_HELPER"; then
+    echo "Hangyeol postinstall helper is missing or has an invalid signature." >&2
+    exit 1
+fi
+if ! STAGING_DIR=$(/usr/bin/mktemp -d \
+    "/private/tmp/hangyeol-postinstall.XXXXXX"); then
+    echo "Hangyeol could not create its postinstall helper directory." >&2
+    exit 1
+fi
+/bin/chmod 755 "$STAGING_DIR"
+STAGED_HELPER="$STAGING_DIR/HangyeolInstallerHelper"
+if ! /usr/bin/install -m 755 "$PACKAGED_HELPER" "$STAGED_HELPER" \
+    || ! /usr/bin/codesign --verify --strict "$STAGED_HELPER"; then
+    echo "Hangyeol could not stage its signed postinstall helper." >&2
+    exit 1
+fi
 
 mark_post_install_pending() {
     run_as_console_user /usr/bin/defaults write \
@@ -159,7 +187,8 @@ if ! run_as_console_user "$EXECUTABLE" \
 fi
 
 ACTIVATION_AGENT="$USER_HOME/Library/LaunchAgents/$ACTIVATION_LABEL.plist"
-if [ ! -f "$ACTIVATION_AGENT" ]; then
+ACTIVATION_MARKER="$USER_HOME/Library/Application Support/Hangyeol/input-source-activation-pending.plist"
+if [ ! -f "$ACTIVATION_AGENT" ] || [ ! -f "$ACTIVATION_MARKER" ]; then
     echo "Hangyeol activation agent was not created." >&2
     open_input_source_settings
     exit 0
@@ -174,7 +203,28 @@ for process_name in Hangyeol PriType PriTypeV2; do
     /usr/bin/pkill -TERM -x -u "$USER_ID" "$process_name" \
         2>/dev/null || true
 done
+if ! run_as_console_user "$STAGED_HELPER" \
+    --wait-for-process-exit 3 Hangyeol PriType PriTypeV2; then
+    for process_name in Hangyeol PriType PriTypeV2; do
+        /usr/bin/pkill -KILL -x -u "$USER_ID" "$process_name" \
+            2>/dev/null || true
+    done
+    if ! run_as_console_user "$STAGED_HELPER" \
+        --wait-for-process-exit 2 Hangyeol PriType PriTypeV2; then
+        echo "Hangyeol could not stop its previous input-method process." >&2
+        open_input_source_settings
+        exit 0
+    fi
+fi
 if run_as_console_user /usr/bin/open "$APP_PATH"; then
+    if run_as_console_user "$EXECUTABLE" \
+        --wait-for-input-source-activation; then
+        exit 0
+    fi
+    echo "Hangyeol activation did not complete in the current login session." >&2
+    # The running server may still be converging. Keep the marker and one-shot
+    # agent for the next login instead of starting a second IMK server now.
+    open_input_source_settings
     exit 0
 fi
 

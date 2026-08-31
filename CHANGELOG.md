@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.15] - 2026-08-31
+
+### Fixed
+- Installer가 기존 한결 IMK의 실제 종료와 TIS 복구 완료 전에 설치 성공을 표시하던 문제를 수정했습니다. 서명된 helper로 제품 프로세스 종료를 확인한 뒤 새 IMK를 열고, 별도 프로세스의 등록·활성화 확인을 통과한 복구 marker가 정리될 때까지 최대 20초 동안 조건 기반으로 기다립니다.
+- 현재 로그인 세션에서 활성화가 완료되지 않으면 임시 ABC, 복구 marker, 1회성 LaunchAgent를 그대로 보존해 다음 로그인에서 안전하게 재시도합니다. 실행 중인 IMK와 경쟁하는 두 번째 서버나 macOS 입력 시스템 agent는 시작·종료하지 않습니다.
+
 ## [3.0.14] - 2026-08-31
 
 ### Fixed
