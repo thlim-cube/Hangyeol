@@ -422,18 +422,74 @@ struct SuppressedKeyPairTests {
         #expect(state.handle(keyCode: Int64(KeyCode.backspace), pressed: false, toggleKeyCode: 54, inputKind: .regular) == .passThrough)
         #expect(state.activeStandaloneToggleKeyCode == 54)
 
-        var visibleKeyCodes: Set<Int64> = [54]
-        if let hiddenKeyCode = state.activeStandaloneToggleKeyCode {
-            visibleKeyCodes.remove(hiddenKeyCode)
-        }
-        let flags = RightCommandSuppressor.hostVisibleModifierFlags(
+        let flags = RightCommandSuppressor.hostVisibleModifierFlagsForTypingEvent(
             [.maskCommand],
-            pressedKeyCodes: visibleKeyCodes
+            pressedKeyCodes: [54],
+            hasSuppressedKeyCodes: false,
+            additionallyHiding: state.activeStandaloneToggleKeyCode,
+            normalizingModifierKeyCode: 54
         )
         #expect(!flags.contains(.maskCommand))
 
         #expect(state.handle(keyCode: 54, pressed: false, toggleKeyCode: 54, inputKind: .modifier) == .passThrough)
         #expect(state.activeStandaloneToggleKeyCode == nil)
+    }
+
+    @Test("The first key after modifier toggle release drops a stale Command flag")
+    func modifierToggleReleaseDropsStaleCommandFromNextKey() {
+        var toggleState = EventTapModifierToggleState()
+        var modifierState = ModifierKeyPressState()
+
+        #expect(modifierState.observe(keyCode: 54, physicalKeyIsDown: true) == .down)
+        #expect(toggleState.handle(
+            keyCode: 54,
+            pressed: true,
+            toggleKeyCode: 54,
+            inputKind: .modifier
+        ) == .toggleAndPassThrough)
+        #expect(modifierState.observe(keyCode: 54, physicalKeyIsDown: false) == .up)
+        #expect(toggleState.handle(
+            keyCode: 54,
+            pressed: false,
+            toggleKeyCode: 54,
+            inputKind: .modifier
+        ) == .passThrough)
+        #expect(toggleState.activeStandaloneToggleKeyCode == nil)
+
+        let staleCommandFlags = CGEventFlags(rawValue:
+            CGEventFlags.maskCommand.rawValue
+                | CGEventFlags.maskShift.rawValue
+                | UInt64(NX_DEVICERCMDKEYMASK)
+        )
+        let nextKeyFlags = RightCommandSuppressor.hostVisibleModifierFlagsForTypingEvent(
+            staleCommandFlags,
+            pressedKeyCodes: modifierState.hostVisiblePressedKeyCodes,
+            hasSuppressedKeyCodes: modifierState.hasSuppressedKeyCodes,
+            additionallyHiding: toggleState.activeStandaloneToggleKeyCode,
+            normalizingModifierKeyCode: 54
+        )
+
+        #expect(!nextKeyFlags.contains(.maskCommand))
+        #expect(nextKeyFlags.rawValue & UInt64(NX_DEVICERCMDKEYMASK) == 0)
+        #expect(nextKeyFlags.contains(.maskShift))
+    }
+
+    @Test("A physically held Left Command remains visible after toggle normalization")
+    func modifierToggleNormalizationPreservesLeftCommand() {
+        let leftCommandFlags = CGEventFlags(rawValue:
+            CGEventFlags.maskCommand.rawValue | UInt64(NX_DEVICELCMDKEYMASK)
+        )
+        let normalizedFlags = RightCommandSuppressor.hostVisibleModifierFlagsForTypingEvent(
+            leftCommandFlags,
+            pressedKeyCodes: [55],
+            hasSuppressedKeyCodes: false,
+            additionallyHiding: nil,
+            normalizingModifierKeyCode: 54
+        )
+
+        #expect(normalizedFlags.contains(.maskCommand))
+        #expect(normalizedFlags.rawValue & UInt64(NX_DEVICELCMDKEYMASK) != 0)
+        #expect(normalizedFlags.rawValue & UInt64(NX_DEVICERCMDKEYMASK) == 0)
     }
 
     @Test("Changing a fallback binding clears an in-flight press")

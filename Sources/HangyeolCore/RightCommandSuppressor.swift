@@ -423,6 +423,20 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
 
+        // A modifier release and the next key can cross an input-source handoff.
+        // Rebuild tracked modifier families from physical flagsChanged state so a
+        // stale Command bit cannot turn the first typed key into a host shortcut.
+        let hiddenTypingToggleKeyCode = type == .keyDown || type == .keyUp
+            ? modifierToggleState.activeStandaloneToggleKeyCode
+            : nil
+        sanitizeModifierFlagsForHost(
+            event,
+            additionallyHiding: hiddenTypingToggleKeyCode,
+            normalizingModifierKeyCode: usesPassThroughModifierToggle
+                ? toggleBinding.keyCode
+                : nil
+        )
+
         if type == .keyDown {
             let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
             let route = ShortcutBindingRouter.routeRegularKey(
@@ -467,14 +481,6 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             }
         }
 
-        let hiddenTypingToggleKeyCode = type == .keyDown || type == .keyUp
-            ? modifierToggleState.activeStandaloneToggleKeyCode
-            : nil
-        sanitizeModifierFlagsForHost(
-            event,
-            additionallyHiding: hiddenTypingToggleKeyCode
-        )
-        
         return Unmanaged.passUnretained(event)
     }
     
@@ -482,20 +488,52 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     
     private func sanitizeModifierFlagsForHost(
         _ event: CGEvent,
-        additionallyHiding hiddenKeyCode: Int64? = nil
+        additionallyHiding hiddenKeyCode: Int64? = nil,
+        normalizingModifierKeyCode: Int64? = nil
     ) {
-        guard modifierKeyState.hasSuppressedKeyCodes || hiddenKeyCode != nil else { return }
-        var hostVisibleKeyCodes = modifierKeyState.hostVisiblePressedKeyCodes
-        if let hiddenKeyCode {
-            hostVisibleKeyCodes.remove(hiddenKeyCode)
-        }
-        let sanitized = Self.hostVisibleModifierFlags(
+        let sanitized = Self.hostVisibleModifierFlagsForTypingEvent(
             event.flags,
-            pressedKeyCodes: hostVisibleKeyCodes
+            pressedKeyCodes: modifierKeyState.hostVisiblePressedKeyCodes,
+            hasSuppressedKeyCodes: modifierKeyState.hasSuppressedKeyCodes,
+            additionallyHiding: hiddenKeyCode,
+            normalizingModifierKeyCode: normalizingModifierKeyCode
         )
         guard sanitized != event.flags else { return }
         event.flags = sanitized
         DebugLogger.event("input.suppressed_modifier_stripped")
+    }
+
+    static func hostVisibleModifierFlagsForTypingEvent(
+        _ flags: CGEventFlags,
+        pressedKeyCodes: Set<Int64>,
+        hasSuppressedKeyCodes: Bool,
+        additionallyHiding hiddenKeyCode: Int64?,
+        normalizingModifierKeyCode: Int64?
+    ) -> CGEventFlags {
+        if hasSuppressedKeyCodes || hiddenKeyCode != nil {
+            var hostVisibleKeyCodes = pressedKeyCodes
+            if let hiddenKeyCode {
+                hostVisibleKeyCodes.remove(hiddenKeyCode)
+            }
+            return hostVisibleModifierFlags(
+                flags,
+                pressedKeyCodes: hostVisibleKeyCodes
+            )
+        }
+
+        guard let normalizingModifierKeyCode else { return flags }
+        let familyKeyCodes = modifierFamilyKeyCodes(for: normalizingModifierKeyCode)
+        guard !familyKeyCodes.isEmpty else { return flags }
+
+        let familyRawMask = familyKeyCodes.reduce(UInt64(0)) {
+            $0 | (modifierFlagBitsByKeyCode[$1] ?? 0)
+        } | modifierMask(for: normalizingModifierKeyCode).rawValue
+        var rawValue = flags.rawValue & ~familyRawMask
+        for keyCode in pressedKeyCodes where familyKeyCodes.contains(keyCode) {
+            rawValue |= modifierFlagBitsByKeyCode[keyCode] ?? 0
+            rawValue |= modifierMask(for: keyCode).rawValue
+        }
+        return CGEventFlags(rawValue: rawValue)
     }
 
     static func hostVisibleModifierFlags(
@@ -536,6 +574,16 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         case 56, 60: return .maskShift          // Left/Right Shift
         case 57:     return .maskAlphaShift     // Caps Lock
         default:     return CGEventFlags(rawValue: 0)
+        }
+    }
+
+    private static func modifierFamilyKeyCodes(for keyCode: Int64) -> Set<Int64> {
+        switch keyCode {
+        case 54, 55: return [54, 55]
+        case 58, 61: return [58, 61]
+        case 59, 62: return [59, 62]
+        case 56, 60: return [56, 60]
+        default: return []
         }
     }
 

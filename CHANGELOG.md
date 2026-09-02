@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.16] - 2026-09-02
+
+### Fixed
+- 우측 Command 같은 modifier-only 한/영 전환키를 놓은 뒤 다음 문자 이벤트에 오래된 Command 플래그가 남아 `f`/`ㄹ` 입력이 찾기 단축키로 실행되던 문제를 수정했습니다. 다음 입력의 modifier를 실제 물리 키 상태로 다시 구성하되, 누르고 있는 좌측 Command 단축키는 그대로 유지합니다.
+
 ## [3.0.15] - 2026-08-31
 
 ### Fixed
