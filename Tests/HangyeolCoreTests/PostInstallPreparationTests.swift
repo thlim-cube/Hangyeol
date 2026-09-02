@@ -768,13 +768,16 @@ struct InstallerSessionContractTests {
         #expect(source.contains("ordinary-update)"))
         #expect(source.contains("registration-change)"))
         #expect(validationRange.lowerBound < classificationRange.lowerBound)
-        #expect(classificationRange.lowerBound < ordinaryPreservationRange.lowerBound)
-        #expect(ordinaryPreservationRange.lowerBound < scheduleRange.lowerBound)
+        #expect(classificationRange.lowerBound < scheduleRange.lowerBound)
+        #expect(scheduleRange.lowerBound < ordinaryPreservationRange.lowerBound)
+        let ordinaryBranchEnd = try #require(
+            source[ordinaryPreservationRange.lowerBound...].range(of: "\nfi")
+        )
         let ordinaryBranch = source[
-            ordinaryPreservationRange.lowerBound..<scheduleRange.lowerBound
+            ordinaryPreservationRange.lowerBound..<ordinaryBranchEnd.upperBound
         ]
-        #expect(ordinaryBranch.contains("clear_installation_snapshot"))
         #expect(ordinaryBranch.contains("exit 0"))
+        #expect(!ordinaryBranch.contains("clear_installation_snapshot"))
         #expect(!ordinaryBranch.contains("pkill"))
         #expect(!ordinaryBranch.contains("/usr/bin/open"))
         #expect(source.contains("for process_name in Hangyeol PriType PriTypeV2"))

@@ -510,6 +510,39 @@ struct SuppressedKeyPairTests {
         #expect(normalizedFlags.rawValue & UInt64(NX_DEVICELSHIFTKEYMASK) != 0)
     }
 
+    @Test("An externally synthesized Command navigation chord keeps its modifiers")
+    func synthesizedCommandNavigationRemainsHostVisible() {
+        let synthesizedCommandOnly = CGEventFlags(rawValue:
+            CGEventFlags.maskCommand.rawValue | UInt64(NX_DEVICELCMDKEYMASK)
+        )
+        let synthesizedShiftCommand = CGEventFlags(rawValue:
+            synthesizedCommandOnly.rawValue | CGEventFlags.maskShift.rawValue
+        )
+        for toggleKeyCode: Int64 in [54, 55] {
+            let commandOnly = RightCommandSuppressor.hostVisibleModifierFlagsForTypingEvent(
+                synthesizedCommandOnly,
+                pressedKeyCodes: [],
+                hasSuppressedKeyCodes: false,
+                additionallyHiding: nil,
+                normalizingModifierKeyCode: toggleKeyCode,
+                preservesSynthesizedModifiers: true
+            )
+            let shiftCommand = RightCommandSuppressor.hostVisibleModifierFlagsForTypingEvent(
+                synthesizedShiftCommand,
+                pressedKeyCodes: [56],
+                hasSuppressedKeyCodes: false,
+                additionallyHiding: nil,
+                normalizingModifierKeyCode: toggleKeyCode,
+                preservesSynthesizedModifiers: true
+            )
+
+            #expect(commandOnly.contains(.maskCommand))
+            #expect(commandOnly.rawValue & UInt64(NX_DEVICELCMDKEYMASK) != 0)
+            #expect(shiftCommand.contains(.maskCommand))
+            #expect(shiftCommand.contains(.maskShift))
+        }
+    }
+
     @Test("Changing a fallback binding clears an in-flight press")
     func iokitBindingChangeResetsPress() {
         var state = ReleaseTogglePressState()

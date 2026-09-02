@@ -496,7 +496,12 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             pressedKeyCodes: modifierKeyState.hostVisiblePressedKeyCodes,
             hasSuppressedKeyCodes: modifierKeyState.hasSuppressedKeyCodes,
             additionallyHiding: hiddenKeyCode,
-            normalizingModifierKeyCode: normalizingModifierKeyCode
+            normalizingModifierKeyCode: normalizingModifierKeyCode,
+            // Hardware events use PID 0. Quartz-posted events retain their
+            // source process, so their modifiers belong to the host shortcut.
+            preservesSynthesizedModifiers: event.getIntegerValueField(
+                .eventSourceUnixProcessID
+            ) > 0
         )
         guard sanitized != event.flags else { return }
         event.flags = sanitized
@@ -508,7 +513,8 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         pressedKeyCodes: Set<Int64>,
         hasSuppressedKeyCodes: Bool,
         additionallyHiding hiddenKeyCode: Int64?,
-        normalizingModifierKeyCode: Int64?
+        normalizingModifierKeyCode: Int64?,
+        preservesSynthesizedModifiers: Bool = false
     ) -> CGEventFlags {
         if hasSuppressedKeyCodes || hiddenKeyCode != nil {
             var hostVisibleKeyCodes = pressedKeyCodes
@@ -521,7 +527,8 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             )
         }
 
-        guard let normalizingModifierKeyCode else { return flags }
+        guard let normalizingModifierKeyCode,
+              !preservesSynthesizedModifiers else { return flags }
         let familyKeyCodes = modifierFamilyKeyCodes(for: normalizingModifierKeyCode)
         guard !familyKeyCodes.isEmpty else { return flags }
 

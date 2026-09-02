@@ -297,7 +297,7 @@ PackageKit
 postinstall (root)
   ├─ 설치된 bundle ID·코드 서명 검증
   ├─ 설치 전 snapshot과 새 Info.plist로 installation kind 분류
-  ├─ ordinary update: snapshot만 정리하고 현재 IMK 유지
+  ├─ ordinary update: 다음 로그인용 activation marker를 남기고 현재 IMK 유지
   └─ first/registration change
        ├─ 사용자별 generation marker와 RunAtLoad LaunchAgent 생성
        ├─ 한결 소유 프로세스만 종료한 뒤 교체된 앱을 현재 Aqua 세션에서 `open`
@@ -315,9 +315,9 @@ activation repair (console user, PackageKit 밖)
   └─ 실패: marker·LaunchAgent 유지, 다음 로그인에서 재시도
 ```
 
-동일 등록 구조는 bundle ID, `InputMethodConnectionName`, `plutil`로 직렬화한 `ComponentInputModeDict`가 모두 일치해야 성립한다. 값이 누락되거나 하나라도 바뀌면 보수적으로 등록 변경으로 분류한다. 일반 업데이트는 실행 중인 IMK와 TIS를 쓰지 않고 새 실행 파일을 다음 로그인부터 사용한다. 최초 설치와 등록 구조 변경은 정확히 하나의 Hangyeol parent와 한글 mode가 installed·enabled roster에서 확인되어야 성공한다. 설치 전에 한결이 실제 선택돼 있던 등록 변경만 마지막 선택 단계까지 실행하며, 사용자가 ABC나 다른 입력 소스를 쓰고 있었다면 해당 선택을 유지한다.
+동일 등록 구조는 bundle ID, `InputMethodConnectionName`, `plutil`로 직렬화한 `ComponentInputModeDict`가 모두 일치해야 성립한다. 값이 누락되거나 하나라도 바뀌면 보수적으로 등록 변경으로 분류한다. 일반 업데이트는 현재 세션의 실행 중인 IMK와 TIS를 쓰지 않지만, PackageKit 교체 뒤 다음 로그인에서 새 번들을 등록·활성화할 durable activation marker를 남긴다. 최초 설치와 등록 구조 변경은 정확히 하나의 Hangyeol parent와 한글 mode가 installed·enabled roster에서 확인되어야 성공한다. 설치 전에 한결이 실제 선택돼 있던 등록 변경만 마지막 선택 단계까지 실행하며, 사용자가 ABC나 다른 입력 소스를 쓰고 있었다면 해당 선택을 유지한다.
 
-최초 설치·등록 구조 변경의 각 action 직후 verifier는 반드시 새 프로세스에서 TIS를 다시 읽는다. action을 호출한 프로세스의 로컬 캐시는 성공 근거가 될 수 없다. 한 경계가 끝나지 않으면 이후 enable·select를 실행하지 않으며, marker를 남겨 다음 로그인에 같은 generation을 다시 시도한다. 일반 업데이트는 macOS 입력 메뉴가 기존 번들에 연결된 상태에서 한결을 재기동하면 사용자 메뉴가 사라질 수 있으므로 현재 IMK를 그대로 유지한다. 모든 경로에서 macOS 입력 관련 agent는 재시작하지 않는다. 손쉬운 사용 권한(TCC)은 여전히 사용자 승인 경계이므로 현재 한결 identity의 권한을 설치기가 대신 허용하거나 초기화하지 않는다. ABC와 다른 입력 소스도 자동 삭제하지 않으며, 설정의 명시적 `ABC 끄기` 동작만 사용자가 요청했을 때 실행한다.
+각 activation action 직후 verifier는 반드시 새 프로세스에서 TIS를 다시 읽는다. action을 호출한 프로세스의 로컬 캐시는 성공 근거가 될 수 없다. 한 경계가 끝나지 않으면 이후 enable·select를 실행하지 않으며, marker를 남겨 다음 로그인에 같은 generation을 다시 시도한다. 일반 업데이트는 macOS 입력 메뉴가 기존 번들에 연결된 상태에서 한결을 재기동하면 사용자 메뉴가 사라질 수 있으므로 현재 IMK를 그대로 유지하고, 다음 로그인에서 marker를 소비해 새 번들을 등록한다. 모든 경로에서 macOS 입력 관련 agent는 재시작하지 않는다. 손쉬운 사용 권한(TCC)은 여전히 사용자 승인 경계이므로 현재 한결 identity의 권한을 설치기가 대신 허용하거나 초기화하지 않는다. ABC와 다른 입력 소스도 자동 삭제하지 않으며, 설정의 명시적 `ABC 끄기` 동작만 사용자가 요청했을 때 실행한다.
 
 ## 의존 라이브러리
 

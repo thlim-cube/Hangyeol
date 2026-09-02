@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.18] - 2026-09-03
+
+### Fixed
+- 일반 업데이트가 현재 IMK를 보존하면서 다음 로그인용 TIS 복구 요청까지 삭제해, 재로그인 후 한결 입력 소스와 사용자 메뉴가 사라지던 문제를 수정했습니다. 현재 세션의 메뉴 연결은 유지하고 다음 로그인에서는 새 번들을 다시 등록·활성화합니다.
+- Keyboard Maestro처럼 외부 프로세스가 만든 `Command+Left/Right`와 `Shift+Command+Left/Right`의 의도된 modifier를 잔류 Command로 오인해 제거하던 문제를 수정했습니다. 물리 전환키에서 남은 Command만 기존처럼 정리합니다.
+
 ## [3.0.17] - 2026-09-02
 
 ### Fixed
