@@ -96,6 +96,13 @@ if [ -z "$EXPANDED_HELPER" ]; then
     exit 1
 fi
 codesign --verify --strict --verbose=2 "$EXPANDED_HELPER"
+EXPANDED_PACKAGED_INFO=$(find "$EXPANDED_DIR" -type f \
+    -name HangyeolPackagedInfo.plist -print -quit)
+if [ -z "$EXPANDED_PACKAGED_INFO" ]; then
+    echo "Packaged registration metadata was not found during validation." >&2
+    exit 1
+fi
+/usr/bin/cmp -s "$EXPANDED_PACKAGED_INFO" "$REPO_ROOT/Info.plist"
 SIGNATURE_DETAILS=$(codesign -dv --verbose=4 "$EXPANDED_APP" 2>&1)
 case "$SIGNATURE_DETAILS" in
     *"Identifier=com.thlim.inputmethod.Hangyeol"*)

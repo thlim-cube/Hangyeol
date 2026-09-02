@@ -492,6 +492,24 @@ struct SuppressedKeyPairTests {
         #expect(normalizedFlags.rawValue & UInt64(NX_DEVICERCMDKEYMASK) == 0)
     }
 
+    @Test("A physically held Shift is restored on a navigation key after toggle normalization")
+    func modifierToggleNormalizationRestoresShiftForHome() {
+        let staleCommandOnly = CGEventFlags(rawValue:
+            CGEventFlags.maskCommand.rawValue | UInt64(NX_DEVICERCMDKEYMASK)
+        )
+        let normalizedFlags = RightCommandSuppressor.hostVisibleModifierFlagsForTypingEvent(
+            staleCommandOnly,
+            pressedKeyCodes: [56],
+            hasSuppressedKeyCodes: false,
+            additionallyHiding: nil,
+            normalizingModifierKeyCode: 54
+        )
+
+        #expect(!normalizedFlags.contains(.maskCommand))
+        #expect(normalizedFlags.contains(.maskShift))
+        #expect(normalizedFlags.rawValue & UInt64(NX_DEVICELSHIFTKEYMASK) != 0)
+    }
+
     @Test("Changing a fallback binding clears an in-flight press")
     func iokitBindingChangeResetsPress() {
         var state = ReleaseTogglePressState()

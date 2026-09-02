@@ -5,8 +5,12 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 PACKAGED_HELPER="$SCRIPT_DIR/HangyeolInstallerHelper"
+PACKAGED_INFO_PLIST="$SCRIPT_DIR/HangyeolPackagedInfo.plist"
 STAGING_DIR=""
 STAGED_HELPER=""
+
+# shellcheck source=postinstall_classification.sh
+. "$SCRIPT_DIR/postinstall_classification.sh"
 
 cleanup() {
     if [ -n "$STAGING_DIR" ] && [ -d "$STAGING_DIR" ]; then
@@ -35,8 +39,9 @@ if [ -n "$CURRENT_USER" ]; then
         }
 
         if [ ! -x "$PACKAGED_HELPER" ] \
-            || ! /usr/bin/codesign --verify --strict "$PACKAGED_HELPER"; then
-            echo "Hangyeol preinstall helper is missing or has an invalid signature." >&2
+            || ! /usr/bin/codesign --verify --strict "$PACKAGED_HELPER" \
+            || [ ! -f "$PACKAGED_INFO_PLIST" ]; then
+            echo "Hangyeol preinstall metadata or helper is invalid." >&2
             exit 1
         fi
 
@@ -76,12 +81,35 @@ if [ -n "$CURRENT_USER" ]; then
             fi
         done
 
-        # Move away from every current or retired Hangyeol identity before its
-        # executable is replaced. Failure is fatal: replacing the active IMK
-        # server is the exact state that leaves the current login session stale.
+        PACKAGED_BUNDLE_IDENTIFIER=$(/usr/libexec/PlistBuddy \
+            -c "Print :CFBundleIdentifier" \
+            "$PACKAGED_INFO_PLIST" 2>/dev/null || true)
+        PACKAGED_CONNECTION_NAME=$(/usr/libexec/PlistBuddy \
+            -c "Print :InputMethodConnectionName" \
+            "$PACKAGED_INFO_PLIST" 2>/dev/null || true)
+        PACKAGED_INPUT_MODE_SCHEMA=$(/usr/bin/plutil \
+            -extract ComponentInputModeDict json -o - \
+            "$PACKAGED_INFO_PLIST" 2>/dev/null || true)
+        INSTALLATION_KIND=$(classify_hangyeol_installation \
+            "$HANGYEOL_WAS_INSTALLED" \
+            "$INSTALLED_BUNDLE_IDENTIFIER" \
+            "$INSTALLED_CONNECTION_NAME" \
+            "$INSTALLED_INPUT_MODE_SCHEMA" \
+            "$PACKAGED_BUNDLE_IDENTIFIER" \
+            "$PACKAGED_CONNECTION_NAME" \
+            "$PACKAGED_INPUT_MODE_SCHEMA")
+
+        # A same-registration update keeps the live IMK and system input-menu
+        # connection intact. Registration changes still move to a safe fallback
+        # before replacing the executable and rebuilding the TIS registration.
+        if [ "$INSTALLATION_KIND" = "ordinary-update" ]; then
+            PREPARATION_COMMAND="--snapshot-update"
+        else
+            PREPARATION_COMMAND="--prepare-update"
+        fi
         if ! PREPARE_OUTPUT=$(run_as_console_user \
-            "$STAGED_HELPER" --prepare-update); then
-            echo "Hangyeol could not select a safe fallback input source." >&2
+            "$STAGED_HELPER" "$PREPARATION_COMMAND"); then
+            echo "Hangyeol could not prepare the input-source update." >&2
             exit 1
         fi
         SELECTED_BEFORE=$(/usr/bin/printf '%s\n' "$PREPARE_OUTPUT" \
@@ -148,21 +176,25 @@ if [ -n "$CURRENT_USER" ]; then
             com.thlim.inputmethod.Hangyeol \
             HangyeolFallbackWasEnabled -bool "$FALLBACK_WAS_ENABLED"
 
-        # Terminate only input-method processes owned by this product. The
-        # helper polls the exact condition, so PackageKit never relies on a
-        # fixed delay and never restarts macOS text-input services.
-        for process_name in Hangyeol PriType PriTypeV2; do
+        # Retired identities always stop. The current Hangyeol process stops
+        # only when its registration contract changed; an ordinary update must
+        # preserve the existing IMK clients and input-menu command connection.
+        PROCESS_NAMES="PriType PriTypeV2"
+        if [ "$INSTALLATION_KIND" != "ordinary-update" ]; then
+            PROCESS_NAMES="Hangyeol $PROCESS_NAMES"
+        fi
+        for process_name in $PROCESS_NAMES; do
             /usr/bin/pkill -TERM -x -u "$USER_ID" "$process_name" \
                 2>/dev/null || true
         done
         if ! run_as_console_user "$STAGED_HELPER" \
-            --wait-for-process-exit 3 Hangyeol PriType PriTypeV2; then
-            for process_name in Hangyeol PriType PriTypeV2; do
+            --wait-for-process-exit 3 $PROCESS_NAMES; then
+            for process_name in $PROCESS_NAMES; do
                 /usr/bin/pkill -KILL -x -u "$USER_ID" "$process_name" \
                     2>/dev/null || true
             done
             if ! run_as_console_user "$STAGED_HELPER" \
-                --wait-for-process-exit 2 Hangyeol PriType PriTypeV2; then
+                --wait-for-process-exit 2 $PROCESS_NAMES; then
                 echo "Hangyeol input-method process did not terminate." >&2
                 exit 1
             fi

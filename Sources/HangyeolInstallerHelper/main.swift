@@ -193,6 +193,21 @@ private func prepareForUpdate() -> Int32 {
     return HelperExit.failure
 }
 
+private func snapshotUpdate() -> Int32 {
+    guard let current = TISCopyCurrentKeyboardInputSource()?
+        .takeRetainedValue(),
+          let currentCandidate = candidate(for: current) else {
+        fputs("snapshot-update: current input source is unavailable\n", stderr)
+        return HelperExit.failure
+    }
+    printPreparationResult(
+        selectedBefore: identity.owns(currentCandidate),
+        fallbackSourceID: nil,
+        fallbackWasEnabled: true
+    )
+    return HelperExit.success
+}
+
 private func processIsRunning(name: String, userID: uid_t) -> Bool {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
@@ -233,6 +248,9 @@ guard let command = arguments.first else {
 }
 
 switch command {
+case "--snapshot-update":
+    guard arguments.count == 1 else { exit(HelperExit.invalidArguments) }
+    exit(snapshotUpdate())
 case "--prepare-update":
     guard arguments.count == 1 else { exit(HelperExit.invalidArguments) }
     exit(prepareForUpdate())

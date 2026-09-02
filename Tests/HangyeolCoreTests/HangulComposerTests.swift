@@ -894,6 +894,31 @@ struct HangulComposerTests {
         #expect(delegate.markedText == "")
         #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeHome)) == ["insert:가"])
     }
+
+    @Test("Shift+Home commits composition and remains host-owned")
+    func shiftHomeCommitsCompositionBeforeSelection() {
+        let (composer, delegate, _) = makeComposer()
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "r", keyCode: 15)!,
+            delegate: delegate
+        )
+        _ = composer.handle(
+            TestEventFactory.keyEvent(char: "k", keyCode: 40)!,
+            delegate: delegate
+        )
+
+        let shiftHome = TestEventFactory.keyEvent(
+            char: "\u{F729}",
+            keyCode: 115,
+            modifiers: [.shift, .function]
+        )!
+        let handled = composer.handle(shiftHome, delegate: delegate)
+
+        #expect(!handled)
+        #expect(delegate.insertedTexts.contains("가"))
+        #expect(delegate.markedText == "")
+        #expect(shiftHome.modifierFlags.contains(.shift))
+    }
     
     @Test("Cmd shortcut without composition just passes through")
     func cmdShortcutWithoutComposition() {

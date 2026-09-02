@@ -278,16 +278,18 @@ HostSurfaceResolver        capability 우선 surface 분류
 
 ## 설치 후 적용 흐름
 
-PKG 스크립트는 시스템 전체 프로세스를 이름으로 종료하지 않는다. `preinstall`은 패키지에 포함된 도우미의 코드 서명을 확인하고 `/private/tmp`의 제한된 임시 경로에 복사한 뒤 다시 검증한다. 도우미는 `/dev/console`의 로그인 사용자 권한으로 TIS 현재 선택을 읽는다. 현재 또는 이전 한결 식별자가 선택돼 있으면 selectable·ASCII-capable이며 한결 소유가 아닌 입력 소스로 먼저 이탈하고, 실제 선택 변경을 확인한 뒤에만 진행한다. 해당 ASCII source가 꺼져 있었다면 임시로 활성화하고 source ID를 snapshot에 남긴다. 그 다음 `Hangyeol`, `PriType`, `PriTypeV2`라는 이 제품의 프로세스만 TERM으로 종료하고 조건 polling 후 필요한 경우에만 KILL한다. `TextInputMenuAgent`, `imklaunchagent`, `cfprefsd`와 Chrome·Codex·Slack은 건드리지 않는다.
+PKG 스크립트는 시스템 전체 프로세스를 이름으로 종료하지 않는다. `preinstall`은 패키지에 포함된 새 `Info.plist`와 설치본의 bundle ID, `InputMethodConnectionName`, `ComponentInputModeDict`를 먼저 비교한다. 동일하면 일반 업데이트로 분류해 현재 선택과 `Hangyeol` 프로세스를 보존한다. 등록 구조가 다르면 서명된 도우미를 `/private/tmp`의 제한된 임시 경로에 복사·재검증하고, `/dev/console`의 로그인 사용자 권한으로 TIS 현재 선택을 읽는다. 현재 또는 이전 한결 식별자가 선택돼 있으면 selectable·ASCII-capable이며 한결 소유가 아닌 입력 소스로 먼저 이탈하고, 실제 선택 변경을 확인한 뒤에만 진행한다. 해당 ASCII source가 꺼져 있었다면 임시로 활성화하고 source ID를 snapshot에 남긴다. 그 다음 `Hangyeol`, `PriType`, `PriTypeV2`라는 이 제품의 프로세스만 TERM으로 종료하고 조건 polling 후 필요한 경우에만 KILL한다. `TextInputMenuAgent`, `imklaunchagent`, `cfprefsd`와 Chrome·Codex·Slack은 건드리지 않는다.
 
 현재 `/Library/Input Methods/Hangyeol.app`은 지우지 않고 PackageKit의 atomic update 대상으로 남긴다. 동시에 설치 전 bundle ID, IMK connection, `ComponentInputModeDict`, TIS에서 확인한 선택 상태를 snapshot으로 남긴다. 컴포넌트 패키지는 `BundleHasStrictIdentifier=false`로 생성해 이전 식별자 번들도 같은 표준 경로에서 `com.thlim.inputmethod.Hangyeol`로 교체하며, `Hangyeol.localized` 잔여 경로는 preinstall에서 정리한다. 설치된 앱은 Dock 아이콘 없이 설정 창을 열 수 있도록 `LSUIElement=true`로 실행된다.
 
 ```text
 preinstall (root + console user helper)
-  ├─ 패키지 helper 서명 검증 → 사용자 실행 가능 임시 경로에서 재검증
-  ├─ 현재 한결 선택이면 안전한 ASCII source 선택·확인
-  ├─ 등록 identity와 실제 선택 상태 snapshot
-  └─ 한결 소유 프로세스만 종료·종료 확인
+  ├─ 패키지 등록 metadata와 설치본으로 installation kind 분류
+  ├─ ordinary update: 선택·현재 Hangyeol IMK 보존
+  └─ first/registration change
+       ├─ 현재 한결 선택이면 안전한 ASCII source 선택·확인
+       ├─ 등록 identity와 실제 선택 상태 snapshot
+       └─ 한결 소유 프로세스만 종료·종료 확인
 
 PackageKit
   └─ /Library/Input Methods/Hangyeol.app 원자적 교체
@@ -295,9 +297,11 @@ PackageKit
 postinstall (root)
   ├─ 설치된 bundle ID·코드 서명 검증
   ├─ 설치 전 snapshot과 새 Info.plist로 installation kind 분류
-  ├─ 사용자별 generation marker와 RunAtLoad LaunchAgent 생성
-  ├─ 한결 소유 프로세스만 종료한 뒤 교체된 앱을 현재 Aqua 세션에서 `open`
-  └─ `open` 실패 시에만 LaunchAgent bootstrap, 성공 시 즉시 종료
+  ├─ ordinary update: snapshot만 정리하고 현재 IMK 유지
+  └─ first/registration change
+       ├─ 사용자별 generation marker와 RunAtLoad LaunchAgent 생성
+       ├─ 한결 소유 프로세스만 종료한 뒤 교체된 앱을 현재 Aqua 세션에서 `open`
+       └─ `open` 실패 시에만 LaunchAgent bootstrap, 성공 시 즉시 종료
 
 activation repair (console user, PackageKit 밖)
   ├─ 현재 세션 IMK DidFinishLaunching 또는 다음 로그인 LaunchAgent
@@ -311,9 +315,9 @@ activation repair (console user, PackageKit 밖)
   └─ 실패: marker·LaunchAgent 유지, 다음 로그인에서 재시도
 ```
 
-동일 등록 구조는 bundle ID, `InputMethodConnectionName`, `plutil`로 직렬화한 `ComponentInputModeDict`가 모두 일치해야 성립한다. 값이 누락되거나 하나라도 바뀌면 보수적으로 등록 변경으로 분류한다. 설치 종류와 관계없이 정확히 하나의 Hangyeol parent와 한글 mode가 installed·enabled roster에서 확인되어야 성공한다. 최초 설치 또는 설치 전에 한결이 실제 선택돼 있던 업데이트만 마지막 선택 단계까지 실행한다. 사용자가 ABC나 다른 입력 소스를 쓰고 있었다면 해당 선택을 유지한다.
+동일 등록 구조는 bundle ID, `InputMethodConnectionName`, `plutil`로 직렬화한 `ComponentInputModeDict`가 모두 일치해야 성립한다. 값이 누락되거나 하나라도 바뀌면 보수적으로 등록 변경으로 분류한다. 일반 업데이트는 실행 중인 IMK와 TIS를 쓰지 않고 새 실행 파일을 다음 로그인부터 사용한다. 최초 설치와 등록 구조 변경은 정확히 하나의 Hangyeol parent와 한글 mode가 installed·enabled roster에서 확인되어야 성공한다. 설치 전에 한결이 실제 선택돼 있던 등록 변경만 마지막 선택 단계까지 실행하며, 사용자가 ABC나 다른 입력 소스를 쓰고 있었다면 해당 선택을 유지한다.
 
-각 action 직후 verifier는 반드시 새 프로세스에서 TIS를 다시 읽는다. action을 호출한 프로세스의 로컬 캐시는 성공 근거가 될 수 없다. 한 경계가 끝나지 않으면 이후 enable·select를 실행하지 않으며, marker를 남겨 다음 로그인에 같은 generation을 다시 시도한다. 이 흐름은 macOS 입력 관련 agent를 재시작하지 않고, 한결 IMK만 현재 세션에서 다시 띄워 새 실행 파일을 적용한다. `open`이 실패하면 marker와 LaunchAgent를 남겨 다음 로그인에 같은 generation을 다시 시도한다. 손쉬운 사용 권한(TCC)은 여전히 사용자 승인 경계이므로 현재 한결 identity의 권한을 설치기가 대신 허용하거나 초기화하지 않는다. ABC와 다른 입력 소스도 자동 삭제하지 않으며, 설정의 명시적 `ABC 끄기` 동작만 사용자가 요청했을 때 실행한다.
+최초 설치·등록 구조 변경의 각 action 직후 verifier는 반드시 새 프로세스에서 TIS를 다시 읽는다. action을 호출한 프로세스의 로컬 캐시는 성공 근거가 될 수 없다. 한 경계가 끝나지 않으면 이후 enable·select를 실행하지 않으며, marker를 남겨 다음 로그인에 같은 generation을 다시 시도한다. 일반 업데이트는 macOS 입력 메뉴가 기존 번들에 연결된 상태에서 한결을 재기동하면 사용자 메뉴가 사라질 수 있으므로 현재 IMK를 그대로 유지한다. 모든 경로에서 macOS 입력 관련 agent는 재시작하지 않는다. 손쉬운 사용 권한(TCC)은 여전히 사용자 승인 경계이므로 현재 한결 identity의 권한을 설치기가 대신 허용하거나 초기화하지 않는다. ABC와 다른 입력 소스도 자동 삭제하지 않으며, 설정의 명시적 `ABC 끄기` 동작만 사용자가 요청했을 때 실행한다.
 
 ## 의존 라이브러리
 

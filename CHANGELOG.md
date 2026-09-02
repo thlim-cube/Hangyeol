@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.17] - 2026-09-02
+
+### Fixed
+- 일반 업데이트에서 한결 프로세스를 종료·재기동한 뒤 로그인 때부터 실행 중인 macOS 입력 메뉴가 교체 전 번들 상태를 계속 참조해 `한결 설정...`과 `한결 정보`가 사라지던 문제를 수정했습니다. 등록 구조가 같으면 현재 IMK와 메뉴 연결을 유지하고 새 실행 파일은 다음 로그인부터 적용합니다.
+- 패키지에 새 버전의 등록 메타데이터를 포함해 교체 전에 일반 업데이트와 등록 구조 변경을 구분합니다. 최초 설치나 bundle ID·IMK connection·input mode schema 변경에서는 기존 fallback·등록 복구 절차를 그대로 수행하며, macOS 입력 시스템 프로세스는 강제 재시작하지 않습니다.
+- 한/영 전환 직후 navigation key 이벤트에 Shift 비트가 빠져 들어오면, 물리적으로 Shift를 누른 상태여도 `Shift+Home`이 단순 Home으로 전달되던 문제를 수정했습니다. 오래된 Command는 제거하면서 현재 눌린 Shift·Option·Control 등 다른 modifier는 다시 반영합니다.
+
 ## [3.0.16] - 2026-09-02
 
 ### Fixed

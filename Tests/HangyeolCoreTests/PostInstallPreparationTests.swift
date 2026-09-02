@@ -629,8 +629,8 @@ struct InstallerSessionContractTests {
         #expect(try classifyInstallation(wasInstalled: "") == "registration-change")
     }
 
-    @Test("Preinstall leaves the active source before terminating only Hangyeol processes")
-    func preinstallHandsOffTheActiveInputSource() throws {
+    @Test("Preinstall preserves same-registration sessions and hands off registration changes")
+    func preinstallClassifiesBeforeChangingTheActiveSession() throws {
         let source = try script(named: "preinstall")
         let packagedSignatureRange = try #require(
             source.range(of: "codesign --verify --strict \"$PACKAGED_HELPER\"")
@@ -639,6 +639,9 @@ struct InstallerSessionContractTests {
             source.range(of: "/private/tmp/hangyeol-preinstall.XXXXXX")
         )
         let prepareRange = try #require(source.range(of: "--prepare-update"))
+        let classificationRange = try #require(
+            source.range(of: "classify_hangyeol_installation")
+        )
         let snapshotRange = try #require(
             source.range(of: "HangyeolSelectedBeforeInstall")
         )
@@ -652,7 +655,15 @@ struct InstallerSessionContractTests {
             source.range(of: "pkill -KILL -x -u \"$USER_ID\"")
         )
 
-        #expect(source.contains("for process_name in Hangyeol PriType PriTypeV2"))
+        #expect(source.contains("PACKAGED_INFO_PLIST="))
+        #expect(source.contains("HangyeolPackagedInfo.plist"))
+        #expect(source.contains("--snapshot-update"))
+        #expect(source.contains("PREPARATION_COMMAND=\"--prepare-update\""))
+        #expect(source.contains("PROCESS_NAMES=\"PriType PriTypeV2\""))
+        #expect(source.contains("PROCESS_NAMES=\"Hangyeol $PROCESS_NAMES\""))
+        #expect(source.contains(
+            "if [ \"$INSTALLATION_KIND\" != \"ordinary-update\" ]; then"
+        ))
         #expect(source.contains("selected-before"))
         #expect(source.contains("fallback-source-id"))
         #expect(source.contains("fallback-was-enabled"))
@@ -668,7 +679,8 @@ struct InstallerSessionContractTests {
         #expect(source.contains("tccutil reset Accessibility"))
         #expect(source.contains("2.8.24|2.8.25"))
         #expect(packagedSignatureRange.lowerBound < stagingRange.lowerBound)
-        #expect(stagingRange.lowerBound < prepareRange.lowerBound)
+        #expect(stagingRange.lowerBound < classificationRange.lowerBound)
+        #expect(classificationRange.lowerBound < prepareRange.lowerBound)
         #expect(prepareRange.lowerBound < snapshotRange.lowerBound)
         #expect(snapshotRange.lowerBound < terminateRange.lowerBound)
         #expect(terminateRange.lowerBound < waitRange.lowerBound)
@@ -712,6 +724,9 @@ struct InstallerSessionContractTests {
         let scheduleRange = try #require(
             source.range(of: "--schedule-input-source-repair")
         )
+        let ordinaryPreservationRange = try #require(
+            source.range(of: "if [ \"$INSTALLATION_KIND\" = \"ordinary-update\" ]; then")
+        )
         let terminateRange = try #require(
             source.range(of: "pkill -TERM -x -u \"$USER_ID\"")
         )
@@ -753,7 +768,15 @@ struct InstallerSessionContractTests {
         #expect(source.contains("ordinary-update)"))
         #expect(source.contains("registration-change)"))
         #expect(validationRange.lowerBound < classificationRange.lowerBound)
-        #expect(classificationRange.lowerBound < scheduleRange.lowerBound)
+        #expect(classificationRange.lowerBound < ordinaryPreservationRange.lowerBound)
+        #expect(ordinaryPreservationRange.lowerBound < scheduleRange.lowerBound)
+        let ordinaryBranch = source[
+            ordinaryPreservationRange.lowerBound..<scheduleRange.lowerBound
+        ]
+        #expect(ordinaryBranch.contains("clear_installation_snapshot"))
+        #expect(ordinaryBranch.contains("exit 0"))
+        #expect(!ordinaryBranch.contains("pkill"))
+        #expect(!ordinaryBranch.contains("/usr/bin/open"))
         #expect(source.contains("for process_name in Hangyeol PriType PriTypeV2"))
         #expect(scheduleRange.lowerBound < terminateRange.lowerBound)
         #expect(terminateRange.lowerBound < processExitRange.lowerBound)
@@ -834,6 +857,8 @@ struct InstallerSessionContractTests {
 
         let staging = try repositoryFile(named: "Tools/stage_package_scripts.sh")
         #expect(staging.contains("HangyeolInstallerHelper"))
+        #expect(staging.contains("HangyeolPackagedInfo.plist"))
+        #expect(staging.contains("PACKAGED_INFO_PLIST=\"$REPO_ROOT/Info.plist\""))
         #expect(staging.contains("codesign --force --options runtime"))
         #expect(staging.contains("codesign --verify --strict --verbose=2"))
     }

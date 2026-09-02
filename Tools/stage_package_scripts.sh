@@ -13,6 +13,7 @@ OUTPUT_DIR=$2
 SIGNING_IDENTITY=$3
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 HELPER_SOURCE="$REPO_ROOT/.build/$BUILD_CONFIGURATION/HangyeolInstallerHelper"
+PACKAGED_INFO_PLIST="$REPO_ROOT/Info.plist"
 
 case "$BUILD_CONFIGURATION" in
     debug|release)
@@ -34,6 +35,8 @@ fi
 
 /bin/mkdir -p "$OUTPUT_DIR"
 /bin/cp -R "$REPO_ROOT/Packaging/scripts/." "$OUTPUT_DIR/"
+/usr/bin/install -m 644 "$PACKAGED_INFO_PLIST" \
+    "$OUTPUT_DIR/HangyeolPackagedInfo.plist"
 /usr/bin/install -m 755 "$HELPER_SOURCE" \
     "$OUTPUT_DIR/HangyeolInstallerHelper"
 /bin/chmod 755 \

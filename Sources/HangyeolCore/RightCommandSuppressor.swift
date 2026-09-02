@@ -529,7 +529,10 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             $0 | (modifierFlagBitsByKeyCode[$1] ?? 0)
         } | modifierMask(for: normalizingModifierKeyCode).rawValue
         var rawValue = flags.rawValue & ~familyRawMask
-        for keyCode in pressedKeyCodes where familyKeyCodes.contains(keyCode) {
+        // The incoming typing event can omit an aggregate modifier bit at the
+        // handoff boundary. Restore every physically observed modifier while
+        // still clearing stale bits only from the configured toggle family.
+        for keyCode in pressedKeyCodes where trackedModifierKeyCodes.contains(keyCode) {
             rawValue |= modifierFlagBitsByKeyCode[keyCode] ?? 0
             rawValue |= modifierMask(for: keyCode).rawValue
         }
