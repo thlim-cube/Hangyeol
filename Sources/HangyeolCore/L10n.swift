@@ -108,6 +108,8 @@ public enum L10n {
         public static var englishConveniencesSubtitle: String { localized("keyboard.englishConveniencesSubtitle") }
         public static var capsLockDoubleConsonants: String { localized("keyboard.capsLockDoubleConsonants") }
         public static var capsLockDoubleConsonantsSubtitle: String { localized("keyboard.capsLockDoubleConsonantsSubtitle") }
+        public static var extendedVowelCombination: String { localized("keyboard.extendedVowelCombination") }
+        public static var extendedVowelCombinationSubtitle: String { localized("keyboard.extendedVowelCombinationSubtitle") }
     }
     
     // MARK: - Toggle Key

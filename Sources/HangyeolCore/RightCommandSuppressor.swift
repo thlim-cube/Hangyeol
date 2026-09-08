@@ -516,6 +516,12 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         normalizingModifierKeyCode: Int64?,
         preservesSynthesizedModifiers: Bool = false
     ) -> CGEventFlags {
+        // Posted host shortcuts keep their modifiers even while a physical
+        // toggle or suppressed modifier is being hidden from the host.
+        if preservesSynthesizedModifiers {
+            return flags
+        }
+
         if hasSuppressedKeyCodes || hiddenKeyCode != nil {
             var hostVisibleKeyCodes = pressedKeyCodes
             if let hiddenKeyCode {
@@ -527,8 +533,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             )
         }
 
-        guard let normalizingModifierKeyCode,
-              !preservesSynthesizedModifiers else { return flags }
+        guard let normalizingModifierKeyCode else { return flags }
         let familyKeyCodes = modifierFamilyKeyCodes(for: normalizingModifierKeyCode)
         guard !familyKeyCodes.isEmpty else { return flags }
 

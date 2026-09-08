@@ -652,17 +652,20 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         }
         composer.clearLocalBuffer()
         CursorRectResolver.invalidateCache()
+        // Publish the requested language before host keyboard IPC. A nested
+        // keyDown from `overrideKeyboardWithKeyboardNamed:` must already see
+        // the new mode; do not rewrite that mode after a newer owner or toggle
+        // has taken over during the IPC.
+        applyMode()
         syncRomanKeyboardLayout(session.client, nextMode)
         trace.mark(.keyboardOverride)
         guard session.isCurrent(writeLease), transactionIsCurrent() else {
             if transactionIsCurrent() {
                 session.discardForSecureInput()
                 session.deferRomanKeyboardLayoutSync(trace: trace)
-                applyMode()
             }
             return false
         }
-        applyMode()
         return true
     }
 

@@ -256,6 +256,9 @@ public protocol ConfigurationProviding: AnyObject, Sendable {
     /// instead of forcing the ABC/US layout.
     var respectCurrentRomanKeyboardLayout: Bool { get }
 
+    /// Whether extra Hangul vowel combining and split-backspace deletion are enabled.
+    var extendedVowelCombinationEnabled: Bool { get }
+
     /// Whether Hangyeol should apply English text-convenience substitutions
     /// instead of leaving them entirely to the host application.
     var englishTextConvenienceFallbackEnabled: Bool { get }
@@ -288,6 +291,9 @@ public extension ConfigurationProviding {
 
     /// Default preserves Hangyeol's existing ABC/US override behavior.
     var respectCurrentRomanKeyboardLayout: Bool { false }
+
+    /// Default off: extra vowel combining and split deletion stay disabled.
+    var extendedVowelCombinationEnabled: Bool { false }
 
     /// Default is pure pass-through; hosts own English text substitutions.
     var englishTextConvenienceFallbackEnabled: Bool { false }
@@ -349,6 +355,7 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
     private var cachedEnglishTextConvenienceFallbackEnabled: Bool
     private var cachedExperimentalDirectInsertion: Bool
     private var cachedRespectCurrentRomanKeyboardLayout: Bool
+    private var cachedExtendedVowelCombinationEnabled: Bool
     private var cachedCapsLockProducesDoubleConsonants: Bool
 
     private convenience init() {
@@ -380,6 +387,9 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
         self.cachedRespectCurrentRomanKeyboardLayout = defaults.bool(
             forKey: Keys.respectCurrentRomanKeyboardLayout
         )
+        self.cachedExtendedVowelCombinationEnabled = defaults.bool(
+            forKey: Keys.extendedVowelCombinationEnabled
+        )
         self.cachedCapsLockProducesDoubleConsonants = defaults.object(
             forKey: Keys.capsLockProducesDoubleConsonants
         ) == nil || defaults.bool(forKey: Keys.capsLockProducesDoubleConsonants)
@@ -397,6 +407,7 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
         static let autoUpdateCheck = key("autoUpdateCheck")
         static let experimentalDirectInsertion = key("experimentalDirectInsertion")
         static let respectCurrentRomanKeyboardLayout = key("respectCurrentRomanKeyboardLayout")
+        static let extendedVowelCombinationEnabled = key("extendedVowelCombinationEnabled")
         static let englishTextConvenienceFallbackEnabled = key(
             "englishTextConvenienceFallbackEnabled"
         )
@@ -585,6 +596,23 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
             guard didChange else { return }
             defaults.set(newValue, forKey: Keys.respectCurrentRomanKeyboardLayout)
             NotificationCenter.default.post(name: .romanKeyboardLayoutPreferenceChanged, object: nil)
+        }
+    }
+
+    /// Allow extra Hangul vowel combining and split-backspace deletion.
+    /// Default OFF keeps the established two-set composition behavior.
+    public var extendedVowelCombinationEnabled: Bool {
+        get {
+            systemTextFeatureLock.withLock { cachedExtendedVowelCombinationEnabled }
+        }
+        set {
+            let didChange = systemTextFeatureLock.withLock {
+                guard cachedExtendedVowelCombinationEnabled != newValue else { return false }
+                cachedExtendedVowelCombinationEnabled = newValue
+                return true
+            }
+            guard didChange else { return }
+            defaults.set(newValue, forKey: Keys.extendedVowelCombinationEnabled)
         }
     }
 
@@ -818,6 +846,9 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
         let refreshedKeyboardId = defaults.string(forKey: Keys.keyboardId) ?? "2"
         let refreshedDirectInsertion = defaults.bool(forKey: Keys.experimentalDirectInsertion)
         let refreshedRomanLayout = defaults.bool(forKey: Keys.respectCurrentRomanKeyboardLayout)
+        let refreshedExtendedVowelCombination = defaults.bool(
+            forKey: Keys.extendedVowelCombinationEnabled
+        )
         let refreshedCapsLockDoubleConsonants = defaults.object(
             forKey: Keys.capsLockProducesDoubleConsonants
         ) == nil || defaults.bool(forKey: Keys.capsLockProducesDoubleConsonants)
@@ -825,12 +856,14 @@ public final class ConfigurationManager: ConfigurationProviding, @unchecked Send
             guard cachedKeyboardId != refreshedKeyboardId
                     || cachedExperimentalDirectInsertion != refreshedDirectInsertion
                     || cachedRespectCurrentRomanKeyboardLayout != refreshedRomanLayout
+                    || cachedExtendedVowelCombinationEnabled != refreshedExtendedVowelCombination
                     || cachedCapsLockProducesDoubleConsonants != refreshedCapsLockDoubleConsonants else {
                 return false
             }
             cachedKeyboardId = refreshedKeyboardId
             cachedExperimentalDirectInsertion = refreshedDirectInsertion
             cachedRespectCurrentRomanKeyboardLayout = refreshedRomanLayout
+            cachedExtendedVowelCombinationEnabled = refreshedExtendedVowelCombination
             cachedCapsLockProducesDoubleConsonants = refreshedCapsLockDoubleConsonants
             return true
         }

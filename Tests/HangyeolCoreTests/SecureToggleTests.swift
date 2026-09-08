@@ -142,7 +142,7 @@ struct SecureToggleTests {
         })
     }
 
-    @Test("Nonsecure toggle preserves finalize, layout, and mode order")
+    @Test("Nonsecure toggle preserves finalize, mode, and layout order")
     func nonsecureTogglePreservesTransactionOrder() {
         let (session, composer, client, statusBar) = makeNonsecureSession()
         _ = composer.handle(
@@ -169,7 +169,7 @@ struct SecureToggleTests {
 
         #expect(performedClientTransaction)
         #expect(client.insertCalls.count == 1)
-        #expect(modeDuringKeyboardOverride == .korean)
+        #expect(modeDuringKeyboardOverride == .english)
         #expect(composer.inputMode == .english)
         #expect(statusBar.currentMode == .english)
     }

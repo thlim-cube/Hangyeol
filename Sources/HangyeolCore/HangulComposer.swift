@@ -115,6 +115,8 @@ public class HangulComposer: @unchecked Sendable {
        DebugLogger.event("composer.context_configured")
        return ctx
     }()
+    private let keyboardManager = HangulKeyboardManager()
+    private var activeKeyboard: HangulKeyboard?
     
     /// Text convenience handler (double-space period)
     /// Owns all state for text convenience features
@@ -193,6 +195,7 @@ public class HangulComposer: @unchecked Sendable {
                 configuration.englishTextConvenienceFallbackEnabled
             }
         )
+        self.activeKeyboard = keyboardManager.keyboard(for: keyboardLayoutId)
         DebugLogger.event("composer.initialized")
     }
 
@@ -222,6 +225,7 @@ public class HangulComposer: @unchecked Sendable {
         // Re-initialize context with new keyboard ID
         keyboardLayoutId = id
         context = ThreadSafeHangulInputContext(keyboard: id)
+        activeKeyboard = keyboardManager.keyboard(for: id)
         clearLocalBuffer()
     }
     
@@ -425,6 +429,7 @@ public class HangulComposer: @unchecked Sendable {
                 localTextBuffer.removeLast()
             }
             if !context.isEmpty() {
+                applyFineGrainedBackspacePolicy()
                 if context.backspace() {
                     updateComposition(delegate: delegate)
                     return true
@@ -449,6 +454,10 @@ public class HangulComposer: @unchecked Sendable {
             return false
         }
         
+        if shouldCommitBeforeExtendedI(char) {
+            commitComposition(delegate: delegate)
+        }
+
         // Primary attempt
         if context.process(Character(char)) {
             updateComposition(delegate: delegate)
@@ -614,6 +623,71 @@ public class HangulComposer: @unchecked Sendable {
         
         // If we processed anything, we return true to stop system from handling duplicates.
         return handledAtLeastOnce
+    }
+
+    private func mappedJamo(for scalar: Unicode.Scalar) -> UCSChar {
+        activeKeyboard?.mapKey(Int(scalar.value)) ?? 0
+    }
+
+    private func currentSyllableJamo() -> HangulJamoCombination {
+        let preedit = context.getPreeditString()
+        var result = HangulJamoCombination()
+        for code in preedit {
+            if HangulCharacter.isSyllable(code) {
+                return HangulCharacter.syllableToJamo(code)
+            }
+            if HangulCharacter.isChoseong(code) {
+                result.choseong = code
+            } else if HangulCharacter.isJungseong(code) {
+                result.jungseong = code
+            } else if HangulCharacter.isJongseong(code) {
+                result.jongseong = code
+            } else if (0x314F...0x3163).contains(code) {
+                result.jungseong = HangulCharacter.compatibilityJamoToJamo(code, as: .jungseong)
+            } else if HangulCharacter.isCJamo(code) {
+                let asChoseong = HangulCharacter.compatibilityJamoToJamo(code, as: .choseong)
+                if HangulCharacter.isChoseong(asChoseong) {
+                    result.choseong = asChoseong
+                    continue
+                }
+                let asJongseong = HangulCharacter.compatibilityJamoToJamo(code, as: .jongseong)
+                if HangulCharacter.isJongseong(asJongseong) {
+                    result.jongseong = asJongseong
+                }
+            }
+        }
+        return result
+    }
+
+    private func shouldCommitBeforeExtendedI(_ char: Unicode.Scalar) -> Bool {
+        guard !configuration.extendedVowelCombinationEnabled else { return false }
+        guard mappedJamo(for: char) == 0x1175 else { return false }
+        guard !context.isEmpty() else { return false }
+        let jamo = currentSyllableJamo()
+        guard jamo.jongseong == 0 else { return false }
+        switch jamo.jungseong {
+        case 0x1161, 0x1163, 0x1165, 0x1167:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func isNoFinalExtendedTargetVowel() -> Bool {
+        let jamo = currentSyllableJamo()
+        guard jamo.jongseong == 0 else { return false }
+        switch jamo.jungseong {
+        case 0x1162, 0x1164, 0x1166, 0x1168:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func applyFineGrainedBackspacePolicy() {
+        let atomic = !configuration.extendedVowelCombinationEnabled
+            && isNoFinalExtendedTargetVowel()
+        context.setOption(.fineGrainedBackspace, value: !atomic)
     }
 
     /// NSEvent characters reflect the combined Caps Lock and Shift state. When

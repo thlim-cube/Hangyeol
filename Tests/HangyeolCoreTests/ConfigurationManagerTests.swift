@@ -93,6 +93,37 @@ struct ConfigurationManagerTests {
         #expect(UserDefaults.standard.bool(forKey: "com.thlim.hangyeol.englishTextConvenienceFallbackEnabled"))
     }
 
+    @Test("Extended vowel combination defaults off and persists true and false")
+    func extendedVowelCombinationPreferencePersistence() throws {
+        let suiteName = "com.thlim.hangyeol.tests.extended-vowel-combination.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let key = "com.thlim.hangyeol.extendedVowelCombinationEnabled"
+        let config = ConfigurationManager(
+            defaults: defaults,
+            keyBindingDataReader: { _ in nil }
+        )
+
+        #expect(!config.extendedVowelCombinationEnabled)
+        #expect(defaults.object(forKey: key) == nil)
+
+        config.extendedVowelCombinationEnabled = true
+        #expect(config.extendedVowelCombinationEnabled)
+        #expect(defaults.object(forKey: key) as? Bool == true)
+        #expect(ConfigurationManager(
+            defaults: defaults,
+            keyBindingDataReader: { _ in nil }
+        ).extendedVowelCombinationEnabled)
+
+        config.extendedVowelCombinationEnabled = false
+        #expect(!config.extendedVowelCombinationEnabled)
+        #expect(defaults.object(forKey: key) as? Bool == false)
+        #expect(!ConfigurationManager(
+            defaults: defaults,
+            keyBindingDataReader: { _ in nil }
+        ).extendedVowelCombinationEnabled)
+    }
+
     @Test("Caps Lock double consonants default on and persist when disabled")
     func capsLockDoubleConsonantPreferencePersistence() throws {
         let suiteName = "com.thlim.hangyeol.tests.caps-lock-double-consonants.\(UUID().uuidString)"
@@ -394,25 +425,37 @@ struct ConfigurationManagerTests {
         )
         let directReadsAfterInitialization = defaults.experimentalDirectInsertionReadCount
         let romanReadsAfterInitialization = defaults.respectCurrentRomanLayoutReadCount
+        let vowelReadsAfterInitialization = defaults.extendedVowelCombinationReadCount
         let keyboardReadsAfterInitialization = defaults.keyboardIdReadCount
 
         for _ in 0..<1_000 {
             _ = config.experimentalDirectInsertion
             _ = config.respectCurrentRomanKeyboardLayout
+            _ = config.extendedVowelCombinationEnabled
             _ = config.keyboardId
         }
 
         #expect(defaults.experimentalDirectInsertionReadCount == directReadsAfterInitialization)
         #expect(defaults.respectCurrentRomanLayoutReadCount == romanReadsAfterInitialization)
+        #expect(defaults.extendedVowelCombinationReadCount == vowelReadsAfterInitialization)
         #expect(defaults.keyboardIdReadCount == keyboardReadsAfterInitialization)
 
         defaults.simulatedExperimentalDirectInsertion = true
         defaults.simulatedRespectCurrentRomanLayout = true
+        defaults.simulatedExtendedVowelCombination = true
         defaults.simulatedKeyboardId = "3"
         #expect(config.refreshInputPolicySnapshot())
         #expect(config.experimentalDirectInsertion)
         #expect(config.respectCurrentRomanKeyboardLayout)
+        #expect(config.extendedVowelCombinationEnabled)
         #expect(config.keyboardId == "3")
+
+        // A change to this option alone must publish a fresh policy snapshot.
+        defaults.simulatedExtendedVowelCombination = false
+        #expect(config.extendedVowelCombinationEnabled)
+        #expect(config.refreshInputPolicySnapshot())
+        #expect(!config.extendedVowelCombinationEnabled)
+        #expect(!config.refreshInputPolicySnapshot())
     }
     
     @Test("System double-space-period setting is readable")
@@ -473,9 +516,11 @@ private final class InputPolicyReadCountingDefaults: UserDefaults, @unchecked Se
     private let countLock = NSLock()
     private var storedReadCount = 0
     private var storedRespectCurrentRomanLayoutReadCount = 0
+    private var storedExtendedVowelCombinationReadCount = 0
     private var storedKeyboardIdReadCount = 0
     private var storedSimulatedExperimentalDirectInsertion = false
     private var storedSimulatedRespectCurrentRomanLayout = false
+    private var storedSimulatedExtendedVowelCombination = false
     private var storedSimulatedKeyboardId = "2"
 
     var experimentalDirectInsertionReadCount: Int {
@@ -484,6 +529,10 @@ private final class InputPolicyReadCountingDefaults: UserDefaults, @unchecked Se
 
     var respectCurrentRomanLayoutReadCount: Int {
         countLock.withLock { storedRespectCurrentRomanLayoutReadCount }
+    }
+
+    var extendedVowelCombinationReadCount: Int {
+        countLock.withLock { storedExtendedVowelCombinationReadCount }
     }
 
     var keyboardIdReadCount: Int {
@@ -498,6 +547,11 @@ private final class InputPolicyReadCountingDefaults: UserDefaults, @unchecked Se
     var simulatedRespectCurrentRomanLayout: Bool {
         get { countLock.withLock { storedSimulatedRespectCurrentRomanLayout } }
         set { countLock.withLock { storedSimulatedRespectCurrentRomanLayout = newValue } }
+    }
+
+    var simulatedExtendedVowelCombination: Bool {
+        get { countLock.withLock { storedSimulatedExtendedVowelCombination } }
+        set { countLock.withLock { storedSimulatedExtendedVowelCombination = newValue } }
     }
 
     var simulatedKeyboardId: String {
@@ -526,6 +580,12 @@ private final class InputPolicyReadCountingDefaults: UserDefaults, @unchecked Se
             return countLock.withLock {
                 storedRespectCurrentRomanLayoutReadCount += 1
                 return storedSimulatedRespectCurrentRomanLayout
+            }
+        }
+        if defaultName == "com.thlim.hangyeol.extendedVowelCombinationEnabled" {
+            return countLock.withLock {
+                storedExtendedVowelCombinationReadCount += 1
+                return storedSimulatedExtendedVowelCombination
             }
         }
         return super.bool(forKey: defaultName)

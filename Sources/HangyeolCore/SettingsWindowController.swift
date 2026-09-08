@@ -96,6 +96,7 @@ struct SettingsView: View {
     @State private var respectCurrentRomanKeyboardLayout = ConfigurationManager.shared.respectCurrentRomanKeyboardLayout
     @State private var englishTextConvenienceFallbackEnabled = ConfigurationManager.shared.englishTextConvenienceFallbackEnabled
     @State private var capsLockProducesDoubleConsonants = ConfigurationManager.shared.capsLockProducesDoubleConsonants
+    @State private var extendedVowelCombinationEnabled = ConfigurationManager.shared.extendedVowelCombinationEnabled
     @State private var toggleKeyBinding = ConfigurationManager.shared.toggleKeyBinding
     @State private var hanjaKeyBinding = ConfigurationManager.shared.hanjaKeyBinding
     @State private var autoUpdateCheckEnabled = ConfigurationManager.shared.autoUpdateCheckEnabled
@@ -161,6 +162,7 @@ struct SettingsView: View {
             respectCurrentRomanKeyboardLayout = ConfigurationManager.shared.respectCurrentRomanKeyboardLayout
             englishTextConvenienceFallbackEnabled = ConfigurationManager.shared.englishTextConvenienceFallbackEnabled
             capsLockProducesDoubleConsonants = ConfigurationManager.shared.capsLockProducesDoubleConsonants
+            extendedVowelCombinationEnabled = ConfigurationManager.shared.extendedVowelCombinationEnabled
             toggleKeyBinding = ConfigurationManager.shared.toggleKeyBinding
             hanjaKeyBinding = ConfigurationManager.shared.hanjaKeyBinding
             autoUpdateCheckEnabled = ConfigurationManager.shared.autoUpdateCheckEnabled
@@ -238,6 +240,17 @@ struct SettingsView: View {
                     icon: "capslock",
                     isOn: $capsLockProducesDoubleConsonants
                 )
+
+                Divider()
+                    .opacity(0.2)
+                    .padding(.horizontal, 12)
+
+                SettingsToggleRow(
+                    title: L10n.keyboard.extendedVowelCombination,
+                    subtitle: L10n.keyboard.extendedVowelCombinationSubtitle,
+                    icon: "character.cursor.ibeam",
+                    isOn: $extendedVowelCombinationEnabled
+                )
             }
             .onChange(of: selectedKeyboard) { _, newValue in
                 ConfigurationManager.shared.keyboardId = newValue
@@ -250,6 +263,9 @@ struct SettingsView: View {
             }
             .onChange(of: capsLockProducesDoubleConsonants) { _, newValue in
                 ConfigurationManager.shared.capsLockProducesDoubleConsonants = newValue
+            }
+            .onChange(of: extendedVowelCombinationEnabled) { _, newValue in
+                ConfigurationManager.shared.extendedVowelCombinationEnabled = newValue
             }
 
             CapsLockStatusCard(

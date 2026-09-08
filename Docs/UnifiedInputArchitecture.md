@@ -152,14 +152,15 @@ activation은 마지막 mode를 유지한다. 단, macOS가 Caps Lock 전환을 
 
 ```
 Tap/IOKit  ──requestToggle(source)──►  InputModeCoordinator
-   InputModeCoordinator: Caps Lock 소유면 거부, active controller 없으면 거부
+   InputModeCoordinator: Caps Lock 소유면 거부, active controller 없으면 의도를 보류
    InputModeCoordinator ──performModeTransition──►  HangyeolInputController
       Controller: stale session context를 현재 field 기준으로 갱신
       비보안: 현재 field generation의 client write를 승인
              → 이전 generation 조합은 write-free discard
              → 같은 generation의 active composition만 commit (1회)
-             → overrideKeyboardWithKeyboardNamed(ABC/US 또는 opt-in 현재 Roman layout)
              → composer.setInputMode(next)
+             → overrideKeyboardWithKeyboardNamed(ABC/US 또는 opt-in 현재 Roman layout)
+               (IPC 재진입 첫 키도 새 mode 사용, 복귀 후 mode 재기록 없음)
       Secure Input: client write 없이 composition discard
                     → composer.setInputMode(next)
                     → Roman layout sync는 다음 비보안 입력 직전까지 보류
@@ -183,7 +184,7 @@ TIS/소유권 알림 ──► InputModeOwnershipTracker
 실패 처리:
 
 - active controller가 없으면 composer mode만 단독으로 바꾸지 않는다(다음 activate에서 stale state로 첫 글자 엉킴 방지).
-- active session이 없으면 custom toggle은 no-op이다.
+- active session이 없거나 전환이 완료되지 못하면 custom toggle 의도를 다음 안전한 activate/keyDown 경계까지 유지한다.
 - Secure Input에서는 pending macOS 소유권 정합화만 보류하므로 실제 `InputModeStore`와 client는 바뀌지 않는다. 이는 client write 없이 실제 내부 mode를 바꾸고 Roman layout만 보류하는 Secure custom toggle과 별도 계약이다.
 - TIS source를 조회할 수 없으면 선택 source를 추정하지 않는다.
 - Caps Lock 소유 상태면 custom toggle은 진입 자체가 거부된다.

@@ -39,6 +39,8 @@
 "keyboard.englishConveniencesSubtitle" = "Hangyeol applies auto-capitalization, smart punctuation, and double-space periods. Off by default to avoid duplicating app features.";
 "keyboard.capsLockDoubleConsonants" = "Use Caps Lock for Double Consonants";
 "keyboard.capsLockDoubleConsonantsSubtitle" = "When Caps Lock is on, type ㄲ, ㄸ, ㅃ, ㅆ, and ㅉ without holding Shift.";
+"keyboard.extendedVowelCombination" = "Extra Vowel Combining and Split Deletion";
+"keyboard.extendedVowelCombinationSubtitle" = "Allows ㅕ + ㅣ → ㅖ input and ㅖ → ㅕ deletion.";
 
 /* Toggle Key */
 "toggle.title" = "Korean/English Toggle";

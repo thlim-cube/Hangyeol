@@ -2,6 +2,73 @@ import Cocoa
 import Testing
 @testable import HangyeolCore
 
+@Suite("Session-authorized deferred host keys")
+struct DeferredHostKeySessionTests {
+    enum Boundary: CaseIterable {
+        case unchanged, fieldChanged, secureThenNonSecure
+    }
+
+    @Test("Only a continuously authorized session delivers its queued host key",
+          arguments: [KeyCode.return, KeyCode.forwardDelete], Boundary.allCases)
+    func deferredKeyAfterSessionBoundary(keyCode: UInt16, boundary: Boundary) throws {
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.google.Chrome"
+        let context = ClientContext(
+            bundleId: client.bundleID,
+            hasTextInputCapability: true,
+            isLikelyDesktopArea: false,
+            documentAccessSafe: true
+        )
+        let composer = HangulComposer(
+            statusBar: MockStatusBar(), configuration: MockConfiguration()
+        )
+        let session = InputSession(client: client, context: context, composer: composer)
+        session.prepareForNonSecureClientWrites()
+        #expect(composer.handle(
+            TestEventFactory.keyEvent(char: "a", keyCode: 0)!, delegate: session.adapter
+        ))
+        #expect(client.markedText == "ㅁ")
+        let driver = ManualHostKeyReplayDriver()
+        let captured = session.adapter.captureDeferredClientWriteValidator()
+        #expect(HostKeyTransaction.schedule(
+            client: client,
+            keyCode: keyCode,
+            modifierFlags: 0,
+            isClientWriteAllowed: captured,
+            didPost: { _ in },
+            expectedCommittedText: client.markedText,
+            environment: driver.environment
+        ))
+        composer.forceCommit(delegate: session.adapter)
+        #expect(client.document == "ㅁ")
+        #expect(driver.postedEventTypes.isEmpty)
+
+        switch boundary {
+        case .unchanged:
+            break
+        case .fieldChanged:
+            session.markContextStale()
+            session.refreshContext(context, fieldIdentityMayHaveChanged: true)
+            session.prepareForNonSecureClientWrites()
+        case .secureThenNonSecure:
+            session.discardForSecureInput()
+            session.prepareForNonSecureClientWrites()
+        }
+        #expect(session.adapter.canWriteToClient())
+        #expect(session.adapter.captureDeferredClientWriteValidator()())
+
+        for _ in 0..<3 where !driver.polls.isEmpty {
+            try driver.runNextPoll()
+        }
+        #expect(driver.polls.isEmpty)
+        #expect(driver.postedEventTypes == (
+            boundary == .unchanged ? [.keyDown, .keyUp] : []
+        ))
+        // The driver records events only; no key is posted to a real application.
+        #expect(client.document == "ㅁ")
+    }
+}
+
 // MARK: - Return delivery harness
 
 /// Models the complete result of one IMK keyDown: Hangyeol gets first refusal and,

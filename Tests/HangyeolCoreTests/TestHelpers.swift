@@ -24,6 +24,7 @@ final class MockConfiguration: ConfigurationProviding, @unchecked Sendable {
     var controlSpaceAsToggle: Bool { false }
     var capsLockInputSourceSwitchEnabled: Bool { false }
     var capsLockProducesDoubleConsonants: Bool = true
+    var extendedVowelCombinationEnabled: Bool = false
     var doubleSpacePeriodEnabled: Bool { true }
     var autoCapitalizationEnabled: Bool { true }
     var smartQuoteSubstitutionEnabled: Bool { true }

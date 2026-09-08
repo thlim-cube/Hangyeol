@@ -12,6 +12,7 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
     let client: IMKTextInput
     private var clientWriteIsAllowed: () -> Bool = { true }
     private var deferredHostKeyBoundaryHandler: (UInt16) -> Void = { _ in }
+    private var deferredClientWriteValidatorFactory: (() -> () -> Bool)?
 
     let hostSurface: HostSurface
 
@@ -41,6 +42,16 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
 
     func setClientWriteValidator(_ validator: @escaping () -> Bool) {
         clientWriteIsAllowed = validator
+    }
+
+    func setDeferredClientWriteValidatorFactory(
+        _ factory: @escaping () -> () -> Bool
+    ) {
+        deferredClientWriteValidatorFactory = factory
+    }
+
+    func captureDeferredClientWriteValidator() -> () -> Bool {
+        deferredClientWriteValidatorFactory?() ?? clientWriteIsAllowed
     }
 
     func setDeferredHostKeyBoundaryHandler(
@@ -73,11 +84,12 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
     }
 
     func tryScheduleHostKey(keyCode: UInt16, modifierFlags: UInt) -> Bool {
-        HostKeyTransaction.schedule(
+        let isClientWriteAllowed = captureDeferredClientWriteValidator()
+        return HostKeyTransaction.schedule(
             client: client,
             keyCode: keyCode,
             modifierFlags: modifierFlags,
-            isClientWriteAllowed: clientWriteIsAllowed,
+            isClientWriteAllowed: isClientWriteAllowed,
             didPost: deferredHostKeyBoundaryHandler,
             expectedCommittedText: hostTransactionMarkedText
         )
@@ -88,12 +100,13 @@ class BaseClientAdapter: NSObject, HangulComposerDelegate {
         modifierFlags: UInt,
         commit: () -> Void
     ) -> Bool {
+        let isClientWriteAllowed = captureDeferredClientWriteValidator()
         let confirmedMarkedRange = hostTransactionMarkedRange
         return HostKeyTransaction.perform(
             client: client,
             keyCode: keyCode,
             modifierFlags: modifierFlags,
-            isClientWriteAllowed: clientWriteIsAllowed,
+            isClientWriteAllowed: isClientWriteAllowed,
             didPost: deferredHostKeyBoundaryHandler,
             expectedCommittedText: hostTransactionMarkedText,
             expectedMarkedRange: confirmedMarkedRange

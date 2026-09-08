@@ -131,6 +131,11 @@ final class InputSession: @unchecked Sendable {
     /// boundary; lifecycle callbacks can never grant this permission themselves.
     private var lastNonSecureGeneration: UInt64?
 
+    /// Increments whenever deferred client-write authorization is revoked.
+    /// Separate from `contextStateRevision` so write revocation does not
+    /// invalidate in-flight field analysis.
+    private var clientWriteAuthorizationRevision: UInt64 = 0
+
     /// Exact marked preedit owned when a write-free discard became necessary.
     /// Cleanup requires both the same field generation and the same normalized text.
     private var deferredMarkedTextCleanupToken: DeferredMarkedTextCleanupToken?
@@ -991,6 +996,7 @@ final class InputSession: @unchecked Sendable {
         composer.discardCompositionForPassThrough()
         direct?.resetPreeditTracking()
         lastNonSecureGeneration = nil
+        clientWriteAuthorizationRevision &+= 1
 
         guard rebuildAdapter else { return }
         let directInsertionEnabled = experimentalDirectInsertion()
@@ -1013,6 +1019,23 @@ final class InputSession: @unchecked Sendable {
     private func configureClientWriteValidator(on adapter: BaseClientAdapter) {
         adapter.setClientWriteValidator { [weak self] in
             self?.clientWritesAreConfirmedSafe == true
+        }
+        adapter.setDeferredClientWriteValidatorFactory { [weak self, weak adapter] in
+            guard let self,
+                  let adapter,
+                  self.adapter === adapter,
+                  self.clientWritesAreConfirmedSafe,
+                  let lease = self.captureContextStateLease() else {
+                return { false }
+            }
+            let capturedRevision = self.clientWriteAuthorizationRevision
+            return { [weak self, weak adapter] in
+                guard let self, let adapter else { return false }
+                return self.adapter === adapter
+                    && self.clientWritesAreConfirmedSafe
+                    && self.isCurrent(lease)
+                    && self.clientWriteAuthorizationRevision == capturedRevision
+            }
         }
         adapter.setDeferredHostKeyBoundaryHandler { [weak self] keyCode in
             self?.observeHostFieldBoundaryKeyDown(

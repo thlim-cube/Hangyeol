@@ -39,6 +39,8 @@
 "keyboard.englishConveniencesSubtitle" = "자동 대문자, 스마트 문장부호, 스페이스 두 번으로 마침표 입력을 한결이 처리합니다. 앱 기능과 중복될 수 있어 기본값은 꺼져 있습니다.";
 "keyboard.capsLockDoubleConsonants" = "Caps Lock으로 쌍자음 입력";
 "keyboard.capsLockDoubleConsonantsSubtitle" = "Caps Lock이 켜져 있으면 Shift 없이도 ㄲ·ㄸ·ㅃ·ㅆ·ㅉ을 입력합니다.";
+"keyboard.extendedVowelCombination" = "추가 모음 결합·분해 삭제";
+"keyboard.extendedVowelCombinationSubtitle" = "ㅕ + ㅣ → ㅖ 입력과 ㅖ → ㅕ 삭제를 허용합니다.";
 
 /* Toggle Key */
 "toggle.title" = "한/영 전환";

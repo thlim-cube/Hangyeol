@@ -97,7 +97,7 @@ Tab·host commit·marked range 밖 클릭처럼 이미 증명된 field handoff�
 
 `RightCommandSuppressor`가 `CGEventTap`으로 시스템 레벨 키 이벤트를 가로채서 사용자가 설정한 전환키(기본: 우측 Command)와 한자키(기본: 우측 Option)를 처리한다. Key Recorder 방식으로 아무 키나 등록할 수 있다. modifier-only 전환키는 Shift·Backspace 등 타이핑 중 겹친 키와 무관하게 동작하며, Codex 앱샷을 위한 좌우 Command 동시 입력만 전환을 취소하고 원래 키 조합을 host에 남긴다. `CGEventTap`은 일시 비활성화 시 물리 modifier 상태를 다시 동기화해 재활성화한다. 60초 안에 세 번째 비활성화가 발생하면 tap 자원을 먼저 완전히 해제한 뒤 IOKit으로 영구 인계한다. `ToggleMonitorStatusStore`가 시작 권한과 상태를 직렬화하므로 두 backend가 동시에 입력을 소유하지 않는다. IOKit fallback은 HID 매핑 가능한 modifier-only 바인딩만 지원하며, regular/combo 바인딩은 임의로 흉내 내지 않고 중앙 상태에 제한으로 기록한다.
 
-두 감시 backend는 전환키가 성립한 callback 안에서 `InputModeCoordinator.requestToggle`을 즉시 호출해 잠금으로 보호된 의도 큐에 먼저 기록한다. 첫 keyDown이 메인 큐 실행보다 빨라도 controller가 그 key를 해석하기 전에 pending 전환을 소비한다. Event Tap/IOKit callback에서는 IMK client write를 하지 않으며, 조합 확정·keyboard override·실제 mode write는 coordinator가 메인 스레드에서만 실행한다.
+두 감시 backend는 전환키가 성립한 callback 안에서 `InputModeCoordinator.requestToggle`을 즉시 호출해 잠금으로 보호된 의도 큐에 먼저 기록한다. 첫 keyDown이 메인 큐 실행보다 빨라도 controller가 그 key를 해석하기 전에 pending 전환을 소비한다. Event Tap/IOKit callback에서는 IMK client write를 하지 않으며, 조합 확정·실제 mode write·keyboard override는 coordinator가 메인 스레드에서 실행한다. 비보안 전환에서는 기존 조합을 확정한 뒤 새 mode를 먼저 게시하므로 keyboard override의 호스트 IPC가 첫 keyDown을 재진입시켜도 새 언어로 처리한다. IPC 복귀 후 이전 mode를 다시 쓰지 않는다.
 
 regular/combo 한자 바인딩은 `HanjaShortcutSessionState`가 `nonsecure`일 때만 down/repeat/up 쌍을 소비하고, `secure` 또는 `unknown`이면 전체 쌍을 host로 통과시킨다. modifier-only 한자키는 전역 단축키 계약을 유지하되 controller의 Secure Input 게이트가 후보 조회를 중단한다.
 
@@ -112,13 +112,13 @@ flowchart TD
     E --> L["session context 갱신"]
     L --> M{"Secure Input?"}
     M -->|"no"| F["active composition commit"]
-    F --> G["ABC/US keyboard override"]
-    G --> H["HangulComposer.setInputMode"]
+    F --> H["HangulComposer.setInputMode"]
+    H --> G["ABC/US keyboard override"]
     M -->|"yes"| N["write-free composition discard"]
     N --> O["HangulComposer.setInputMode"]
     O --> P["Roman layout sync 보류"]
     O --> I
-    H --> I{"mode"}
+    G --> I{"mode"}
     I -->|"korean"| J["libhangul 조합"]
     I -->|"english"| K["기본 설정: pass-through (return false), macOS가 영문 처리"]
 ```
