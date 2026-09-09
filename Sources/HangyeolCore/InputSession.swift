@@ -603,6 +603,85 @@ final class InputSession: @unchecked Sendable {
         }
     }
 
+    // MARK: Input delivery
+
+    /// The final, nonsecure input stage after the controller has classified the field.
+    func handleKeyDown(
+        _ event: NSEvent,
+        hostKeyEnvironment: DeferredHostKeyReplayEnvironment = .live
+    ) -> Bool {
+        let handled: Bool
+        if handleRemainingMarkedTextForwardDelete(event, environment: hostKeyEnvironment) {
+            composer.clearLocalBuffer()
+            handled = true
+        } else {
+            handled = composer.handle(event, delegate: adapter)
+        }
+        observeHostFieldBoundaryKeyDown(
+            keyCode: event.keyCode,
+            passedToHost: !handled
+        )
+        return handled
+    }
+
+    /// A focus-loss commit can be ignored by an already inactive Blink client.
+    /// The engine is empty on return, but passing Delete through would cancel the
+    /// host's remaining mark. Use only the freshly authorized field's live text;
+    /// never restore a previous session's preedit or its write authorization.
+    private func handleRemainingMarkedTextForwardDelete(
+        _ event: NSEvent,
+        environment: DeferredHostKeyReplayEnvironment
+    ) -> Bool {
+        guard event.type == .keyDown,
+              event.keyCode == KeyCode.forwardDelete,
+              event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+              composer.inputMode == .korean,
+              !composer.hasActiveComposition,
+              context.hostSurface == .blinkWeb,
+              adapter.deliveryMode == .markedText,
+              clientWritesAreConfirmedSafe else { return false }
+
+        let isWriteAllowed = adapter.captureDeferredClientWriteValidator()
+        let range = client.markedRange()
+        guard isWriteAllowed(),
+              Self.isReasonableMarkedRange(range),
+              let text = client.attributedSubstring(from: range)?.string,
+              isWriteAllowed(),
+              text.precomposedStringWithCanonicalMapping.utf16.count == range.length,
+              Self.confirmedMarkedTextMatch(
+                  in: client, range: range, expectedText: text,
+                  isClientWriteAllowed: isWriteAllowed
+              ) == true,
+              isWriteAllowed() else { return false }
+
+        return HostKeyTransaction.perform(
+            client: client,
+            keyCode: event.keyCode,
+            modifierFlags: event.modifierFlags.rawValue,
+            isClientWriteAllowed: isWriteAllowed,
+            didPost: { [weak self] keyCode in
+                self?.observeHostFieldBoundaryKeyDown(keyCode: keyCode, passedToHost: true)
+            },
+            expectedCommittedText: text,
+            expectedMarkedRange: range,
+            environment: environment,
+            commit: { [self] in
+                // Preparing the deletion also performs client IPC. Recheck both
+                // the field lease and live mark before the canonical commit.
+                guard isWriteAllowed(),
+                      Self.confirmedMarkedTextMatch(
+                          in: client, range: range, expectedText: text,
+                          isClientWriteAllowed: isWriteAllowed
+                      ) == true,
+                      isWriteAllowed() else { return }
+                client.insertText(
+                    text,
+                    replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
+                )
+            }
+        )
+    }
+
     // MARK: Duplicate keyDown suppression
 
     /// Route the keyDown as new input or an exact re-delivery of the immediately
@@ -1086,21 +1165,25 @@ final class InputSession: @unchecked Sendable {
     private static func confirmedMarkedTextMatch(
         in client: IMKTextInput,
         range: NSRange,
-        expectedText: String
+        expectedText: String,
+        isClientWriteAllowed: () -> Bool = { true }
     ) -> Bool? {
-        guard isReasonableMarkedRange(range) else { return false }
+        guard isClientWriteAllowed(), isReasonableMarkedRange(range) else { return false }
         guard let first = client.attributedSubstring(from: range)?.string else {
+            guard isClientWriteAllowed() else { return false }
             return range.length == expectedText.utf16.count ? nil : false
         }
-        guard first.utf16.count == range.length else { return false }
+        guard isClientWriteAllowed(), first.utf16.count == range.length else { return false }
         let normalizedExpected = expectedText.precomposedStringWithCanonicalMapping
         guard first.precomposedStringWithCanonicalMapping == normalizedExpected else {
             return false
         }
 
         let confirmedRange = client.markedRange()
-        guard confirmedRange == range,
+        guard isClientWriteAllowed(),
+              confirmedRange == range,
               let confirmed = client.attributedSubstring(from: confirmedRange)?.string,
+              isClientWriteAllowed(),
               confirmed.utf16.count == confirmedRange.length,
               confirmed.precomposedStringWithCanonicalMapping == normalizedExpected else {
             return false

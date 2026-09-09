@@ -1036,12 +1036,7 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         session.ensureAdapterMatchesPolicy()
 
         // 6. Compose, then invalidate field identity for host-owned field boundaries.
-        let handled = composer.handle(event, delegate: session.adapter)
-        session.observeHostFieldBoundaryKeyDown(
-            keyCode: event.keyCode,
-            passedToHost: !handled
-        )
-        return handled
+        return session.handleKeyDown(event)
     }
 
     /// Secure fields receive the raw key. A host-passed field boundary can reuse the

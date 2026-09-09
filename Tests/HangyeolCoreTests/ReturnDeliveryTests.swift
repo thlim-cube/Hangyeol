@@ -404,13 +404,35 @@ private final class DelayedBlinkForwardDeleteClient: FakeIMKTextInput {
 private final class RangeForwardDeleteClient: FakeIMKTextInput {
     private var markLocation = 2
     private(set) var orderedHostCalls: [String] = []
+    var ignoresCanonicalCommits = false
 
-    init(followingText: String = "다") {
+    init(followingText: String = "다", initialMarkedText: String = "마") {
         super.init()
-        document = "가나마\(followingText)라"
-        markedText = "마"
-        markedRangeValue = NSRange(location: markLocation, length: 1)
-        selectedRangeValue = NSRange(location: markLocation + 1, length: 0)
+        document = "가나\(initialMarkedText)\(followingText)라"
+        markedText = initialMarkedText
+        markedRangeValue = NSRange(
+            location: initialMarkedText.isEmpty ? NSNotFound : markLocation,
+            length: initialMarkedText.utf16.count
+        )
+        selectedRangeValue = NSRange(
+            location: markLocation + initialMarkedText.utf16.count, length: 0
+        )
+    }
+
+    override func setMarkedText(
+        _ string: Any!, selectionRange: NSRange, replacementRange: NSRange
+    ) {
+        let text = (string as? NSAttributedString)?.string ?? (string as? String) ?? ""
+        let previousLength = markedRangeValue.location == NSNotFound ? 0 : markedRangeValue.length
+        var units = Array(document.utf16)
+        units.replaceSubrange(markLocation..<(markLocation + previousLength), with: text.utf16)
+        document = String(decoding: units, as: UTF16.self)
+        markedText = text
+        markedRangeValue = NSRange(
+            location: text.isEmpty ? NSNotFound : markLocation, length: text.utf16.count
+        )
+        selectedRangeValue = NSRange(location: markLocation + selectionRange.location, length: 0)
+        markCalls.append(text)
     }
 
     override func insertText(_ string: Any!, replacementRange: NSRange) {
@@ -432,6 +454,7 @@ private final class RangeForwardDeleteClient: FakeIMKTextInput {
             return
         }
         orderedHostCalls.append("insert:\(text)")
+        guard !ignoresCanonicalCommits else { return }
         var units = Array(document.utf16)
         units.replaceSubrange(
             markLocation..<(markLocation + markedRangeValue.length),
@@ -445,10 +468,208 @@ private final class RangeForwardDeleteClient: FakeIMKTextInput {
         markedText = ""
         markedRangeValue = NSRange(location: NSNotFound, length: 0)
     }
+
+    /// The reported host behavior: a raw Delete cancels a still-live composition;
+    /// once composition has ended, the same key deletes the following character.
+    func performDefaultForwardDelete() {
+        let range = markedRangeValue.location != NSNotFound
+            ? markedRangeValue
+            : NSRange(location: selectedRangeValue.location, length: 1)
+        guard NSMaxRange(range) <= document.utf16.count else { return }
+        var units = Array(document.utf16)
+        units.removeSubrange(range.location..<NSMaxRange(range))
+        document = String(decoding: units, as: UTF16.self)
+        selectedRangeValue = NSRange(location: range.location, length: 0)
+        markedText = ""
+        markedRangeValue = NSRange(location: NSNotFound, length: 0)
+    }
 }
 
 @Suite("Return exactly-once delivery")
 struct ReturnDeliveryTests {
+    @Test("Window round-trip Forward Delete keeps 마 and removes the following 다",
+          arguments: [false, true], ["com.openai.codex", "com.google.Chrome", "com.tinyspeck.slackmacgap"])
+    func forwardDeleteAfterWindowRoundTrip(ignoredFocusCommit: Bool, bundleID: String) throws {
+        let client = RangeForwardDeleteClient(initialMarkedText: "")
+        client.bundleID = bundleID
+        let context = ClientContext(
+            bundleId: client.bundleID,
+            hasTextInputCapability: true,
+            isLikelyDesktopArea: false,
+            documentAccessSafe: true
+        )
+        let composer = HangulComposer(
+            statusBar: MockStatusBar(), configuration: MockConfiguration()
+        )
+        let session = InputSession(client: client, context: context, composer: composer)
+        session.prepareForNonSecureClientWrites()
+        composer.markKeystroke(bundleId: client.bundleID, hostSurface: context.hostSurface)
+        #expect(client.document == "가나다라")
+        #expect(client.selectedRangeValue == NSRange(location: 2, length: 0))
+        for (key, code) in [("a", UInt16(0)), ("k", UInt16(40))] {
+            #expect(session.handleKeyDown(try #require(
+                TestEventFactory.keyEvent(char: key, keyCode: code)
+            )))
+        }
+        #expect(client.document == "가나마다라")
+        #expect(client.markedText == "마")
+        #expect(client.markedRangeValue == NSRange(location: 2, length: 1))
+
+        // IMK may have already lost the host when the deactivation commit arrives.
+        client.ignoresCanonicalCommits = ignoredFocusCommit
+        #expect(session.handleAppDeactivation())
+        session.finalize(reason: .deactivateServer)
+        session.finishHostCommitBoundary()
+        #expect(!composer.hasActiveComposition)
+        #expect(client.document == "가나마다라")
+        #expect(client.markedText == (ignoredFocusCommit ? "마" : ""))
+
+        client.ignoresCanonicalCommits = false
+        session.markContextStaleForSameClientReactivation()
+        #expect(session.refreshContextForInputBoundary { _ in context })
+        session.prepareForNonSecureClientWrites()
+        let driver = ManualHostKeyReplayDriver()
+        let handled = session.handleKeyDown(try #require(TestEventFactory.keyEvent(
+            char: "\u{F728}", keyCode: KeyCode.forwardDelete, modifiers: .function
+        )), hostKeyEnvironment: driver.environment)
+        if !handled { client.performDefaultForwardDelete() }
+        #expect(client.document == "가나마라")
+        #expect(client.markedText.isEmpty)
+        #expect(client.selectedRangeValue == NSRange(location: 3, length: 0))
+        #expect(handled == ignoredFocusCommit)
+        #expect(driver.polls.isEmpty)
+        #expect(driver.postedEventTypes.isEmpty)
+    }
+
+    private func remainingMarkSession(approved: Bool = true) -> (InputSession, RangeForwardDeleteClient) {
+        let client = RangeForwardDeleteClient()
+        client.bundleID = "com.openai.codex"
+        let session = InputSession(
+            client: client,
+            context: ClientContext(
+                bundleId: client.bundleID, hasTextInputCapability: true,
+                isLikelyDesktopArea: false, documentAccessSafe: true
+            ),
+            composer: HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
+        )
+        if approved { session.prepareForNonSecureClientWrites() }
+        return (session, client)
+    }
+
+    @Test("Remaining-mark Delete requires a fresh nonsecure field and stable readable mark",
+          arguments: ["unapproved", "secure", "stale", "unreadable", "mark_changed", "field_changed"])
+    func remainingMarkDeleteRejectsUnprovenInput(boundary: String) throws {
+        let (session, client) = remainingMarkSession(approved: boundary != "unapproved")
+        var reads = 0
+        client.onAttributedSubstring = {
+            reads += 1
+            client.onAttributedSubstring = nil
+            if boundary == "mark_changed" {
+                client.document = "가나바다라"
+                client.markedText = "바"
+            } else if boundary == "field_changed" {
+                session.markContextStale()
+                client.document = "other"
+                client.markedText = ""
+                client.markedRangeValue = NSRange(location: NSNotFound, length: 0)
+            }
+        }
+        switch boundary {
+        case "secure": session.discardForSecureInput()
+        case "stale": session.markContextStale()
+        case "unreadable": client.attributedSubstringUnavailable = true
+        default: break
+        }
+        let driver = ManualHostKeyReplayDriver()
+        #expect(!session.handleKeyDown(try #require(TestEventFactory.keyEvent(
+            char: "\u{F728}", keyCode: KeyCode.forwardDelete
+        )), hostKeyEnvironment: driver.environment))
+        #expect(client.orderedHostCalls.isEmpty)
+        #expect(driver.polls.isEmpty)
+        #expect(driver.postedEventTypes.isEmpty)
+        if ["unapproved", "secure", "stale"].contains(boundary) { #expect(reads == 0) }
+        #expect(client.document == (
+            boundary == "mark_changed" ? "가나바다라" : boundary == "field_changed" ? "other" : "가나마다라"
+        ))
+    }
+
+    @Test("Remaining-mark Delete stops if field ownership changes during transaction preparation")
+    func remainingMarkDeleteRejectsPreparationReentry() throws {
+        let (session, client) = remainingMarkSession()
+        client.onSelectedRange = {
+            client.onSelectedRange = nil
+            session.markContextStale()
+        }
+        let driver = ManualHostKeyReplayDriver()
+        #expect(session.handleKeyDown(try #require(TestEventFactory.keyEvent(
+            char: "\u{F728}", keyCode: KeyCode.forwardDelete
+        )), hostKeyEnvironment: driver.environment))
+        while !driver.polls.isEmpty { try driver.runNextPoll() }
+        #expect(client.orderedHostCalls.isEmpty)
+        #expect(client.document == "가나마다라")
+        #expect(client.markedText == "마")
+        #expect(driver.postedEventTypes.isEmpty)
+    }
+
+    @Test("Remaining-mark recovery does not intercept Backspace or modified Delete",
+          arguments: [
+              (KeyCode.backspace, NSEvent.ModifierFlags()),
+              (KeyCode.forwardDelete, .command), (KeyCode.forwardDelete, .control),
+              (KeyCode.forwardDelete, .option), (KeyCode.forwardDelete, .shift)
+          ])
+    func remainingMarkDeletePreservesHostShortcuts(keyCode: UInt16, flags: NSEvent.ModifierFlags) throws {
+        let (session, client) = remainingMarkSession()
+        let driver = ManualHostKeyReplayDriver()
+        #expect(!session.handleKeyDown(try #require(TestEventFactory.keyEvent(
+            char: "", keyCode: keyCode, modifiers: flags
+        )), hostKeyEnvironment: driver.environment))
+        #expect(client.orderedHostCalls.isEmpty)
+        #expect(client.document == "가나마다라")
+        #expect(driver.polls.isEmpty)
+    }
+
+    @Test("Remaining-mark Delete commits the live host text, never stale adapter text")
+    func remainingMarkDeleteUsesLiveHostText() throws {
+        let (session, client) = remainingMarkSession()
+        session.adapter.setMarkedText("예전")
+        #expect(session.adapter.hostTransactionMarkedText == "예전")
+        client.document = "가나바다라"
+        client.markedText = "바"
+        client.markedRangeValue = NSRange(location: 2, length: 1)
+        client.selectedRangeValue = NSRange(location: 3, length: 0)
+        let driver = ManualHostKeyReplayDriver()
+        #expect(session.handleKeyDown(try #require(TestEventFactory.keyEvent(
+            char: "\u{F728}", keyCode: KeyCode.forwardDelete
+        )), hostKeyEnvironment: driver.environment))
+        #expect(client.document == "가나바라")
+        #expect(client.markedText.isEmpty)
+        #expect(client.orderedHostCalls == ["insert:바", "delete:3:1"])
+        #expect(driver.polls.isEmpty)
+    }
+
+    @Test("Remaining-mark recovery leaves English and native host delivery unchanged",
+          arguments: [false, true])
+    func remainingMarkDeleteKeepsPassThroughBoundaries(english: Bool) throws {
+        let (session, client) = remainingMarkSession()
+        if english {
+            session.composer.setInputMode(.english)
+        } else {
+            session.refreshContext(ClientContext(
+                bundleId: "com.apple.TextEdit", hasTextInputCapability: true,
+                isLikelyDesktopArea: false, documentAccessSafe: true
+            ), fieldIdentityMayHaveChanged: true)
+            session.prepareForNonSecureClientWrites()
+            session.ensureAdapterMatchesPolicy()
+        }
+        let driver = ManualHostKeyReplayDriver()
+        #expect(!session.handleKeyDown(try #require(TestEventFactory.keyEvent(
+            char: "\u{F728}", keyCode: KeyCode.forwardDelete
+        )), hostKeyEnvironment: driver.environment))
+        #expect(client.orderedHostCalls.isEmpty)
+        #expect(client.document == "가나마다라")
+        #expect(driver.polls.isEmpty)
+    }
+
     @Test("Deferred host key waits for two stable unmarked observations")
     func hostKeyWaitsForStableRetirement() throws {
         var gate = try #require(DeferredCompositionRetirementGate(
