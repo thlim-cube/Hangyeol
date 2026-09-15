@@ -363,6 +363,16 @@ struct DeferredCompositionRetirementGate {
         selectedRange: NSRange,
         committedTextIsVisible: Bool? = nil
     ) -> DeferredCompositionRetirementDecision {
+        // Blink can temporarily expose the owned preedit as a selection while
+        // its markedRange is unavailable. This is not a moved caret: wait for
+        // collapse and verified commit instead of cancelling the pending key.
+        if let originalMarkedRange,
+           selectedRange == originalMarkedRange,
+           markedRange == originalMarkedRange
+                || markedRange.location == NSNotFound || markedRange.length == 0 {
+            stableUnmarkedObservations = 0
+            return .wait
+        }
         if requiresCaretAnchor {
             guard committedTextVerificationRange(for: selectedRange) != nil else {
                 return .cancel
@@ -412,6 +422,7 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
         authorization: DeferredClientWriteAuthorization,
         postedBoundary: DeferredHostKeyBoundary,
         expectedCommittedText: String?,
+        confirmedMarkedRange: NSRange? = nil,
         environment: DeferredHostKeyReplayEnvironment
     ) {
         self.client = client
@@ -431,6 +442,14 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
             markedRange: initialMarkedRange,
             targetPolicy: targetPolicy
         )
+        if retirementGate == nil,
+           let confirmedMarkedRange,
+           confirmedMarkedRange.length == normalizedExpectedCommittedText?.utf16.count {
+            retirementGate = DeferredCompositionRetirementGate(
+                markedRange: confirmedMarkedRange,
+                targetPolicy: targetPolicy
+            )
+        }
         if retirementGate == nil,
            let normalizedExpectedCommittedText,
            !normalizedExpectedCommittedText.isEmpty {
@@ -569,6 +588,7 @@ enum HostKeyTransaction {
             isClientWriteAllowed: isClientWriteAllowed,
             didPost: didPost,
             expectedCommittedText: expectedCommittedText,
+            confirmedMarkedRange: expectedMarkedRangeIsConfirmed ? expectedMarkedRange : nil,
             environment: environment
         ) else { return false }
         commit()
@@ -605,6 +625,7 @@ enum HostKeyTransaction {
         isClientWriteAllowed: @escaping () -> Bool,
         didPost: @escaping (UInt16) -> Void,
         expectedCommittedText: String?,
+        confirmedMarkedRange: NSRange? = nil,
         environment: DeferredHostKeyReplayEnvironment = .live
     ) -> DeferredHostKeyReplay? {
         guard environment.canReplay(),
@@ -620,6 +641,7 @@ enum HostKeyTransaction {
             ),
             postedBoundary: DeferredHostKeyBoundary(handler: didPost),
             expectedCommittedText: expectedCommittedText,
+            confirmedMarkedRange: confirmedMarkedRange,
             environment: environment
         )
         return replay.isArmed ? replay : nil

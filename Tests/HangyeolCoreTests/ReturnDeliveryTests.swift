@@ -487,6 +487,77 @@ private final class RangeForwardDeleteClient: FakeIMKTextInput {
 
 @Suite("Return exactly-once delivery")
 struct ReturnDeliveryTests {
+    @Test("Captured composition survives an unavailable live range before Shift+Return or Delete",
+          arguments: [KeyCode.return, KeyCode.forwardDelete])
+    func capturedRangeSurvivesRendererGap(keyCode: UInt16) throws {
+        let client = FakeIMKTextInput()
+        let deleting = keyCode == KeyCode.forwardDelete
+        client.document = deleting ? "때이에" : "때에"
+        let range = NSRange(location: 1, length: 1)
+        client.markedRangeValue = NSRange(location: NSNotFound, length: 0)
+        client.selectedRangeValue = range // Blink exposes the preedit as selection.
+        client.attributedSubstringUnavailable = true
+        let driver = ManualHostKeyReplayDriver()
+        var commits = 0
+        var rendererStillComposing = true
+        driver.onKeyDown = {
+            let replacement = rendererStillComposing
+                ? range
+                : NSRange(location: client.selectedRangeValue.location, length: deleting ? 1 : 0)
+            client.document = (client.document as NSString).replacingCharacters(
+                in: replacement, with: deleting ? "" : "\n"
+            )
+        }
+        let handled = HostKeyTransaction.perform(
+            client: client, keyCode: keyCode,
+            modifierFlags: deleting ? 0 : NSEvent.ModifierFlags.shift.rawValue,
+            isClientWriteAllowed: { true }, didPost: { _ in },
+            expectedCommittedText: deleting ? "이" : "에",
+            expectedMarkedRange: range,
+            environment: driver.environment,
+            commit: { commits += 1 }
+        )
+        #expect(handled) // Never pass the original key into the live preedit.
+        #expect(commits == 1)
+        guard handled else { return }
+        try driver.runNextPoll()
+        #expect(driver.postedEventTypes.isEmpty)
+        client.attributedSubstringUnavailable = false
+        rendererStillComposing = false
+        client.selectedRangeValue = NSRange(location: 2, length: 0)
+        while !driver.polls.isEmpty { try driver.runNextPoll() }
+        #expect(driver.postedEventTypes == [.keyDown, .keyUp])
+        #expect(client.document == (deleting ? "때이" : "때에\n"))
+    }
+
+    @Test("Captured range cannot authorize replay after lost ownership or changed text",
+          arguments: ["unconfirmed", "revoked", "text_changed"])
+    func capturedRangeRejectsUnprovenReplay(boundary: String) throws {
+        let client = FakeIMKTextInput()
+        client.document = "때이에"
+        client.markedRangeValue = NSRange(location: NSNotFound, length: 0)
+        client.selectedRangeValue = NSRange(location: 1, length: 1)
+        client.attributedSubstringUnavailable = true
+        let driver = ManualHostKeyReplayDriver()
+        var allowed = true
+        var commits = 0
+        let handled = HostKeyTransaction.perform(
+            client: client, keyCode: KeyCode.forwardDelete, modifierFlags: 0,
+            isClientWriteAllowed: { allowed }, didPost: { _ in },
+            expectedCommittedText: "이", expectedMarkedRange: NSRange(location: 1, length: 1),
+            expectedMarkedRangeIsConfirmed: boundary != "unconfirmed",
+            environment: driver.environment, commit: { commits += 1 }
+        )
+        #expect(handled == (boundary != "unconfirmed"))
+        #expect(commits == (boundary == "unconfirmed" ? 0 : 1))
+        allowed = boundary != "revoked"
+        client.attributedSubstringUnavailable = false
+        client.selectedRangeValue = NSRange(location: 2, length: 0)
+        if boundary == "text_changed" { client.document = "때가에" }
+        while !driver.polls.isEmpty { try driver.runNextPoll() }
+        #expect(driver.postedEventTypes.isEmpty)
+    }
+
     @Test("Window round-trip Forward Delete keeps 마 and removes the following 다",
           arguments: [false, true], ["com.openai.codex", "com.google.Chrome", "com.tinyspeck.slackmacgap"])
     func forwardDeleteAfterWindowRoundTrip(ignoredFocusCommit: Bool, bundleID: String) throws {
@@ -556,9 +627,29 @@ struct ReturnDeliveryTests {
         return (session, client)
     }
 
-    @Test("Remaining-mark Delete requires a fresh nonsecure field and stable readable mark",
-          arguments: ["unapproved", "secure", "stale", "unreadable", "mark_changed", "field_changed"])
-    func remainingMarkDeleteRejectsUnprovenInput(boundary: String) throws {
+    @Test("Shift+Return preserves the host mark after the engine has been finalized")
+    func remainingMarkShiftReturn() throws {
+        let (session, client) = remainingMarkSession()
+        let driver = ManualHostKeyReplayDriver()
+        driver.onKeyDown = {
+            let range = client.markedRangeValue.location == NSNotFound
+                ? client.selectedRangeValue : client.markedRangeValue
+            client.document = (client.document as NSString).replacingCharacters(in: range, with: "\n")
+        }
+        let handled = session.handleKeyDown(try #require(TestEventFactory.keyEvent(
+            char: "\r", keyCode: KeyCode.return, modifiers: .shift
+        )), hostKeyEnvironment: driver.environment)
+        if !handled { driver.onKeyDown() }
+        while !driver.polls.isEmpty { try driver.runNextPoll() }
+        #expect(handled)
+        #expect(client.document == "가나마\n다라")
+        #expect(driver.postedEventTypes == [.keyDown, .keyUp])
+    }
+
+    @Test("Remaining-mark host keys require a fresh nonsecure field and stable readable mark",
+          arguments: ["unapproved", "secure", "stale", "unreadable", "mark_changed", "field_changed"],
+          [KeyCode.return, KeyCode.forwardDelete])
+    func remainingMarkDeleteRejectsUnprovenInput(boundary: String, keyCode: UInt16) throws {
         let (session, client) = remainingMarkSession(approved: boundary != "unapproved")
         var reads = 0
         client.onAttributedSubstring = {
@@ -582,7 +673,7 @@ struct ReturnDeliveryTests {
         }
         let driver = ManualHostKeyReplayDriver()
         #expect(!session.handleKeyDown(try #require(TestEventFactory.keyEvent(
-            char: "\u{F728}", keyCode: KeyCode.forwardDelete
+            char: "", keyCode: keyCode, modifiers: keyCode == KeyCode.return ? .shift : []
         )), hostKeyEnvironment: driver.environment))
         #expect(client.orderedHostCalls.isEmpty)
         #expect(driver.polls.isEmpty)

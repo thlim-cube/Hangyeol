@@ -611,7 +611,7 @@ final class InputSession: @unchecked Sendable {
         hostKeyEnvironment: DeferredHostKeyReplayEnvironment = .live
     ) -> Bool {
         let handled: Bool
-        if handleRemainingMarkedTextForwardDelete(event, environment: hostKeyEnvironment) {
+        if handleRemainingMarkedTextHostKey(event, environment: hostKeyEnvironment) {
             composer.clearLocalBuffer()
             handled = true
         } else {
@@ -625,16 +625,19 @@ final class InputSession: @unchecked Sendable {
     }
 
     /// A focus-loss commit can be ignored by an already inactive Blink client.
-    /// The engine is empty on return, but passing Delete through would cancel the
+    /// The engine is empty on return, but passing a host key through can cancel the
     /// host's remaining mark. Use only the freshly authorized field's live text;
     /// never restore a previous session's preedit or its write authorization.
-    private func handleRemainingMarkedTextForwardDelete(
+    private func handleRemainingMarkedTextHostKey(
         _ event: NSEvent,
         environment: DeferredHostKeyReplayEnvironment
     ) -> Bool {
+        let isReturn = event.keyCode == KeyCode.return || event.keyCode == KeyCode.numpadEnter
+        let excludedModifiers: NSEvent.ModifierFlags = isReturn
+            ? [.command, .control, .option] : [.command, .control, .option, .shift]
         guard event.type == .keyDown,
-              event.keyCode == KeyCode.forwardDelete,
-              event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+              isReturn || event.keyCode == KeyCode.forwardDelete,
+              event.modifierFlags.intersection(excludedModifiers).isEmpty,
               composer.inputMode == .korean,
               !composer.hasActiveComposition,
               context.hostSurface == .blinkWeb,
