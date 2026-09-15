@@ -629,7 +629,7 @@ struct InstallerSessionContractTests {
         #expect(try classifyInstallation(wasInstalled: "") == "registration-change")
     }
 
-    @Test("Preinstall preserves same-registration sessions and hands off registration changes")
+    @Test("Preinstall verifies fallback before stopping the server for every update")
     func preinstallClassifiesBeforeChangingTheActiveSession() throws {
         let source = try script(named: "preinstall")
         let packagedSignatureRange = try #require(
@@ -657,11 +657,10 @@ struct InstallerSessionContractTests {
 
         #expect(source.contains("PACKAGED_INFO_PLIST="))
         #expect(source.contains("HangyeolPackagedInfo.plist"))
-        #expect(source.contains("--snapshot-update"))
+        #expect(!source.contains("--snapshot-update"))
         #expect(source.contains("PREPARATION_COMMAND=\"--prepare-update\""))
-        #expect(source.contains("PROCESS_NAMES=\"PriType PriTypeV2\""))
-        #expect(source.contains("PROCESS_NAMES=\"Hangyeol $PROCESS_NAMES\""))
-        #expect(source.contains(
+        #expect(source.contains("PROCESS_NAMES=\"Hangyeol PriType PriTypeV2\""))
+        #expect(!source.contains(
             "if [ \"$INSTALLATION_KIND\" != \"ordinary-update\" ]; then"
         ))
         #expect(source.contains("selected-before"))
@@ -724,9 +723,7 @@ struct InstallerSessionContractTests {
         let scheduleRange = try #require(
             source.range(of: "--schedule-input-source-repair")
         )
-        let ordinaryPreservationRange = try #require(
-            source.range(of: "if [ \"$INSTALLATION_KIND\" = \"ordinary-update\" ]; then")
-        )
+        #expect(!source.contains("if [ \"$INSTALLATION_KIND\" = \"ordinary-update\" ]; then"))
         let terminateRange = try #require(
             source.range(of: "pkill -TERM -x -u \"$USER_ID\"")
         )
@@ -769,17 +766,6 @@ struct InstallerSessionContractTests {
         #expect(source.contains("registration-change)"))
         #expect(validationRange.lowerBound < classificationRange.lowerBound)
         #expect(classificationRange.lowerBound < scheduleRange.lowerBound)
-        #expect(scheduleRange.lowerBound < ordinaryPreservationRange.lowerBound)
-        let ordinaryBranchEnd = try #require(
-            source[ordinaryPreservationRange.lowerBound...].range(of: "\nfi")
-        )
-        let ordinaryBranch = source[
-            ordinaryPreservationRange.lowerBound..<ordinaryBranchEnd.upperBound
-        ]
-        #expect(ordinaryBranch.contains("exit 0"))
-        #expect(!ordinaryBranch.contains("clear_installation_snapshot"))
-        #expect(!ordinaryBranch.contains("pkill"))
-        #expect(!ordinaryBranch.contains("/usr/bin/open"))
         #expect(source.contains("for process_name in Hangyeol PriType PriTypeV2"))
         #expect(scheduleRange.lowerBound < terminateRange.lowerBound)
         #expect(terminateRange.lowerBound < processExitRange.lowerBound)

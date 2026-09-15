@@ -99,14 +99,10 @@ if [ -n "$CURRENT_USER" ]; then
             "$PACKAGED_CONNECTION_NAME" \
             "$PACKAGED_INPUT_MODE_SCHEMA")
 
-        # A same-registration update keeps the live IMK and system input-menu
-        # connection intact. Registration changes still move to a safe fallback
-        # before replacing the executable and rebuilding the TIS registration.
-        if [ "$INSTALLATION_KIND" = "ordinary-update" ]; then
-            PREPARATION_COMMAND="--snapshot-update"
-        else
-            PREPARATION_COMMAND="--prepare-update"
-        fi
+        # Every replacement requires a verified fallback before stopping the old
+        # server. Keeping it alive leaves the previous executable mapped after
+        # PackageKit replaces the bundle and can retire its input-source entry.
+        PREPARATION_COMMAND="--prepare-update"
         if ! PREPARE_OUTPUT=$(run_as_console_user \
             "$STAGED_HELPER" "$PREPARATION_COMMAND"); then
             echo "Hangyeol could not prepare the input-source update." >&2
@@ -176,13 +172,9 @@ if [ -n "$CURRENT_USER" ]; then
             com.thlim.inputmethod.Hangyeol \
             HangyeolFallbackWasEnabled -bool "$FALLBACK_WAS_ENABLED"
 
-        # Retired identities always stop. The current Hangyeol process stops
-        # only when its registration contract changed; an ordinary update must
-        # preserve the existing IMK clients and input-menu command connection.
-        PROCESS_NAMES="PriType PriTypeV2"
-        if [ "$INSTALLATION_KIND" != "ordinary-update" ]; then
-            PROCESS_NAMES="Hangyeol $PROCESS_NAMES"
-        fi
+        # The fallback has been selected and verified above. Stop only our input
+        # methods before replacement, including same-registration updates.
+        PROCESS_NAMES="Hangyeol PriType PriTypeV2"
         for process_name in $PROCESS_NAMES; do
             /usr/bin/pkill -TERM -x -u "$USER_ID" "$process_name" \
                 2>/dev/null || true

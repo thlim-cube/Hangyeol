@@ -194,13 +194,8 @@ if [ ! -f "$ACTIVATION_AGENT" ] || [ ! -f "$ACTIVATION_MARKER" ]; then
     exit 0
 fi
 
-# A same-registration update keeps the current IMK and input-menu connection
-# for this session. PackageKit can retire its TIS registration while replacing
-# the bundle, so the durable repair must remain for the next login even though
-# no process or selection is changed now.
-if [ "$INSTALLATION_KIND" = "ordinary-update" ]; then
-    exit 0
-fi
+# Apply ordinary updates in this login session too. The next-login agent is a
+# recovery path, not the normal completion path for an installed update.
 
 # Same-session apply follows the 2.8.18 contract: stop only this product's
 # auto-relaunched IMK, then `open` the replacement so DidFinishLaunching can
