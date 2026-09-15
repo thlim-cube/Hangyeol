@@ -15,7 +15,7 @@ public struct AboutInfo: Sendable {
     
     /// Current version string (read from Info.plist, fallback to hardcoded)
     public static let version: String = {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.0.20"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.0.21"
     }()
 
     /// Current release channel (stable/beta), read from Info.plist when present.

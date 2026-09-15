@@ -32,7 +32,12 @@
     const ids = ["normal-input", "editable", "left", "right", "multiline"];
     const valueOf = (id) => {
       const element = document.getElementById(id);
-      return id === "editable" ? element.innerText : element.value;
+      if (id !== "editable") return element.value;
+      // Blink leaves a lone placeholder BR after Select All + Backspace.
+      // Two BRs (a user-entered newline) must remain observable.
+      if (element.childNodes.length === 1
+          && element.firstChild.nodeName === "BR") return "";
+      return element.innerText;
     };
     const bytesToBase64 = (bytes) => {
       let binary = "";

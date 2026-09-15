@@ -523,6 +523,23 @@ public final class HangyeolE2ERunner {
     }
 
     private func verifyChromeReturn(_ chrome: ChromeFixture) throws {
+        try chrome.clear("editable")
+        try chrome.click("editable")
+        driver.typePhysicalKeys("Eodp")
+        driver.physicalChord(.return, flags: .maskShift)
+        driver.typePhysicalKeys("sk")
+        _ = try chrome.waitForState(
+            description: "contenteditable 때에 Shift+Return preserves 에 and one newline",
+            where: { ExactTextContract.matches($0.editable, expected: "때에\n나") }
+        )
+        try chrome.clear("multiline")
+        try chrome.click("multiline")
+        driver.typePhysicalKeys("Eodp")
+        driver.physicalChord(.return, flags: .maskShift)
+        _ = try chrome.waitForState(
+            description: "때에 Shift+Return preserves 에",
+            where: { ExactTextContract.matches($0.multiline, expected: "때에\n") }
+        )
         try chrome.clear("multiline")
         try chrome.click("multiline")
         driver.typePhysicalKeys("dlqfur")
@@ -539,6 +556,26 @@ public final class HangyeolE2ERunner {
     }
 
     private func verifyChromeForwardDelete(_ chrome: ChromeFixture) throws {
+        try chrome.clear("editable")
+        try chrome.click("editable")
+        driver.typePhysicalKeys("Eodp")
+        driver.keyPair(.leftArrow)
+        driver.typePhysicalKeys("dl")
+        driver.keyPair(.forwardDelete)
+        _ = try chrome.waitForState(
+            description: "contenteditable 때이|에 Forward Delete preserves 이 and deletes 에",
+            where: { ExactTextContract.matches($0.editable, expected: "때이") }
+        )
+        try chrome.clear("normal-input")
+        try chrome.click("normal-input")
+        driver.typePhysicalKeys("Eodp")
+        driver.keyPair(.leftArrow)
+        driver.typePhysicalKeys("dl")
+        driver.keyPair(.forwardDelete)
+        _ = try chrome.waitForState(
+            description: "때이|에 Forward Delete preserves 이 and deletes 에",
+            where: { ExactTextContract.matches($0.normalInput, expected: "때이") }
+        )
         try chrome.clear("normal-input")
         try chrome.click("normal-input")
         driver.typePhysicalKeys("rkskekfk")
