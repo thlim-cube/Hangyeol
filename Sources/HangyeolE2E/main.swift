@@ -5,6 +5,7 @@ private func usage() -> Never {
     FileHandle.standardError.write(Data("""
     사용법:
       swift run -c debug HangyeolE2E --package /absolute/path/Hangyeol_<version>_Local.pkg [--preflight-only] [--scenario 이름일부]
+      swift run -c debug HangyeolE2E --app /absolute/path/Hangyeol.app [--scenario 이름일부]
 
     실제 설치본 /Library/Input Methods/Hangyeol.app과 지정한 PKG의 버전, build,
     bundle ID, 코드 서명을 먼저 대조합니다. TCC DB나 SIP 설정은 변경하지 않습니다.
@@ -15,6 +16,7 @@ private func usage() -> Never {
 
 var arguments = Array(CommandLine.arguments.dropFirst())
 var packagePath: String?
+var appPath: String?
 var preflightOnly = false
 var scenarioFilter: String?
 while !arguments.isEmpty {
@@ -23,6 +25,9 @@ while !arguments.isEmpty {
     case "--package":
         guard !arguments.isEmpty else { usage() }
         packagePath = arguments.removeFirst()
+    case "--app":
+        guard !arguments.isEmpty else { usage() }
+        appPath = arguments.removeFirst()
     case "--preflight-only":
         preflightOnly = true
     case "--scenario":
@@ -36,12 +41,14 @@ while !arguments.isEmpty {
     }
 }
 
-guard let packagePath else { usage() }
+guard packagePath != nil || appPath != nil else { usage() }
 
 do {
     let runner = HangyeolE2ERunner(
         configuration: HangyeolE2EConfiguration(
-            packageURL: URL(fileURLWithPath: packagePath),
+            packageURL: packagePath.map { URL(fileURLWithPath: $0) },
+            installedAppURL: appPath.map { URL(fileURLWithPath: $0) }
+                ?? ArtifactInspector.defaultInstalledAppURL,
             preflightOnly: preflightOnly,
             scenarioFilter: scenarioFilter
         )

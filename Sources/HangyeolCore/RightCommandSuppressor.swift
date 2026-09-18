@@ -233,6 +233,9 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         // Deferred Chromium host keys belong to the host even when the same key is
         // configured as a custom Hangyeol shortcut.
         if DeferredHostKeyDelivery.isReplayedHostKey(event) {
+            if type == .keyDown {
+                PhysicalKeyDelivery.shared.record(event, isHostReplay: true)
+            }
             return Unmanaged.passUnretained(event)
         }
 
@@ -481,6 +484,9 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             }
         }
 
+        if type == .keyDown {
+            PhysicalKeyDelivery.shared.record(event)
+        }
         return Unmanaged.passUnretained(event)
     }
     
@@ -664,6 +670,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     }
 
     private func resetKeyState() {
+        PhysicalKeyDelivery.shared.reset()
         modifierKeyState.reset()
         modifierToggleState.reset()
         regularKeyState.reset()

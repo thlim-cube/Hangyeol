@@ -905,11 +905,15 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         assert(Thread.isMainThread, "IMK handle must run on main thread")
         #endif
         guard let event = event, let client = sender as? IMKTextInput else { return false }
+        let physicalKey = event.type == .keyDown
+            ? PhysicalKeyDelivery.shared.consume(
+                event, targetPID: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
+            ) : nil
 
         // A Blink web-editor host key is replayed only after the adapter has
         // observed its committed marked range retire. The marker makes that one
         // replay a raw host event instead of recursively entering composition.
-        if DeferredHostKeyDelivery.isReplayedHostKey(event) {
+        if DeferredHostKeyDelivery.isReplayedHostKey(event) || physicalKey?.isHostReplay == true {
             DebugLogger.event("input.host_key", metadata: [
                 .state("action", "pass_deferred_replay_to_host")
             ])
@@ -920,15 +924,9 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
             )
         }
 
-        if event.type == .flagsChanged, session?.matches(client) == true {
-            // Modifier toggles travel on the host's input stream. A main-queue
-            // callback can overtake older IMK keys, so only this event boundary
-            // (or a later keyDown) may apply a timestamped physical intent.
-            _ = InputModeCoordinator.shared.reconcilePendingToggleIfNeeded(
-                for: self, through: event.timestamp
-            )
-            return false
-        }
+        // Blink may deliver flagsChanged before older queued keyDown callbacks.
+        // Timestamped physical toggles therefore drain only at keyDown, never at
+        // a modifier notification or activation that could overtake prior text.
         guard event.type == .keyDown else {
             return false
         }
@@ -962,7 +960,7 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         // controller becomes active. Consume that intent against the freshly
         // classified session before this first key is interpreted.
         _ = InputModeCoordinator.shared.reconcilePendingToggleIfNeeded(
-            for: self, through: event.timestamp
+            for: self, through: physicalKey?.timestamp
         )
         guard Self.sharedController === self,
               self.session === session,

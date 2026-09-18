@@ -6,14 +6,14 @@ import Foundation
 import HangyeolCore
 
 public struct HangyeolE2EConfiguration: Sendable {
-    public let packageURL: URL
+    public let packageURL: URL?
     public let installedAppURL: URL
     public let chromeAppURL: URL
     public let preflightOnly: Bool
     public let scenarioFilter: String?
 
     public init(
-        packageURL: URL,
+        packageURL: URL? = nil,
         installedAppURL: URL = ArtifactInspector.defaultInstalledAppURL,
         chromeAppURL: URL = URL(
             fileURLWithPath: "/Applications/Google Chrome.app",
@@ -70,10 +70,9 @@ public final class HangyeolE2ERunner {
     }
 
     public func run() throws -> [E2EScenarioResult] {
-        let comparison = try preflight()
-        installedIdentity = comparison.installed
-        print("설치본: \(comparison.installed)")
-        print("PKG 앱: \(comparison.packaged)")
+        let inspected = try preflight()
+        installedIdentity = inspected
+        print("검증 앱: \(inspected)")
         print("손쉬운 사용: 허용됨")
         print("CGEvent 전송: 허용됨")
 
@@ -84,7 +83,7 @@ public final class HangyeolE2ERunner {
         print("입력 소스: \(inputSourceLease.currentDescription)")
         print("전환키: \(inputSourceLease.toggleBinding.displayName)")
         for identity in try runningInputMethodIdentities(
-            matching: comparison.packaged
+            matching: inspected
         ) {
             print("실행 중 입력기: \(identity)")
         }
@@ -258,25 +257,27 @@ public final class HangyeolE2ERunner {
         return identities
     }
 
-    private func preflight() throws -> ArtifactComparison {
+    private func preflight() throws -> AppArtifactIdentity {
         var failures: [String] = []
         let installed: AppArtifactIdentity
-        let packaged: AppArtifactIdentity
         do {
             installed = try ArtifactInspector.inspectApp(at: configuration.installedAppURL)
         } catch {
             failures.append("설치본 검사: \(error.localizedDescription)")
             throw HangyeolE2EError.preflight(failures)
         }
-        do {
-            packaged = try ArtifactInspector.inspectPackage(at: configuration.packageURL)
-        } catch {
-            failures.append("PKG 검사: \(error.localizedDescription)")
-            throw HangyeolE2EError.preflight(failures)
+        if let packageURL = configuration.packageURL {
+            do {
+                let packaged = try ArtifactInspector.inspectPackage(at: packageURL)
+                let comparison = ArtifactInspector.compare(installed: installed, packaged: packaged)
+                failures.append(contentsOf: comparison.mismatches.map { "설치본/PKG 불일치: \($0)" })
+                print("PKG 앱: \(packaged)")
+            } catch {
+                throw HangyeolE2EError.preflight(["PKG 검사: \(error.localizedDescription)"])
+            }
+        } else {
+            print("패키지 생성 전 앱 검증: 실행 PID의 서명을 지정 앱과 대조합니다.")
         }
-
-        let comparison = ArtifactInspector.compare(installed: installed, packaged: packaged)
-        failures.append(contentsOf: comparison.mismatches.map { "설치본/PKG 불일치: \($0)" })
         if !AXIsProcessTrusted() {
             failures.append(
                 "HangyeolE2E 실행 파일에 손쉬운 사용 권한이 없습니다. "
@@ -296,7 +297,7 @@ public final class HangyeolE2ERunner {
             failures.append("활성화 가능한 한결 입력 소스를 찾을 수 없습니다.")
         }
         guard failures.isEmpty else { throw HangyeolE2EError.preflight(failures) }
-        return comparison
+        return installed
     }
 
     private func runScenario(
