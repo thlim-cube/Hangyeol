@@ -556,6 +556,7 @@ struct ProcessWideInputOwnershipTests {
         #expect(!source.contains("guard Self.sharedController == nil,"))
         #expect(source.contains("if session != nil {"))
         #expect(source.contains("reconcilePendingToggleIfNeeded(for: self)"))
+        #expect(source.contains("for: self, through: event.timestamp"))
     }
 
     @Test("A first keyDown claims ownership even while the previous owner remains visible")

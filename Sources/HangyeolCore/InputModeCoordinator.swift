@@ -22,6 +22,7 @@ private final class PendingInputModeToggleQueue: @unchecked Sendable {
         let id: UInt64
         let source: InputModeCoordinator.ToggleSource
         let trace: ToggleLatencyTrace
+        let eventTimestamp: TimeInterval?
     }
 
     private struct Entry {
@@ -33,20 +34,25 @@ private final class PendingInputModeToggleQueue: @unchecked Sendable {
     private var nextID: UInt64 = 0
     private var entries: [Entry] = []
 
-    func append(source: InputModeCoordinator.ToggleSource, trace: ToggleLatencyTrace) {
+    func append(source: InputModeCoordinator.ToggleSource, trace: ToggleLatencyTrace,
+                eventTimestamp: TimeInterval?) {
         lock.withLock {
             nextID &+= 1
             entries.append(Entry(intent: Intent(
                 id: nextID,
                 source: source,
-                trace: trace
+                trace: trace,
+                eventTimestamp: eventTimestamp
             )))
         }
     }
 
-    func firstForMainProcessing() -> (intent: Intent, shouldMarkMain: Bool)? {
+    func firstForMainProcessing(through timestamp: TimeInterval?) -> (intent: Intent, shouldMarkMain: Bool)? {
         lock.withLock {
             guard !entries.isEmpty else { return nil }
+            if let requestedAt = entries[0].intent.eventTimestamp {
+                guard let timestamp, requestedAt <= timestamp else { return nil }
+            }
             let shouldMarkMain = !entries[0].didReachMain
             entries[0].didReachMain = true
             return (entries[0].intent, shouldMarkMain)
@@ -142,8 +148,12 @@ public final class InputModeCoordinator: @unchecked Sendable {
         requestToggle(source: source, trace: .begin(source: source))
     }
 
-    public func requestToggle(source: ToggleSource, trace: ToggleLatencyTrace) {
-        pendingToggleQueue.append(source: source, trace: trace)
+    public func requestToggle(source: ToggleSource, trace: ToggleLatencyTrace,
+                              eventTimestamp: TimeInterval? = nil) {
+        // Event-tap modifier requests are ordered by the original event clock,
+        // not by the time this process finishes handling its main queue. A drain
+        // without an input timestamp must leave those requests for IMK delivery.
+        pendingToggleQueue.append(source: source, trace: trace, eventTimestamp: eventTimestamp)
 
         guard Thread.isMainThread else {
             DispatchQueue.main.async {
@@ -177,19 +187,21 @@ public final class InputModeCoordinator: @unchecked Sendable {
         // discarding the press because the previous field still owns the session.
     }
 
-    /// Apply every queued physical toggle before the current controller interprets
-    /// its first safe key. A failed/reentrant transaction leaves the head intent in
-    /// place for the next controller or input boundary.
+    /// Apply only intents preceding this host input boundary. Later physical
+    /// toggles may already be queued while IMK is still delivering older keys.
+    /// A failed/reentrant transaction leaves the head intent for the next boundary.
     @discardableResult
-    func reconcilePendingToggleIfNeeded(for controller: HangyeolInputController) -> Bool {
+    func reconcilePendingToggleIfNeeded(for controller: HangyeolInputController,
+                                       through timestamp: TimeInterval? = nil) -> Bool {
         guard activeControllerProvider() === controller else { return false }
-        return reconcilePendingToggleIfNeeded { source, trace in
+        return reconcilePendingToggleIfNeeded(through: timestamp) { source, trace in
             controller.applyPendingHangyeolModeTransition(source: source, trace: trace)
         }
     }
 
     @discardableResult
     func reconcilePendingToggleIfNeeded(
+        through timestamp: TimeInterval? = nil,
         perform: (ToggleSource, ToggleLatencyTrace) -> Bool
     ) -> Bool {
         assert(Thread.isMainThread, "Custom mode toggles must be reconciled on the main thread")
@@ -198,7 +210,7 @@ public final class InputModeCoordinator: @unchecked Sendable {
         defer { isReconcilingToggle = false }
         var appliedAny = false
 
-        while let pending = pendingToggleQueue.firstForMainProcessing() {
+        while let pending = pendingToggleQueue.firstForMainProcessing(through: timestamp) {
             if pending.shouldMarkMain {
                 pending.intent.trace.mark(.mainExecution)
             }

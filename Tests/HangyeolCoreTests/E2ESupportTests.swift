@@ -16,7 +16,8 @@ struct E2ESupportTests {
             focusedID: "right",
             pageID: "tab-2",
             centers: ["right": .init(x: 640, y: 480)],
-            selections: ["right": .init(start: 1, end: 1)]
+            selections: ["right": .init(start: 1, end: 1)],
+            inputEvents: ["compositionupdate:나", "compositionend:나"]
         )
         let title = try FixtureStateCodec.encode(state) + " - Google Chrome"
 

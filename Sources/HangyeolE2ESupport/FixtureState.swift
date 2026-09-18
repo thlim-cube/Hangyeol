@@ -30,6 +30,8 @@ public struct ChromeFixtureState: Codable, Equatable, Sendable {
     public let pageID: String
     public let centers: [String: Point]
     public let selections: [String: Selection]
+    /// Synthetic fixture events only; never collects text from a user's page.
+    public let inputEvents: [String]?
 
     public init(
         normalInput: String,
@@ -40,7 +42,8 @@ public struct ChromeFixtureState: Codable, Equatable, Sendable {
         focusedID: String,
         pageID: String = "",
         centers: [String: Point] = [:],
-        selections: [String: Selection] = [:]
+        selections: [String: Selection] = [:],
+        inputEvents: [String]? = nil
     ) {
         self.normalInput = normalInput
         self.editable = editable
@@ -51,6 +54,7 @@ public struct ChromeFixtureState: Codable, Equatable, Sendable {
         self.pageID = pageID
         self.centers = centers
         self.selections = selections
+        self.inputEvents = inputEvents
     }
 }
 

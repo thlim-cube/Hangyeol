@@ -26,6 +26,10 @@ IMK 서버의 code object도 PID로 직접 검사한다. 디스크 앱만 새 �
 세션이 이전 실행 파일을 계속 쓰는 경우를 통과시키지 않으며, 하나라도 다르면
 실제 입력 테스트를 시작하지 않는다.
 
+특정 Chrome 시나리오만 재현하려면 `--scenario '중간 삽입'`처럼 이름 일부를
+지정한다. TextEdit 모드 준비와 종료 시 복원은 유지한다. 일치하는 시나리오가
+없으면 실패한다. 합성 입력란의 최근 조합·입력 이벤트도 실패 진단에 포함한다.
+
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   swift run -c debug HangyeolE2E \
@@ -88,6 +92,36 @@ Tab 직후 `계 → ㅖ`, Shift+Return 뒤 `나 → ㄴㅏ`, Forward Delete 누�
 Chromium의 [setMarkedText 구현](https://chromium.googlesource.com/chromium/src/+/main/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm)은
 빈 문자열을 조합 취소로 처리한다. 3.0.24는 이미 확정한 조합에 이 취소를 중복 전송하지 않는다.
 테스트 fixture는 Slack 편집기 자체가 아니므로 실제 Slack 이모티콘 자동완성은 별도 확인 대상이다.
+
+## 3.0.25 전환 순서 수정과 남은 실호스트 검증
+
+2026-09-18 재로그인 후 설치본 3.0.24/build 107과 실행 PID의 서명을 대조해
+키 입력을 직접 전송했다. 빠른 입력에서는 11개 중 5개가 통과했다.
+중간 편집 결과는 `가나말x나다라` 대신 `가나ㅌ나다라`였고, Tab 첫 자모,
+Shift+Return 뒤 조합, Forward Delete도 실패했다. 붙여넣기 항목은 모드 준비,
+브라우저 탭 항목은 주소창 초점 준비에서 실패했으므로 해당 동작의 판정은 미검증이다.
+`:완료:`의 input/contenteditable NFC 검사는 통과했지만 실제 Slack은 미검증이다.
+
+동일 설치본에서 비교 목적으로 키 간격을 7ms에서 52ms로 늘렸을 때
+중간 편집·Tab·Shift+Return·Forward Delete가 통과해 전체 9/11이었다.
+이 비교는 속도 의존성을 보여주며, 모든 실패가 같은 원인이라는 증거는 아니다.
+러너 기본 간격은 다시 7ms로 복원했다.
+
+전환 큐는 모니터링 스레드에 두 번의 전환이 먼저 도착하면 이전 키를 처리하기
+전에 둘 다 실행할 수 있었다. 3.0.25는 modifier 전환의 원래 CGEvent 시각을
+보존하고 IMK flagsChanged/keyDown 시각까지의 요청만 실행한다. 타임스탬프 없는
+활성화·메인 큐 콜백은 이 요청을 앞당겨 실행하지 않는다. 일반 키로 설정한 전환,
+IOKit 대체 경로와 설정 UI의 기존 요청 경로는 이번 변경의 대상이 아니다.
+
+`FirstInputModeRegressionTests.delayedKeysRespectPhysicalToggleOrder`는 전환 10초,
+영문 키 11초, 전환 12초가 대기 중이어도 9초의 한글 입력을 확정하지 않고,
+11초에는 영문 모드를 유지하는지 검증한다. 시각 제한을 제거한 기존 처리로
+6개 assertion 실패, 제한을 적용한 처리로 통과했다.
+
+3.0.25의 설치본 E2E는 아직 수행하지 않았다. 현재 원격 세션에서 시스템 입력기
+교체에 필요한 관리자 인증을 사용할 수 없어 3.0.24를 유지했다. 따라서 이번
+수정으로 Tab·Shift+Return·Forward Delete 또는 실제 Slack까지 해결됐다고
+판정하지 않는다. 새 패키지 설치 후 빠른 입력 전체 시나리오를 재실행해야 한다.
 
 ## 창 복귀 후 Forward Delete 검증
 

@@ -42,7 +42,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     public var isRunning: Bool { eventTap != nil }
     
     /// Callback for toggle
-    public var onToggle: (@Sendable (ToggleLatencyTrace) -> Void)?
+    public var onToggle: (@Sendable (ToggleLatencyTrace, TimeInterval?) -> Void)?
     
     /// Callback for Hanja lookup
     public var onHanjaLookup: (@Sendable () -> Void)?
@@ -369,7 +369,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
                 DebugLogger.event("toggle.requested", metadata: [
                     .state("backend", "event_tap")
                 ])
-                triggerToggle()
+                triggerToggle(eventTimestamp: Double(event.timestamp) / 1_000_000_000)
             }
 
             if route == .hanja,
@@ -710,14 +710,15 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         regularState.resynchronize(pressedKeyCodes: physicallyPressedRegularKeys)
     }
 
-    private func triggerToggle() {
+    private func triggerToggle(eventTimestamp: TimeInterval? = nil) {
         let callback = onToggle
         let trace = ToggleLatencyTrace.begin(source: .customKey)
         // Record the physical intent before the next keyDown can overtake a main-
         // queue hop. `InputModeCoordinator.requestToggle` only appends to its locked
-        // queue here; IMK finalize, keyboard override, and mode writes still run on
-        // the coordinator's main-thread drain path.
-        PhysicalToggleIntentDelivery.record(trace, using: callback)
+        // queue here. Timestamped modifier intents wait for the corresponding
+        // IMK flagsChanged/keyDown boundary, including when the main queue runs
+        // before Chrome has delivered older keys.
+        callback?(trace, eventTimestamp)
     }
     
     private func triggerHanjaLookup() {

@@ -30,6 +30,7 @@
   <label>여러 줄<textarea id="multiline"></textarea></label>
   <script>
     const ids = ["normal-input", "editable", "left", "right", "multiline"];
+    const inputEvents = [];
     const valueOf = (id) => {
       const element = document.getElementById(id);
       if (id !== "editable") return element.value;
@@ -75,7 +76,8 @@
         focusedID: document.activeElement?.id || "",
         pageID: location.hash.slice(1),
         centers,
-        selections
+        selections,
+        inputEvents
       };
       const json = JSON.stringify(state);
       document.title = "HangyeolE2E:" + bytesToBase64(new TextEncoder().encode(json));
@@ -84,7 +86,13 @@
       const element = document.getElementById(id);
       ["beforeinput", "input", "compositionstart", "compositionupdate",
        "compositionend", "focus", "blur", "keyup", "mouseup"].forEach((name) => {
-        element.addEventListener(name, () => queueMicrotask(publish));
+        element.addEventListener(name, (event) => {
+          if (name.startsWith("composition") || name === "input") {
+            inputEvents.push(name + ":" + (event.data ?? ""));
+            if (inputEvents.length > 12) inputEvents.shift();
+          }
+          queueMicrotask(publish);
+        });
       });
     });
     window.addEventListener("resize", publish);

@@ -920,6 +920,15 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
             )
         }
 
+        if event.type == .flagsChanged, session?.matches(client) == true {
+            // Modifier toggles travel on the host's input stream. A main-queue
+            // callback can overtake older IMK keys, so only this event boundary
+            // (or a later keyDown) may apply a timestamped physical intent.
+            _ = InputModeCoordinator.shared.reconcilePendingToggleIfNeeded(
+                for: self, through: event.timestamp
+            )
+            return false
+        }
         guard event.type == .keyDown else {
             return false
         }
@@ -952,7 +961,9 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         // A physical toggle can reach the event-tap thread just before this IMK
         // controller becomes active. Consume that intent against the freshly
         // classified session before this first key is interpreted.
-        _ = InputModeCoordinator.shared.reconcilePendingToggleIfNeeded(for: self)
+        _ = InputModeCoordinator.shared.reconcilePendingToggleIfNeeded(
+            for: self, through: event.timestamp
+        )
         guard Self.sharedController === self,
               self.session === session,
               !session.contextNeedsRefresh else {

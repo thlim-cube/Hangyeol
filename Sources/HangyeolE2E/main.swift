@@ -4,7 +4,7 @@ import HangyeolE2ESupport
 private func usage() -> Never {
     FileHandle.standardError.write(Data("""
     사용법:
-      swift run -c debug HangyeolE2E --package /absolute/path/Hangyeol_<version>_Local.pkg [--preflight-only]
+      swift run -c debug HangyeolE2E --package /absolute/path/Hangyeol_<version>_Local.pkg [--preflight-only] [--scenario 이름일부]
 
     실제 설치본 /Library/Input Methods/Hangyeol.app과 지정한 PKG의 버전, build,
     bundle ID, 코드 서명을 먼저 대조합니다. TCC DB나 SIP 설정은 변경하지 않습니다.
@@ -16,6 +16,7 @@ private func usage() -> Never {
 var arguments = Array(CommandLine.arguments.dropFirst())
 var packagePath: String?
 var preflightOnly = false
+var scenarioFilter: String?
 while !arguments.isEmpty {
     let argument = arguments.removeFirst()
     switch argument {
@@ -24,6 +25,9 @@ while !arguments.isEmpty {
         packagePath = arguments.removeFirst()
     case "--preflight-only":
         preflightOnly = true
+    case "--scenario":
+        guard !arguments.isEmpty, !arguments[0].isEmpty else { usage() }
+        scenarioFilter = arguments.removeFirst()
     case "--help", "-h":
         usage()
     default:
@@ -38,7 +42,8 @@ do {
     let runner = HangyeolE2ERunner(
         configuration: HangyeolE2EConfiguration(
             packageURL: URL(fileURLWithPath: packagePath),
-            preflightOnly: preflightOnly
+            preflightOnly: preflightOnly,
+            scenarioFilter: scenarioFilter
         )
     )
     let results = try runner.run()

@@ -4,6 +4,42 @@ import Testing
 
 @Suite("First input during a mode transition")
 struct FirstInputModeRegressionTests {
+    @Test("Queued modifier toggles cannot overtake older keys or collapse around an English key")
+    @MainActor
+    func delayedKeysRespectPhysicalToggleOrder() {
+        let coordinator = InputModeCoordinator(
+            activeControllerProvider: { nil },
+            capsLockOwnershipProvider: { false }
+        )
+        // Both physical presses reach the event tap while IMK is still processing
+        // the preceding Korean text. The key at 11 must see English, even though
+        // the second toggle at 12 has already arrived on the monitoring thread.
+        for timestamp in [10.0, 12.0] {
+            coordinator.requestToggle(source: .customKey,
+                                      trace: .begin(source: .customKey),
+                                      eventTimestamp: timestamp)
+        }
+        var mode = InputMode.korean
+        var commits = 0
+        func apply(_: InputModeCoordinator.ToggleSource, _: ToggleLatencyTrace) -> Bool {
+            commits += 1
+            mode = mode.toggled
+            return true
+        }
+        #expect(!coordinator.reconcilePendingToggleIfNeeded(perform: apply))
+        #expect(!coordinator.reconcilePendingToggleIfNeeded(through: 9, perform: apply))
+        #expect(mode == .korean)
+        #expect(commits == 0)
+        #expect(coordinator.reconcilePendingToggleIfNeeded(through: 10, perform: apply))
+        #expect(mode == .english)
+        #expect(!coordinator.reconcilePendingToggleIfNeeded(through: 11, perform: apply))
+        #expect(mode == .english)
+        #expect(coordinator.reconcilePendingToggleIfNeeded(through: 12, perform: apply))
+        #expect(mode == .korean)
+        #expect(commits == 2)
+        #expect(!coordinator.reconcilePendingToggleIfNeeded(through: 13, perform: apply))
+    }
+
     @Test("A key reentering from keyboard override uses the requested language",
           arguments: [InputMode.korean, .english])
     @MainActor

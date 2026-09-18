@@ -232,8 +232,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         }
         
         // Set callback for CGEventTap toggle handler (handles all toggle keys)
-        RightCommandSuppressor.shared.onToggle = { trace in
-            InputModeCoordinator.shared.requestToggle(source: .customKey, trace: trace)
+        RightCommandSuppressor.shared.onToggle = { trace, eventTimestamp in
+            InputModeCoordinator.shared.requestToggle(
+                source: .customKey, trace: trace, eventTimestamp: eventTimestamp
+            )
         }
         
         // Set callback for Right Option key → Hanja lookup

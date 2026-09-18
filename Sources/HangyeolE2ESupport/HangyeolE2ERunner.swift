@@ -10,6 +10,7 @@ public struct HangyeolE2EConfiguration: Sendable {
     public let installedAppURL: URL
     public let chromeAppURL: URL
     public let preflightOnly: Bool
+    public let scenarioFilter: String?
 
     public init(
         packageURL: URL,
@@ -18,12 +19,14 @@ public struct HangyeolE2EConfiguration: Sendable {
             fileURLWithPath: "/Applications/Google Chrome.app",
             isDirectory: true
         ),
-        preflightOnly: Bool = false
+        preflightOnly: Bool = false,
+        scenarioFilter: String? = nil
     ) {
         self.packageURL = packageURL
         self.installedAppURL = installedAppURL
         self.chromeAppURL = chromeAppURL
         self.preflightOnly = preflightOnly
+        self.scenarioFilter = scenarioFilter
     }
 }
 
@@ -86,7 +89,7 @@ public final class HangyeolE2ERunner {
             print("실행 중 입력기: \(identity)")
         }
 
-        var results: [E2EScenarioResult] = []
+        var results: [E2EScenarioResult?] = []
         let textEdit = try TextEditFixture.launch(
             driver: driver,
             accessibility: accessibility
@@ -205,7 +208,12 @@ public final class HangyeolE2ERunner {
                 )
             })
         }
-        return results
+        let executed = results.compactMap { $0 }
+        if let filter = configuration.scenarioFilter,
+           !executed.contains(where: { $0.name.contains(filter) }) {
+            throw HangyeolE2EError.unavailable("일치하는 Chrome 시나리오 없음: \(filter)")
+        }
+        return executed
     }
 
     private func runningInputMethodIdentities(
@@ -317,7 +325,11 @@ public final class HangyeolE2ERunner {
         _ name: String,
         chrome: ChromeFixture,
         body: () throws -> Void
-    ) -> E2EScenarioResult {
+    ) -> E2EScenarioResult? {
+        if let filter = configuration.scenarioFilter,
+           !name.hasPrefix("E2E 이전"), !name.contains(filter) {
+            return nil
+        }
         let result = runScenario(name, body: body)
         if let failure = result.failure {
             printFailureDiagnostics(
