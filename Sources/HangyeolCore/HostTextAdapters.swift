@@ -159,6 +159,14 @@ final class MarkedTextAdapter: BaseClientAdapter {
     private var renderedMarkedLocation = NSNotFound
     private var renderedMarkedLocationIsConfirmed = false
 
+    /// Lifecycle commits write through InputSession rather than this adapter.
+    /// Retire their range too, so a later composition cannot inherit an old start.
+    func resetPreeditTracking() {
+        renderedMarkedText = ""
+        renderedMarkedLocation = NSNotFound
+        renderedMarkedLocationIsConfirmed = false
+    }
+
     override var hostTransactionMarkedText: String? {
         renderedMarkedText.isEmpty ? nil : renderedMarkedText
     }
@@ -186,15 +194,18 @@ final class MarkedTextAdapter: BaseClientAdapter {
     override func tryInsertText(_ text: String) -> Bool {
         let didInsert = super.tryInsertText(text)
         if didInsert {
-            renderedMarkedText = ""
-            renderedMarkedLocation = NSNotFound
-            renderedMarkedLocationIsConfirmed = false
+            resetPreeditTracking()
         }
         return didInsert
     }
 
     override func setMarkedText(_ text: String) {
-        guard canWriteToClient() else { return }
+        let isWriteAllowed = captureDeferredClientWriteValidator()
+        guard isWriteAllowed() else { return }
+        // An empty update means cancellation in Blink, not an innocuous repaint.
+        // insertText already retired our composition. Do not start/cancel another
+        // one after punctuation or a commit; rich editors observe these events.
+        guard !text.isEmpty || !renderedMarkedText.isEmpty else { return }
         recoverRenderedMarkedLocation(for: renderedMarkedText)
         if renderedMarkedText.isEmpty, !text.isEmpty {
             let selection = client.selectedRange()
@@ -203,6 +214,12 @@ final class MarkedTextAdapter: BaseClientAdapter {
                 ? selection.location
                 : NSNotFound
             renderedMarkedLocationIsConfirmed = false
+        }
+        // IMK range reads may synchronously change focus or reactivate the client.
+        // The authorization checked before those calls no longer proves ownership.
+        guard isWriteAllowed() else {
+            resetPreeditTracking()
+            return
         }
         renderedMarkedText = text
         // Canonical marked-text protocol, matching Apple's own input methods:

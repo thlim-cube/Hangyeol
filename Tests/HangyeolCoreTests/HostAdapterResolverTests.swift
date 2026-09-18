@@ -357,6 +357,55 @@ struct HostAdapterResolverTests {
         #expect(adapter.hostTransactionMarkedRange == nil)
     }
 
+    @Test("Committed Blink text is not followed by a spurious composition cancellation")
+    func committedBlinkTextDoesNotStartEmptyComposition() {
+        let client = FakeIMKTextInput()
+        let adapter = MarkedTextAdapter(client: client, hostSurface: .blinkWeb)
+        adapter.setMarkedText("완")
+        adapter.insertText("완")
+        adapter.setMarkedText("")
+        #expect(client.document == "완")
+        #expect(client.markCalls == ["완"])
+
+        // Backspace of the last jamo must still cancel the owned composition once.
+        adapter.setMarkedText("ㄹ")
+        adapter.setMarkedText("")
+        adapter.setMarkedText("")
+        #expect(client.markCalls == ["완", "ㄹ", ""])
+    }
+
+    @Test("Selection lookup cannot authorize a marked write into a changed field")
+    func markedWriteRechecksOwnershipAfterSelectionRead() {
+        let client = FakeIMKTextInput()
+        let adapter = MarkedTextAdapter(client: client, hostSurface: .blinkWeb)
+        var allowed = true
+        adapter.setClientWriteValidator { allowed }
+        client.onSelectedRange = { allowed = false }
+        adapter.setMarkedText("ㄱ")
+        #expect(client.markCalls.isEmpty)
+        #expect(adapter.hostTransactionMarkedText == nil)
+    }
+
+    @Test("Emoji shortcode is committed as exact NFC without empty composition events")
+    func koreanEmojiShortcodePreservesSyllables() {
+        let client = FakeIMKTextInput()
+        let adapter = MarkedTextAdapter(client: client, hostSurface: .blinkWeb)
+        let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
+        let keys: [(String, UInt16)] = [
+            (":", 41), ("d", 2), ("h", 4), ("k", 40), ("s", 1),
+            ("f", 3), ("y", 16), (":", 41)
+        ]
+        for (character, keyCode) in keys {
+            #expect(composer.handle(
+                TestEventFactory.keyEvent(char: character, keyCode: keyCode)!,
+                delegate: adapter
+            ))
+        }
+        #expect(Array(client.document.unicodeScalars.map(\.value)) == [0x3A, 0xC644, 0xB8CC, 0x3A])
+        #expect(!client.markCalls.contains(""))
+        #expect(!composer.hasActiveComposition)
+    }
+
     @Test("Marked adapter recovers a delayed range before Forward Delete after Backspace")
     func markedAdapterRecoversDelayedRangeAcrossBackspace() {
         let cases: [([String], String)] = [

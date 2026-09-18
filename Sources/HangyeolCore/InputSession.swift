@@ -333,7 +333,6 @@ final class InputSession: @unchecked Sendable {
               context.hasTextInputCapability == newContext.hasTextInputCapability,
               context.isLikelyDesktopArea == newContext.isLikelyDesktopArea,
               context.isLightweight == newContext.isLightweight,
-              context.documentAccessSafe == newContext.documentAccessSafe,
               context.hostSurface == newContext.hostSurface,
               context.usesBlinkNativeTextClient == newContext.usesBlinkNativeTextClient,
               adapter.deliveryMode == .markedText,
@@ -348,6 +347,9 @@ final class InputSession: @unchecked Sendable {
         }
 
         let expectedPreedit = composer.activePreeditForDisplay
+        // Document access can flicker while Blink publishes selection updates.
+        // It controls direct insertion, not field identity. Both policies above
+        // must still resolve to marked text and the live preedit must match below.
         let expectedLength = expectedPreedit.utf16.count
         let markedRange = client.markedRange()
         guard markedRange.length == expectedLength,
@@ -871,6 +873,7 @@ final class InputSession: @unchecked Sendable {
             // likely moved the caret — stale direct-insertion tracking must never
             // survive it, or the next keystroke could rewrite unrelated text.
             (adapter as? DirectInsertionAdapter)?.resetPreeditTracking()
+            (adapter as? MarkedTextAdapter)?.resetPreeditTracking()
             return false
         }
 
@@ -920,6 +923,7 @@ final class InputSession: @unchecked Sendable {
             return true
         }
 
+        (adapter as? MarkedTextAdapter)?.resetPreeditTracking()
         Self.finalizeMarkedComposition(
             composer: composer,
             client: client,
@@ -1077,6 +1081,7 @@ final class InputSession: @unchecked Sendable {
         composer.dismissHanjaCandidates()
         composer.discardCompositionForPassThrough()
         direct?.resetPreeditTracking()
+        (adapter as? MarkedTextAdapter)?.resetPreeditTracking()
         lastNonSecureGeneration = nil
         clientWriteAuthorizationRevision &+= 1
 

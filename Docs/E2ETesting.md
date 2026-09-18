@@ -52,6 +52,8 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 - 조합 직후 Shift+Return
 - 문장 중간 조합 직후 Forward Delete
 - `맑`을 `말`로 Backspace한 직후 Forward Delete
+- 일반 input/contenteditable 중간 삽입·Backspace·한영 전환: `가나다라 → 가나말x나다라`
+- 일반 input/contenteditable의 `:완료:`: U+003A U+C644 U+B8CC U+003A 유지
 
 결과는 최종 문자열을 정확히 비교한다. 정규화하면 같아 보이는 분리 자모도
 실패로 판정한다. 고정 대기 시간으로 성공을 가정하지 않고 제한 시간 동안
@@ -64,6 +66,28 @@ caret, 각 필드의 실제 Unicode 값을 출력한다.
 Confluence 페이지에서 수동 또는 별도 브라우저 세션으로 검증하지 않은 경우
 결과를 `미검증`으로 기록한다. 자동 결과와 실제 Confluence 결과는 항상
 분리해서 보고한다.
+
+## 3.0.24 입력 안정성 요구와 회귀 근거
+
+요구 출처: 2026-09-18 사용자 요청. Chrome 중간 삽입·삭제·한영 전환에서 새 입력과
+주변 문자를 보존하고, Slack 이모티콘 이름 `:완료:`가 자소 분리되지 않아야 한다.
+
+| 경계 | 기대 결과 | 검증 |
+| --- | --- | --- |
+| 같은 필드의 문서 접근 상태만 변경 | 읽어서 확인한 `오`를 이어 `완`으로 조합 | `InputSessionFinalizeTests.markedCompositionSurvivesDocumentAccessChange` |
+| 전환·종료 후 다시 중간 삽입 | 옛 조합 위치 폐기, 새 삽입 위치 사용 | `InputSessionFinalizeTests.lifecycleCommitRetiresMarkedAdapterRange` |
+| 조합 확정·콜론·마지막 자모 삭제 | 확정 뒤 빈 조합 없음, 실제 남은 자모는 한 번 취소 | `HostAdapterResolverTests.committedBlinkTextDoesNotStartEmptyComposition` |
+| 범위 조회 중 입력란 변경 | 이전 권한으로 새 필드에 쓰지 않음 | `HostAdapterResolverTests.markedWriteRechecksOwnershipAfterSelectionRead` |
+| `:완료:` 입력 | NFC 코드 포인트 일치, 불필요한 빈 조합 없음 | `HostAdapterResolverTests.koreanEmojiShortcodePreservesSyllables`, Chrome E2E |
+
+수정 전 설치된 3.0.22/build 105를 서명·실행 PID까지 확인한 E2E는 9개 중 5개 통과했다.
+Tab 직후 `계 → ㅖ`, Shift+Return 뒤 `나 → ㄴㅏ`, Forward Delete 누락,
+브라우저 탭 전환 직후 첫 음절 실패를 관측했다. 이 결과만으로 각 증상을 특정 코드 결함과
+일대일로 연결하지 않는다. 새 버전 설치 후 재실행 결과를 별도로 기록해야 한다.
+
+Chromium의 [setMarkedText 구현](https://chromium.googlesource.com/chromium/src/+/main/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm)은
+빈 문자열을 조합 취소로 처리한다. 3.0.24는 이미 확정한 조합에 이 취소를 중복 전송하지 않는다.
+테스트 fixture는 Slack 편집기 자체가 아니므로 실제 Slack 이모티콘 자동완성은 별도 확인 대상이다.
 
 ## 창 복귀 후 Forward Delete 검증
 

@@ -857,6 +857,43 @@ struct InputSessionFinalizeTests {
         #expect(client.insertCalls.isEmpty)
     }
 
+    @Test("Transient document access does not split a verified marked syllable")
+    func markedCompositionSurvivesDocumentAccessChange() {
+        let (session, composer, client) = makeMarkedSession()
+        _ = composer.handle(TestEventFactory.keyEvent(char: "d", keyCode: 2)!, delegate: session.adapter)
+        _ = composer.handle(TestEventFactory.keyEvent(char: "h", keyCode: 4)!, delegate: session.adapter)
+        #expect(client.markedText == "오")
+
+        session.markContextStaleForSameClientReactivation()
+        #expect(session.refreshContextIfNeeded { _ in
+            self.context(bundleId: client.bundleID, documentAccessSafe: false)
+        })
+        _ = session.prepareForNonSecureClientWrites()
+        _ = composer.handle(TestEventFactory.keyEvent(char: "k", keyCode: 40)!, delegate: session.adapter)
+        _ = composer.handle(TestEventFactory.keyEvent(char: "s", keyCode: 1)!, delegate: session.adapter)
+        #expect(client.markedText == "완")
+        #expect(client.insertCalls.isEmpty)
+    }
+
+    @Test("Lifecycle commit retires adapter ranges before the next middle insertion")
+    func lifecycleCommitRetiresMarkedAdapterRange() {
+        let (session, composer, client) = makeMarkedSession()
+        _ = composer.handle(TestEventFactory.keyEvent(char: "r", keyCode: 15)!, delegate: session.adapter)
+        _ = composer.handle(TestEventFactory.keyEvent(char: "k", keyCode: 40)!, delegate: session.adapter)
+        #expect(session.finalize(reason: .modeTransition))
+        #expect(session.adapter.hostTransactionMarkedText == nil)
+        #expect(session.adapter.hostTransactionMarkedRange == nil)
+
+        client.document = "가나다라"
+        client.selectedRangeValue = NSRange(location: 2, length: 0)
+        client.onSetMarkedText = {
+            client.markedRangeValue = NSRange(location: NSNotFound, length: 0)
+        }
+        _ = composer.handle(TestEventFactory.keyEvent(char: "a", keyCode: 0)!, delegate: session.adapter)
+        #expect(session.adapter.hostTransactionMarkedRange == nil)
+        #expect(session.adapter.hostTransactionProvisionalMarkedRange == NSRange(location: 2, length: 1))
+    }
+
     @Test("Tab 직후 첫 자모와 늦은 same-client activation 사이에서도 첫 음절을 유지한다")
     func tabFirstSyllableSurvivesLateSameClientActivation() {
         let (session, composer, client) = makeMarkedSession()

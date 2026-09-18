@@ -136,6 +136,14 @@ public final class HangyeolE2ERunner {
             )
             try self.verifyChromeBasic(chrome)
         })
+        results.append(runChromeScenario("Chrome 중간 삽입·Backspace·전환", chrome: chrome) {
+            try self.ensureKoreanMode(in: chrome, toggleBinding: inputSourceLease.toggleBinding)
+            try self.verifyChromeMiddleEditing(chrome, binding: inputSourceLease.toggleBinding)
+        })
+        results.append(runChromeScenario("Chrome 한글 이모티콘 이름", chrome: chrome) {
+            try self.ensureKoreanMode(in: chrome, toggleBinding: inputSourceLease.toggleBinding)
+            try self.verifyChromeEmojiShortcode(chrome)
+        })
         results.append(runChromeScenario("Chrome 클릭 field handoff", chrome: chrome) {
             try self.ensureKoreanMode(
                 in: chrome,
@@ -553,6 +561,45 @@ public final class HangyeolE2ERunner {
             description: "Korean input after Shift+Return replay",
             where: { ExactTextContract.matches($0.multiline, expected: "입력\n나") }
         )
+    }
+
+    private func verifyChromeMiddleEditing(_ chrome: ChromeFixture, binding: KeyBinding) throws {
+        for field in ["normal-input", "editable"] {
+            try chrome.clear(field)
+            driver.typePhysicalKeys("rkskekfk")
+            driver.keyPair(.leftArrow)
+            driver.keyPair(.leftArrow)
+            driver.typePhysicalKeys("akfr")
+            driver.keyPair(.backspace) // 맑 -> 말; surrounding 가나다라 must survive.
+            driver.perform(binding: binding)
+            driver.typePhysicalKeys("x")
+            driver.perform(binding: binding)
+            driver.typePhysicalKeys("sk")
+            driver.keyPair(CGKeyCode(124)) // Right Arrow: commit without adding a character
+            _ = try chrome.waitForState(
+                description: "\(field): 가나말x나다라 after middle editing and two mode switches",
+                where: { ExactTextContract.matches(
+                    field == "editable" ? $0.editable : $0.normalInput,
+                    expected: "가나말x나다라"
+                ) }
+            )
+        }
+    }
+
+    private func verifyChromeEmojiShortcode(_ chrome: ChromeFixture) throws {
+        for field in ["normal-input", "editable"] {
+            try chrome.clear(field)
+            driver.physicalChord(CGKeyCode(41), flags: .maskShift) // :
+            driver.typePhysicalKeys("dhksfy") // 완료
+            driver.physicalChord(CGKeyCode(41), flags: .maskShift)
+            _ = try chrome.waitForState(
+                description: "\(field): exact NFC :완료:",
+                where: { ExactTextContract.matches(
+                    field == "editable" ? $0.editable : $0.normalInput,
+                    expected: ":완료:"
+                ) }
+            )
+        }
     }
 
     private func verifyChromeForwardDelete(_ chrome: ChromeFixture) throws {
