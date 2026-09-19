@@ -450,6 +450,25 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
                 targetPolicy: targetPolicy
             )
         }
+        // Blink may expose the live preedit only as a selected range. A
+        // matching length alone is not ownership proof: read the exact text
+        // rendered by this adapter and recheck the field authorization.
+        if retirementGate == nil,
+           let normalizedExpectedCommittedText,
+           !normalizedExpectedCommittedText.isEmpty {
+            let selected = client.selectedRange()
+            if selected.location != NSNotFound, selected.location >= 0,
+               selected.location < 10_000_000,
+               selected.length == normalizedExpectedCommittedText.utf16.count,
+               authorization.isAllowed(),
+               client.attributedSubstring(from: selected)?.string
+                    .precomposedStringWithCanonicalMapping == normalizedExpectedCommittedText,
+               authorization.isAllowed() {
+                retirementGate = DeferredCompositionRetirementGate(
+                    markedRange: selected, targetPolicy: .caretAnchored
+                )
+            }
+        }
         if retirementGate == nil,
            let normalizedExpectedCommittedText,
            !normalizedExpectedCommittedText.isEmpty {
@@ -476,9 +495,10 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
 
         if var gate = retirementGate {
             let markedRange = client.markedRange()
-            let selectedRange = gate.requiresCaretAnchor
-                ? client.selectedRange()
-                : NSRange(location: NSNotFound, length: 0)
+            // Return also replaces a selection in rich editors. Even when its
+            // caret anchor is optional, it must observe the owned selection
+            // collapsing before the original composition can be replaced safely.
+            let selectedRange = client.selectedRange()
             let committedTextIsVisible: Bool?
             if let verificationRange = gate.committedTextVerificationRange(
                 for: selectedRange

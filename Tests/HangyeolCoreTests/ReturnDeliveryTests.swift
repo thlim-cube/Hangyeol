@@ -491,6 +491,72 @@ private final class RangeForwardDeleteClient: FakeIMKTextInput {
 
 @Suite("Return exactly-once delivery")
 struct ReturnDeliveryTests {
+    @Test("Codex composition survives fast host keys before selection collapse",
+          arguments: ["return", "middle-delete", "end-delete"], [true, false])
+    func selectedCompositionRemainsVisibleBeforeRetirement(scenario: String, confirmedRange: Bool) throws {
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.openai.codex"
+        let deleting = scenario != "return"
+        let original = scenario == "return" ? "한글" : scenario == "middle-delete" ? "한중글" : "하나"
+        let expected = scenario == "return" ? "한글\n" : scenario == "middle-delete" ? "한중" : "하나"
+        client.document = original
+        let ownedRange = NSRange(location: 1, length: 1)
+        client.markedRangeValue = NSRange(location: NSNotFound, length: 0)
+        client.selectedRangeValue = ownedRange
+        let driver = ManualHostKeyReplayDriver()
+        driver.onKeyDown = {
+            let selection = client.selectedRangeValue
+            if deleting && selection.length == 0 && selection.location == client.document.utf16.count { return }
+            let range = selection.length > 0 ? selection
+                : NSRange(location: selection.location, length: deleting ? 1 : 0)
+            client.document = (client.document as NSString).replacingCharacters(
+                in: range, with: deleting ? "" : "\n")
+        }
+        let handled = HostKeyTransaction.perform(
+            client: client, keyCode: deleting ? KeyCode.forwardDelete : KeyCode.return,
+            modifierFlags: deleting ? 0 : NSEvent.ModifierFlags.shift.rawValue,
+            isClientWriteAllowed: { true }, didPost: { _ in },
+            expectedCommittedText: String(original[original.index(after: original.startIndex)]),
+            expectedMarkedRange: confirmedRange ? ownedRange : nil,
+            environment: driver.environment,
+            commit: {} // Host acknowledges commit; selection collapse is asynchronous.
+        )
+        #expect(handled)
+        if !handled { driver.onKeyDown() } // The original host key would delete the selection.
+        for _ in 0..<3 where !driver.polls.isEmpty { try driver.runNextPoll() }
+        #expect(driver.postedEventTypes.isEmpty)
+        #expect(client.document == original)
+        client.selectedRangeValue = NSRange(location: 2, length: 0)
+        while !driver.polls.isEmpty { try driver.runNextPoll() }
+        if !(deleting && confirmedRange) {
+            #expect(driver.postedEventTypes == [.keyDown, .keyUp])
+        }
+        #expect(client.document == expected)
+    }
+
+    @Test("Selection-only composition needs matching readable text and continuous ownership",
+          arguments: ["unreadable", "different-text", "different-length", "revoked"])
+    func selectionOnlyCompositionRejectsUnverifiedText(reason: String) {
+        let client = FakeIMKTextInput()
+        client.document = reason == "different-text" ? "하가" : "하나"
+        client.markedRangeValue = NSRange(location: NSNotFound, length: 0)
+        client.selectedRangeValue = NSRange(location: 1, length: reason == "different-length" ? 2 : 1)
+        client.attributedSubstringUnavailable = reason == "unreadable"
+        var allowed = true
+        if reason == "revoked" { client.onAttributedSubstring = { allowed = false } }
+        let driver = ManualHostKeyReplayDriver()
+        var commits = 0
+        #expect(!HostKeyTransaction.perform(
+            client: client, keyCode: KeyCode.forwardDelete, modifierFlags: 0,
+            isClientWriteAllowed: { allowed }, didPost: { _ in },
+            expectedCommittedText: "나", environment: driver.environment,
+            commit: { commits += 1 }
+        ))
+        #expect(commits == 0)
+        #expect(driver.polls.isEmpty)
+        #expect(driver.postedEventTypes.isEmpty)
+    }
+
     @Test("Captured composition survives an unavailable live range before Shift+Return or Delete",
           arguments: [KeyCode.return, KeyCode.forwardDelete])
     func capturedRangeSurvivesRendererGap(keyCode: UInt16) throws {

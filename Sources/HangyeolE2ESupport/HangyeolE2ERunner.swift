@@ -585,6 +585,16 @@ public final class HangyeolE2ERunner {
     }
 
     private func verifyChromeReturn(_ chrome: ChromeFixture) throws {
+        try chrome.clear("multiline")
+        try chrome.click("multiline")
+        driver.typePhysicalKeys("gksrmf")
+        _ = try chrome.waitForState(description: "한글 before Shift+Return") {
+            ExactTextContract.matches($0.multiline, expected: "한글")
+        }
+        driver.physicalChord(.return, flags: .maskShift)
+        _ = try chrome.waitForState(description: "한글 Shift+Return retains 글") {
+            ExactTextContract.matches($0.multiline, expected: "한글\n")
+        }
         try chrome.clear("editable")
         try chrome.click("editable")
         driver.typePhysicalKeys("Eodp")
@@ -657,6 +667,33 @@ public final class HangyeolE2ERunner {
     }
 
     private func verifyChromeForwardDelete(_ chrome: ChromeFixture) throws {
+        for field in ["normal-input", "editable"] {
+            try chrome.clear(field)
+            try chrome.click(field)
+            driver.typePhysicalKeys("gksk")
+            // No DOM wait before Delete: protect the last actively composing 나.
+            driver.keyPair(.forwardDelete)
+            _ = try chrome.waitForState(description: "하나| fast Forward Delete must keep 하나") {
+                ExactTextContract.matches(field == "editable" ? $0.editable : $0.normalInput,
+                                          expected: "하나")
+            }
+        }
+        for field in ["normal-input", "editable"] {
+            try chrome.clear(field)
+            try chrome.click(field)
+            driver.typePhysicalKeys("gksrmf")
+            driver.keyPair(.leftArrow)
+            driver.typePhysicalKeys("wnd")
+            _ = try chrome.waitForState(description: "한중|글 before Forward Delete") {
+                ExactTextContract.matches(field == "editable" ? $0.editable : $0.normalInput,
+                                          expected: "한중글")
+            }
+            driver.keyPair(.forwardDelete)
+            _ = try chrome.waitForState(description: "한중|글 Forward Delete must retain 중") {
+                ExactTextContract.matches(field == "editable" ? $0.editable : $0.normalInput,
+                                          expected: "한중")
+            }
+        }
         try chrome.clear("editable")
         try chrome.click("editable")
         driver.typePhysicalKeys("Eodp")
