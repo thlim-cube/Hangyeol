@@ -489,11 +489,88 @@ private final class RangeForwardDeleteClient: FakeIMKTextInput {
     }
 }
 
+/// Electron can read text while reporting zero document length, and ignores
+/// an empty insertion even with an explicit replacement range.
+private final class LengthlessForwardDeleteClient: FakeIMKTextInput {
+    override func length() -> Int { 0 }
+    override func insertText(_ string: Any!, replacementRange: NSRange) {
+        if (string as? String) == "" { return }
+        super.insertText(string, replacementRange: replacementRange)
+        selectedRangeValue = NSRange(location: replacementRange.location + ((string as? String)?.utf16.count ?? 0), length: 0)
+    }
+}
+
 @Suite("Return exactly-once delivery")
 struct ReturnDeliveryTests {
+    @Test("Lengthless Electron deletes the following grapheme without replaying a destructive key",
+          arguments: ["글", "", "👨‍👩‍👧‍👦", "e\u{301}"], [false, true])
+    func lengthlessElectronForwardDelete(following: String, staleMark: Bool) throws {
+        let client = LengthlessForwardDeleteClient()
+        client.document = "한중" + following
+        client.markedRangeValue = NSRange(location: staleMark ? 2 : 1, length: 1)
+        client.markedText = "중"
+        client.selectedRangeValue = NSRange(location: 1, length: 1)
+        let driver = ManualHostKeyReplayDriver()
+        driver.onKeyDown = {
+            // Observed in Claude: IMK reports retirement, but a replayed Delete
+            // still removes the preceding composition in the renderer.
+            client.document = "한" + following
+        }
+        #expect(HostKeyTransaction.perform(
+            client: client, keyCode: KeyCode.forwardDelete, modifierFlags: 0,
+            isClientWriteAllowed: { true }, didPost: driver.recordBoundary,
+            expectedCommittedText: "중", expectedMarkedRange: NSRange(location: 1, length: 1),
+            environment: driver.environment,
+            commit: {
+                client.markedRangeValue = NSRange(location: NSNotFound, length: NSNotFound)
+                client.selectedRangeValue = NSRange(location: 2, length: 0)
+            }
+        ))
+        while !driver.polls.isEmpty { try driver.runNextPoll() }
+        #expect(client.document == "한중")
+        #expect(client.selectedRangeValue == NSRange(location: 2, length: 0))
+        #expect(driver.postedEventTypes.isEmpty)
+    }
+
+    @Test("Lengthless replacement stops when ownership, caret, or grapheme proof fails",
+          arguments: ["revoked", "caret-moved", "oversized-grapheme"])
+    func lengthlessReplacementRejectsUnverifiedTarget(reason: String) throws {
+        let client = LengthlessForwardDeleteClient()
+        let following = reason == "oversized-grapheme" ? "e" + String(repeating: "\u{301}", count: 70) : "글"
+        let original = "한중" + following
+        client.document = original
+        client.markedText = "중"
+        client.markedRangeValue = NSRange(location: 1, length: 1)
+        client.selectedRangeValue = client.markedRangeValue
+        let driver = ManualHostKeyReplayDriver()
+        var allowed = true
+        #expect(HostKeyTransaction.perform(
+            client: client, keyCode: KeyCode.forwardDelete, modifierFlags: 0,
+            isClientWriteAllowed: { allowed }, didPost: driver.recordBoundary,
+            expectedCommittedText: "중", expectedMarkedRange: client.markedRangeValue,
+            environment: driver.environment, commit: {
+                client.markedRangeValue = NSRange(location: NSNotFound, length: NSNotFound)
+                client.selectedRangeValue = NSRange(location: 2, length: 0)
+            }
+        ))
+        var reads = 0
+        client.onAttributedSubstring = {
+            reads += 1
+            // The first two reads prove retirement. Revoke during prefix probing.
+            if reads == 3 {
+                if reason == "revoked" { allowed = false }
+                if reason == "caret-moved" { client.selectedRangeValue = NSRange(location: 0, length: 0) }
+            }
+        }
+        while !driver.polls.isEmpty { try driver.runNextPoll() }
+        #expect(client.document == original)
+        #expect(client.insertCalls.isEmpty)
+        #expect(driver.postedEventTypes.isEmpty)
+    }
+
     @Test("Codex composition survives fast host keys before selection collapse",
-          arguments: ["return", "middle-delete", "end-delete"], [true, false])
-    func selectedCompositionRemainsVisibleBeforeRetirement(scenario: String, confirmedRange: Bool) throws {
+          arguments: ["return", "middle-delete", "end-delete"], ["confirmed", "provisional", "missing"])
+    func selectedCompositionRemainsVisibleBeforeRetirement(scenario: String, rangeEvidence: String) throws {
         let client = FakeIMKTextInput()
         client.bundleID = "com.openai.codex"
         let deleting = scenario != "return"
@@ -517,7 +594,8 @@ struct ReturnDeliveryTests {
             modifierFlags: deleting ? 0 : NSEvent.ModifierFlags.shift.rawValue,
             isClientWriteAllowed: { true }, didPost: { _ in },
             expectedCommittedText: String(original[original.index(after: original.startIndex)]),
-            expectedMarkedRange: confirmedRange ? ownedRange : nil,
+            expectedMarkedRange: rangeEvidence == "missing" ? nil : ownedRange,
+            expectedMarkedRangeIsConfirmed: rangeEvidence == "confirmed",
             environment: driver.environment,
             commit: {} // Host acknowledges commit; selection collapse is asynchronous.
         )
@@ -528,7 +606,7 @@ struct ReturnDeliveryTests {
         #expect(client.document == original)
         client.selectedRangeValue = NSRange(location: 2, length: 0)
         while !driver.polls.isEmpty { try driver.runNextPoll() }
-        if !(deleting && confirmedRange) {
+        if !(deleting && rangeEvidence != "missing") {
             #expect(driver.postedEventTypes == [.keyDown, .keyUp])
         }
         #expect(client.document == expected)

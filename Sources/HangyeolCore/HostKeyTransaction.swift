@@ -62,12 +62,14 @@ private struct PreparedForwardDeletion {
             .precomposedStringWithCanonicalMapping
         let selection = client.selectedRange()
         let provisionalMarkIsVisible = !expectedMarkedRangeIsConfirmed
-            && selection == NSRange(location: postCommitCaret, length: 0)
+            && (selection == NSRange(location: postCommitCaret, length: 0)
+                || selection == expectedMarkedRange)
         // Blink may expose the marked syllable through document APIs before it
         // publishes `markedRange`. In that state, matching text alone is not proof:
         // it could be an identical committed syllable under a still-virtual mark.
-        // The caret at the provisional mark's exact visual end supplies the missing
-        // independent signal. A preedit-start caret keeps the safer growth proof.
+        // An end caret or selection of the exact owned preedit supplies the
+        // independent signal. A collapsed preedit-start caret still requires
+        // document growth; matching an identical following syllable is not enough.
         let documentIncludesMarkedText = markedReadback == normalizedExpectedText
             && (expectedMarkedRangeIsConfirmed || provisionalMarkIsVisible)
         let followingSourceLocation = documentIncludesMarkedText
@@ -453,8 +455,7 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
         // Blink may expose the live preedit only as a selected range. A
         // matching length alone is not ownership proof: read the exact text
         // rendered by this adapter and recheck the field authorization.
-        if retirementGate == nil,
-           let normalizedExpectedCommittedText,
+        if let normalizedExpectedCommittedText,
            !normalizedExpectedCommittedText.isEmpty {
             let selected = client.selectedRange()
             if selected.location != NSNotFound, selected.location >= 0,
@@ -541,6 +542,13 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
             logSkip("stale_session")
             return
         }
+        // Some Electron clients report zero length even for readable text and
+        // accept IMK commit before their renderer stops treating Delete as a
+        // composition cancellation. Do not replay that destructive key there.
+        if keyCode == KeyCode.forwardDelete, client.length() == 0 {
+            replaceFollowingCharacter()
+            return
+        }
         DeferredHostKeyDelivery.postApprovedReplay(
             events,
             keyCode: keyCode,
@@ -550,6 +558,62 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
         DebugLogger.event("input.host_key_replay_delivered", metadata: [
             .count("retirement_polls", pollCount)
         ])
+    }
+
+    private func replaceFollowingCharacter() {
+        guard authorization.isAllowed(), let expectedCommittedText,
+              let gate = retirementGate else { return }
+        let selection = client.selectedRange()
+        guard let committedRange = gate.committedTextVerificationRange(for: selection),
+              selection.length == 0 else { return }
+
+        // Oversized substring queries return nil on Electron. Find the longest
+        // readable prefix within a fixed IPC budget, then take one whole grapheme.
+        // If a cluster reaches the probe limit its boundary is unproven: do nothing.
+        let probeLimit = 64
+        var lower = 1
+        var upper = probeLimit
+        var prefix = ""
+        var readableLength = 0
+        while lower <= upper {
+            guard authorization.isAllowed() else { return }
+            let size = lower + (upper - lower) / 2
+            if let value = client.attributedSubstring(from: NSRange(
+                location: selection.location, length: size
+            )), value.length == size {
+                prefix = value.string
+                readableLength = size
+                lower = size + 1
+            } else {
+                upper = size - 1
+            }
+        }
+        guard let character = prefix.first else {
+            logSkip("following_text_unavailable")
+            return
+        }
+        let following = String(character)
+        guard following.utf16.count < probeLimit || readableLength < probeLimit else {
+            logSkip("following_grapheme_boundary_unverified")
+            return
+        }
+        let replacement = NSRange(
+            location: committedRange.location,
+            length: committedRange.length + following.utf16.count
+        )
+        let mark = client.markedRange()
+        guard authorization.isAllowed(),
+              mark.location == NSNotFound || mark.length == 0,
+              client.selectedRange() == selection,
+              client.attributedSubstring(from: replacement)?.string
+                .precomposedStringWithCanonicalMapping
+                == (expectedCommittedText + following).precomposedStringWithCanonicalMapping,
+              authorization.isAllowed() else { return }
+        // Empty insertions are ignored by these hosts. Replace the owned commit
+        // plus the following character with the same commit to preserve it.
+        client.insertText(expectedCommittedText, replacementRange: replacement)
+        postedBoundary.handler(keyCode)
+        DebugLogger.event("input.host_key_forward_replacement_delivered")
     }
 
     private func logSkip(_ reason: StaticString) {
