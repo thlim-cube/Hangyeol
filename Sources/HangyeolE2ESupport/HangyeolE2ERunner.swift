@@ -170,6 +170,10 @@ public final class HangyeolE2ERunner {
             )
             try self.verifyChromeTabHandoff(chrome)
         })
+        results.append(runChromeScenario("Chrome Tab 직후 연속 삭제·전환", chrome: chrome) {
+            try self.ensureKoreanMode(in: chrome, toggleBinding: inputSourceLease.toggleBinding)
+            try self.verifyChromeTabKeyOrder(chrome, binding: inputSourceLease.toggleBinding)
+        })
         results.append(runChromeScenario("Chrome 붙여넣기 직후 한글", chrome: chrome) {
             try self.ensureKoreanMode(
                 in: chrome,
@@ -526,6 +530,43 @@ public final class HangyeolE2ERunner {
                         && $0.focusedID == "right"
                 }
             )
+        }
+    }
+
+    private func verifyChromeTabKeyOrder(_ chrome: ChromeFixture, binding: KeyBinding) throws {
+        for iteration in 1...5 {
+            try chrome.clear("left")
+            try chrome.clear("right")
+            try chrome.click("left")
+            driver.typePhysicalKeys("sk")
+            driver.keyPair(.tab)
+            driver.typePhysicalKeys("sk")
+            driver.keyPair(.backspace)
+            driver.keyPair(.backspace)
+            driver.typePhysicalKeys("sk")
+            driver.perform(binding: binding)
+            driver.typePhysicalKeys("a")
+            driver.keyPair(.backspace)
+            driver.perform(binding: binding)
+            driver.typePhysicalKeys("rk")
+            _ = try chrome.waitForState(description: "Tab deletion and toggle order \(iteration)") {
+                ExactTextContract.matches($0.left, expected: "나")
+                    && ExactTextContract.matches($0.right, expected: "나가")
+            }
+            try chrome.clear("left")
+            try chrome.clear("right")
+            try chrome.click("left")
+            driver.perform(binding: binding)
+            driver.keyPair(.tab)
+            driver.typePhysicalKeys("aaa")
+            driver.keyPair(.backspace)
+            driver.keyPair(.return)
+            driver.perform(binding: binding)
+            driver.typePhysicalKeys("sk")
+            _ = try chrome.waitForState(description: "Tab English host actions \(iteration)") {
+                ExactTextContract.matches($0.left, expected: "")
+                    && ExactTextContract.matches($0.right, expected: "aa나")
+            }
         }
     }
 
@@ -958,6 +999,10 @@ private final class KeyEventDriver {
     }
 
     func keyPair(_ keyCode: CGKeyCode, flags: CGEventFlags = []) {
+        if !flags.intersection([.maskShift, .maskCommand, .maskControl, .maskAlternate]).isEmpty {
+            physicalChord(keyCode, flags: flags)
+            return
+        }
         postKeyboard(keyCode: keyCode, keyDown: true, flags: flags)
         Thread.sleep(forTimeInterval: 0.002)
         postKeyboard(keyCode: keyCode, keyDown: false, flags: flags)
@@ -1344,10 +1389,10 @@ private final class ChromeFixture {
         }
 
         clipboard.replace(with: tabURL.absoluteString)
+        driver.physicalChord(17, flags: .maskCommand) // Cmd+T: create the second tab.
         driver.physicalChord(37, flags: .maskCommand)
-        try Poll.wait(timeout: 2, description: "Chrome address bar focus") {
-            self.accessibility.focusedElementIsOutsideWebContent(pid: self.pid)
-        }
+        // AX focus may retain the previous web element during native-toolbar
+        // navigation. The unique page ID below verifies the actual loaded tab.
         driver.physicalChord(.v, flags: .maskCommand)
         driver.keyPair(.return)
         _ = try waitForState(description: "duplicate Chrome fixture tab load") {
@@ -1358,8 +1403,13 @@ private final class ChromeFixture {
     func clear(_ domID: String) throws {
         for _ in 0..<3 {
             try click(domID)
-            driver.clearFocusedText()
+            driver.physicalChord(PhysicalKey.a.rawValue, flags: .maskCommand)
             do {
+                _ = try waitForState(timeout: 0.75, description: "select all \(domID)") { state in
+                    let selection = state.selections[domID]
+                    return selection?.start == 0 && selection?.end == self.value(for: domID, in: state).utf16.count
+                }
+                driver.keyPair(.backspace)
                 _ = try waitForState(
                     timeout: 0.75,
                     description: "clear \(domID)"

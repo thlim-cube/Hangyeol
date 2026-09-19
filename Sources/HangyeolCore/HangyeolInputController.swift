@@ -905,15 +905,46 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         assert(Thread.isMainThread, "IMK handle must run on main thread")
         #endif
         guard let event = event, let client = sender as? IMKTextInput else { return false }
+        // Chrome may switch tabs before delivering the shortcut keyDown. End
+        // this owned composition on the physical shortcut modifier boundary.
+        // Right Command and user-configured mode/Hanja modifiers remain owned
+        // by the existing timestamped shortcut path.
+        if event.type == .flagsChanged, [55, 59, 62].contains(event.keyCode),
+           !event.modifierFlags.intersection([.command, .control]).isEmpty,
+           NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.google.Chrome",
+           Self.sharedController === self,
+           let session, session.matches(client), !session.contextNeedsRefresh,
+           session.composer.hasActiveComposition,
+           ShortcutBindingRouter.routeModifierKey(
+               keyCode: Int64(event.keyCode),
+               toggleBinding: ConfigurationManager.shared.toggleKeyBinding,
+               hanjaBinding: ConfigurationManager.shared.hanjaKeyBinding,
+               hangyeolToggleEnabled: !ConfigurationManager.shared.capsLockInputSourceSwitchEnabled
+           ) == nil,
+           !shouldPassThroughSecureInput(client: client, context: session.context) {
+            _ = session.finalize(reason: .hostShortcut)
+            session.finishHostCommitBoundary()
+            return false
+        }
         let physicalKey = event.type == .keyDown
             ? PhysicalKeyDelivery.shared.consume(
-                event, targetPID: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
+                event, targetPID: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0,
+                removing: false
             ) : nil
+
+        if let physicalKey, !physicalKey.isInputHandoffReplay,
+           ChromeInputHandoffGate.shared.capture(physicalKey) {
+            _ = PhysicalKeyDelivery.shared.consume(event, targetPID: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0)
+            return true
+        }
 
         // A Blink web-editor host key is replayed only after the adapter has
         // observed its committed marked range retire. The marker makes that one
         // replay a raw host event instead of recursively entering composition.
         if DeferredHostKeyDelivery.isReplayedHostKey(event) || physicalKey?.isHostReplay == true {
+            _ = PhysicalKeyDelivery.shared.consume(
+                event, targetPID: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
+            )
             DebugLogger.event("input.host_key", metadata: [
                 .state("action", "pass_deferred_replay_to_host")
             ])
@@ -956,18 +987,6 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         guard let session = ensureSession(for: client) else { return false }
         let composer = session.composer
 
-        // A physical toggle can reach the event-tap thread just before this IMK
-        // controller becomes active. Consume that intent against the freshly
-        // classified session before this first key is interpreted.
-        _ = InputModeCoordinator.shared.reconcilePendingToggleIfNeeded(
-            for: self, through: physicalKey?.timestamp
-        )
-        guard Self.sharedController === self,
-              self.session === session,
-              !session.contextNeedsRefresh else {
-            return false
-        }
-
         // 2. Duplicate-keyDown suppression. Some hosts (observed: KakaoTalk) deliver
         // the same physical keyDown to the IME twice. That double-processes input —
         // notably one backspace decomposing TWO jamo, or Return reaching the host
@@ -979,6 +998,24 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
                 .flag("repeat", event.isARepeat)
             ])
             return handled
+        }
+
+        // Only accepted callbacks consume a physical key identity. Looking ahead
+        // before duplicate suppression would steal the next queued identical key.
+        _ = PhysicalKeyDelivery.shared.consume(
+            event, targetPID: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
+        )
+
+        // A physical toggle can reach the event-tap thread just before this IMK
+        // controller becomes active. Consume that intent against the freshly
+        // classified session before this first key is interpreted.
+        _ = InputModeCoordinator.shared.reconcilePendingToggleIfNeeded(
+            for: self, through: physicalKey?.timestamp
+        )
+        guard Self.sharedController === self,
+              self.session === session,
+              !session.contextNeedsRefresh else {
+            return false
         }
 
         #if DEBUG

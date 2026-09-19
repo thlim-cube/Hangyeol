@@ -446,7 +446,7 @@ struct HangulComposerTests {
         #expect(delegate.fullText == "가\n")
     }
 
-    @Test("Blink browser web content owns composed Return exactly once")
+    @Test("Chrome commits Return and leaves the original host action")
     func blinkWebContentOwnsComposedReturn() throws {
         let (composer, delegate, _) = makeComposer()
         composer.markKeystroke(
@@ -472,13 +472,13 @@ struct HangulComposerTests {
         ))
         let handled = composer.handle(returnEvent, delegate: delegate)
 
-        #expect(handled)
+        #expect(!handled)
         #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeReturn)) == [
-            "schedule:return", "insert:식"
+            "insert:식"
         ])
         #expect(delegate.fullText == "방식")
         delegate.deliverScheduledReturns()
-        #expect(delegate.fullText == "방식\n")
+        #expect(delegate.fullText == "방식")
         #expect(delegate.markedText.isEmpty)
     }
 
@@ -545,10 +545,10 @@ struct HangulComposerTests {
             delegate: delegate
         )
 
-        #expect(handled)
+        #expect(!handled)
         #expect(delegate.fullText == "방식")
         delegate.deliverScheduledReturns()
-        #expect(delegate.fullText == "방식\n")
+        #expect(delegate.fullText == "방식")
     }
 
     @Test("Capability-selected Blink web mediates Return and Forward Delete")
@@ -667,7 +667,7 @@ struct HangulComposerTests {
     }
 
     @Test(
-        "Chrome, Codex, Slack Forward Delete uses one commit transaction",
+        "Chrome passes original Delete while Codex and Slack retain replay",
         arguments: [
             "com.google.Chrome",
             "com.openai.codex",
@@ -698,11 +698,17 @@ struct HangulComposerTests {
             delegate: delegate
         )
 
-        #expect(handled)
-        #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeDelete)) == [
-            "schedule:forward-delete", "insert:가"
-        ])
-        #expect(delegate.scheduledHostKeyCodes == [KeyCode.forwardDelete])
+        if bundleID == "com.google.Chrome" {
+            #expect(!handled)
+            #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeDelete)) == ["insert:가"])
+            #expect(delegate.scheduledHostKeyCodes.isEmpty)
+        } else {
+            #expect(handled)
+            #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeDelete)) == [
+                "schedule:forward-delete", "insert:가"
+            ])
+            #expect(delegate.scheduledHostKeyCodes == [KeyCode.forwardDelete])
+        }
     }
 
     @Test("Chrome native fields keep immediate Forward Delete pass-through")

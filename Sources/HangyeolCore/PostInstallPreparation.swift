@@ -9,7 +9,8 @@ public enum PostInstallCommand: Equatable, Sendable {
     case scheduleRepair(
         installationKind: InstallerInstallationKind,
         shouldSelect: Bool,
-        temporaryFallbackSourceID: String?
+        temporaryFallbackSourceID: String?,
+        waitForPackageReceipt: Bool = false
     )
     case repairPending
     case phase(InstallerActivationPhase, sourceID: String?)
@@ -23,6 +24,8 @@ public struct PendingInputSourceActivation: Codable, Equatable, Sendable {
     public let temporaryFallbackSourceID: String?
     public let version: String
     public let build: String
+    public let packageReceiptVersion: String?
+    public let previousReceiptDate: Date?
 
     public init(
         token: String,
@@ -30,7 +33,9 @@ public struct PendingInputSourceActivation: Codable, Equatable, Sendable {
         shouldSelect: Bool,
         temporaryFallbackSourceID: String?,
         version: String,
-        build: String
+        build: String,
+        packageReceiptVersion: String? = nil,
+        previousReceiptDate: Date? = nil
     ) {
         self.token = token
         self.installationKind = installationKind
@@ -38,6 +43,8 @@ public struct PendingInputSourceActivation: Codable, Equatable, Sendable {
         self.temporaryFallbackSourceID = temporaryFallbackSourceID
         self.version = version
         self.build = build
+        self.packageReceiptVersion = packageReceiptVersion
+        self.previousReceiptDate = previousReceiptDate
     }
 }
 
@@ -125,7 +132,7 @@ public enum PostInstallPreparation {
             return arguments.count == 2 ? .repairPending : .invalid
         }
         if present[0] == scheduleRepairArgument {
-            guard arguments.count == 5,
+            guard (arguments.count == 5 || (arguments.count == 6 && arguments[5] == "--after-package-receipt")),
                   let kind = InstallerInstallationKind(rawValue: arguments[2]),
                   let shouldSelect = parseBoolean(arguments[3]) else {
                 return .invalid
@@ -138,7 +145,8 @@ public enum PostInstallPreparation {
             return .scheduleRepair(
                 installationKind: kind,
                 shouldSelect: shouldSelect,
-                temporaryFallbackSourceID: fallbackSourceID
+                temporaryFallbackSourceID: fallbackSourceID,
+                waitForPackageReceipt: arguments.count == 6
             )
         }
         guard let phase = InstallerActivationPhase(rawValue: present[0]) else {
@@ -214,6 +222,7 @@ public enum PostInstallPreparation {
         installationKind: InstallerInstallationKind,
         shouldSelect: Bool,
         temporaryFallbackSourceID: String? = nil,
+        waitForPackageReceipt: Bool = false,
         executableURL: URL,
         version: String,
         build: String,
@@ -234,7 +243,12 @@ public enum PostInstallPreparation {
                 shouldSelect: shouldSelect,
                 temporaryFallbackSourceID: temporaryFallbackSourceID,
                 version: version,
-                build: build
+                build: build,
+                packageReceiptVersion: waitForPackageReceipt ? version : nil,
+                previousReceiptDate: waitForPackageReceipt
+                    ? (try? FileManager.default.attributesOfItem(atPath:
+                        "/var/db/receipts/com.thlim.hangyeol.plist"))?[.modificationDate] as? Date
+                    : nil
             )
             let agentData = try activationAgentData(
                 executableURL: executableURL,
@@ -351,6 +365,17 @@ public enum PostInstallPreparation {
                     return pending
                 }
                 guard let request else { return true }
+
+                // PackageKit can touch and register the bundle after postinstall
+                // returns. Do not retire the repair marker based on the earlier TIS
+                // snapshot while the old package receipt is still on disk.
+                if let receiptVersion = request.packageReceiptVersion {
+                    guard waitForPackageReceipt(expectedVersion: receiptVersion,
+                                              previousReceiptDate: request.previousReceiptDate) else {
+                        print("installer: package receipt is not ready; activation remains pending")
+                        return false
+                    }
+                }
 
                 let boundaries = InputSourceLifecycleRules.activationBoundaries(
                     shouldSelect: request.shouldSelect
@@ -600,6 +625,37 @@ public enum PostInstallPreparation {
             guard verified else { return false }
         }
         return true
+    }
+
+    internal static func waitForPackageReceipt(
+        expectedVersion: String,
+        previousReceiptDate: Date? = nil,
+        attempts: Int = 80,
+        readVersion: () -> String? = {
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath:
+                "/var/db/receipts/com.thlim.hangyeol.plist")),
+                  let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
+                    as? [String: Any],
+                  plist["PackageIdentifier"] as? String == "com.thlim.hangyeol" else { return nil }
+            return plist["PackageVersion"] as? String
+        },
+        readModificationDate: () -> Date? = {
+            (try? FileManager.default.attributesOfItem(atPath:
+                "/var/db/receipts/com.thlim.hangyeol.plist"))?[.modificationDate] as? Date
+        },
+        wait: () -> Void = { Thread.sleep(forTimeInterval: 0.25) }
+    ) -> Bool {
+        for _ in 0..<max(0, attempts) {
+            if readVersion() == expectedVersion {
+                if let previousReceiptDate {
+                    if let currentDate = readModificationDate(), currentDate != previousReceiptDate {
+                        return true
+                    }
+                } else { return true }
+            }
+            wait()
+        }
+        return false
     }
 
     private static func runInstallerPhaseProcess(

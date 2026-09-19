@@ -56,6 +56,42 @@ struct PostInstallPreparationTests {
         ) == nil)
     }
 
+    @Test("Receipt-gated repair is explicit and rejects unknown trailing arguments")
+    func receiptCommand() {
+        let args = ["Hangyeol", "--schedule-input-source-repair", "ordinary-update", "true", "-"]
+        #expect(PostInstallPreparation.command(arguments: args + ["--after-package-receipt"]) ==
+            .scheduleRepair(installationKind: .ordinaryUpdate, shouldSelect: true,
+                            temporaryFallbackSourceID: nil, waitForPackageReceipt: true))
+        #expect(PostInstallPreparation.command(arguments: args + ["unknown"]) == .invalid)
+    }
+
+    @Test("Old or unavailable package receipts cannot release activation")
+    func waitsForNewReceipt() {
+        var versions: [String?] = ["3.0.25", nil, "3.0.27"]
+        var waits = 0
+        #expect(PostInstallPreparation.waitForPackageReceipt(expectedVersion: "3.0.27",
+            attempts: 3, readVersion: { versions.removeFirst() }, wait: { waits += 1 }))
+        #expect(waits == 2)
+        #expect(!PostInstallPreparation.waitForPackageReceipt(expectedVersion: "3.0.27",
+            attempts: 3, readVersion: { "3.0.25" }, wait: {}))
+        #expect(!PostInstallPreparation.waitForPackageReceipt(expectedVersion: "3.0.27",
+            attempts: 3, readVersion: { nil }, wait: {}))
+    }
+
+    @Test("Reinstalling the same version must observe a newly written receipt")
+    func sameVersionReceipt() {
+        let old = Date(timeIntervalSince1970: 100)
+        #expect(!PostInstallPreparation.waitForPackageReceipt(expectedVersion: "3.0.27",
+            previousReceiptDate: old, attempts: 2, readVersion: { "3.0.27" },
+            readModificationDate: { old }, wait: {}))
+        #expect(!PostInstallPreparation.waitForPackageReceipt(expectedVersion: "3.0.27",
+            previousReceiptDate: old, attempts: 2, readVersion: { "3.0.27" },
+            readModificationDate: { nil }, wait: {}))
+        #expect(PostInstallPreparation.waitForPackageReceipt(expectedVersion: "3.0.27",
+            previousReceiptDate: old, attempts: 2, readVersion: { "3.0.27" },
+            readModificationDate: { old.addingTimeInterval(1) }, wait: {}))
+    }
+
     @Test("Pending setup is consumed exactly once")
     func consumesPendingSetupOnce() throws {
         let suiteName = "PostInstallPreparationTests.\(UUID().uuidString)"
@@ -711,7 +747,7 @@ struct InstallerSessionContractTests {
         }
     }
 
-    @Test("Postinstall completes only after the one-shot user repair is ready")
+    @Test("Postinstall lets PackageKit finish before the one-shot repair verifies activation")
     func postinstallWaitsForActivationCompletion() throws {
         let source = try script(named: "postinstall")
         let validationRange = try #require(
@@ -733,18 +769,8 @@ struct InstallerSessionContractTests {
         let openRange = try #require(
             source.range(of: "run_as_console_user /usr/bin/open \"$APP_PATH\"")
         )
-        let waitRange = try #require(
-            source.range(of: "--wait-for-input-source-activation")
-        )
-        let timeoutRange = try #require(source.range(
-            of: "activation did not complete in the current login session"
-        ))
-        let timeoutExitRange = try #require(
-            source.range(
-                of: "open_input_source_settings\n    exit 0\nfi",
-                range: timeoutRange.upperBound..<source.endIndex
-            )
-        )
+        #expect(source.contains("--after-package-receipt"))
+        #expect(!source.contains("--wait-for-input-source-activation"))
         let bootoutRange = try #require(
             source.range(of: "launchctl bootout")
         )
@@ -772,10 +798,6 @@ struct InstallerSessionContractTests {
         #expect(processExitRange.lowerBound < openRange.lowerBound)
         #expect(source.contains("hangyeol-postinstall.XXXXXX"))
         #expect(source.contains("codesign --verify --strict \"$STAGED_HELPER\""))
-        #expect(openRange.lowerBound < waitRange.lowerBound)
-        #expect(waitRange.lowerBound < timeoutRange.lowerBound)
-        #expect(timeoutRange.lowerBound < timeoutExitRange.lowerBound)
-        #expect(timeoutExitRange.lowerBound < bootoutRange.lowerBound)
         #expect(source.contains("ACTIVATION_MARKER="))
         #expect(openRange.lowerBound < bootoutRange.lowerBound)
         #expect(bootoutRange.lowerBound < bootstrapRange.lowerBound)

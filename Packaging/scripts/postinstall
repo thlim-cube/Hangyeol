@@ -180,7 +180,8 @@ if ! run_as_console_user "$EXECUTABLE" \
     --schedule-input-source-repair \
     "$INSTALLATION_KIND" \
     "$SHOULD_SELECT" \
-    "$TEMPORARY_FALLBACK_SOURCE_ID"; then
+    "$TEMPORARY_FALLBACK_SOURCE_ID" \
+    --after-package-receipt; then
     echo "Hangyeol could not schedule input-source activation." >&2
     open_input_source_settings
     exit 0
@@ -220,14 +221,9 @@ if ! run_as_console_user "$STAGED_HELPER" \
     fi
 fi
 if run_as_console_user /usr/bin/open "$APP_PATH"; then
-    if run_as_console_user "$EXECUTABLE" \
-        --wait-for-input-source-activation; then
-        exit 0
-    fi
-    echo "Hangyeol activation did not complete in the current login session." >&2
-    # The running server may still be converging. Keep the marker and one-shot
-    # agent for the next login instead of starting a second IMK server now.
-    open_input_source_settings
+    # Return so PackageKit can publish the new receipt and finish registering
+    # the bundle. The running IMK waits for that receipt, then performs the full
+    # activation convergence and retires the marker only after fresh readiness.
     exit 0
 fi
 

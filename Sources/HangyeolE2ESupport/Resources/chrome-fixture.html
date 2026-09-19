@@ -61,11 +61,19 @@
           return [id, {start: element.selectionStart, end: element.selectionEnd}];
         }
         const selection = window.getSelection();
-        const offset = selection && selection.rangeCount > 0
-          && element.contains(selection.anchorNode)
-          ? selection.anchorOffset
-          : null;
-        return [id, {start: offset, end: offset}];
+        if (!selection || !selection.rangeCount || !element.contains(selection.anchorNode)) {
+          return [id, {start: null, end: null}];
+        }
+        const range = selection.getRangeAt(0);
+        const before = range.cloneRange();
+        before.selectNodeContents(element);
+        before.setEnd(range.startContainer, range.startOffset);
+        const start = before.toString().length;
+        // innerText counts rendered block breaks; Range.toString() may not.
+        // Report the rendered full length when all DOM text is selected.
+        const end = start === 0 && range.toString() === element.textContent
+          ? valueOf(id).length : start + range.toString().length;
+        return [id, {start, end}];
       }));
       const state = {
         normalInput: valueOf("normal-input"),
@@ -95,6 +103,7 @@
         });
       });
     });
+    document.addEventListener("selectionchange", publish);
     window.addEventListener("resize", publish);
     window.addEventListener("scroll", publish);
     publish();

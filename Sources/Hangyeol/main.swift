@@ -41,12 +41,14 @@ if let command = PostInstallPreparation.command(
     case let .scheduleRepair(
         installationKind,
         shouldSelect,
-        temporaryFallbackSourceID
+        temporaryFallbackSourceID,
+        waitForPackageReceipt
     ):
         let scheduled = PostInstallPreparation.scheduleActivationRepair(
             installationKind: installationKind,
             shouldSelect: shouldSelect,
             temporaryFallbackSourceID: temporaryFallbackSourceID,
+            waitForPackageReceipt: waitForPackageReceipt,
             executableURL: executableURL,
             version: version,
             build: build

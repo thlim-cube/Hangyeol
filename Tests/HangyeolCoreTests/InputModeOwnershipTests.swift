@@ -557,6 +557,12 @@ struct ProcessWideInputOwnershipTests {
         #expect(source.contains("if session != nil {"))
         #expect(source.contains("reconcilePendingToggleIfNeeded(for: self)"))
         #expect(source.contains("for: self, through: physicalKey?.timestamp"))
+        let duplicateGate = try #require(source.range(of: "session.registerKeyDown(keyDownSnapshot)"))
+        let acceptedPhysicalKey = try #require(source.range(of: "// Only accepted callbacks consume a physical key identity."))
+        let physicalToggle = try #require(source.range(of: "for: self, through: physicalKey?.timestamp"))
+        #expect(duplicateGate.lowerBound < acceptedPhysicalKey.lowerBound)
+        #expect(acceptedPhysicalKey.lowerBound < physicalToggle.lowerBound)
+        #expect(source.contains("removing: false"))
     }
 
     @Test("A first keyDown claims ownership even while the previous owner remains visible")

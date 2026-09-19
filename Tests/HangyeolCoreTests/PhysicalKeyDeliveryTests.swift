@@ -41,6 +41,24 @@ struct PhysicalKeyDeliveryTests {
         }
     }
 
+    @Test("Duplicate IMK callbacks cannot consume the next queued physical key")
+    func duplicateDelivery() {
+        let queue = PhysicalKeyDelivery()
+        queue.record(key(at: 10))
+        queue.record(key(at: 10.1))
+        func peek() -> PhysicalKeyDelivery.Key? {
+            queue.consume(keyCode: 51, modifiers: 0, isRepeat: false,
+                          deliveredAt: 11, targetPID: 42, removing: false)
+        }
+        #expect(peek()?.timestamp == 10)
+        #expect(consume(queue, at: 11)?.timestamp == 10)
+        // A rejected duplicate may inspect the next identity, but must leave it
+        // available for the next accepted callback.
+        #expect(peek()?.timestamp == 10.1)
+        #expect(peek()?.timestamp == 10.1)
+        #expect(consume(queue, at: 11.1)?.timestamp == 10.1)
+    }
+
     @Test("Repeated key identities retain FIFO order and are consumed once")
     func repeatedKeys() {
         let queue = PhysicalKeyDelivery()

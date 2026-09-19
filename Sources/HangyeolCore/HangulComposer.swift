@@ -286,8 +286,12 @@ public class HangulComposer: @unchecked Sendable {
             ]
             let defersBlinkWebContentReturn = hadComposition
                 && lastInputHostSurface == .blinkWeb
+                && lastInputBundleId != "com.google.Chrome"
                 && modifierFlags.intersection(hostOwnedReturnModifiers).isEmpty
 
+            // Chrome preserves commit + original key ordering. An async replay
+            // can be overtaken by the next syllable and cancelled. Keep the
+            // existing replay compatibility path for other Blink clients.
             // Blink can acknowledge the commit before the renderer retires its
             // marked range. Capture that range first so the host Return is released
             // only after the composition has actually become ordinary document text.
@@ -304,7 +308,7 @@ public class HangulComposer: @unchecked Sendable {
             }
             if hadComposition
                 && !isBlinkSoftLineBreak
-                && !defersBlinkWebContentReturn {
+                && !usesBlinkComposition {
                 delegate.setMarkedText("")
             }
             localTextBuffer = ""
@@ -396,6 +400,7 @@ public class HangulComposer: @unchecked Sendable {
             ]
             let defersBlinkWebContentDelete = hadComposition
                 && lastInputHostSurface == .blinkWeb
+                && lastInputBundleId != "com.google.Chrome"
                 && modifierFlags.intersection(hostOwnedDeleteModifiers).isEmpty
 
             // Blink can expose two caret shapes while composing. The adapter keeps

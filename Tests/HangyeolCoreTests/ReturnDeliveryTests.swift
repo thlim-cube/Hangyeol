@@ -238,6 +238,10 @@ private final class FakeForwardDeleteHost: HangulComposerDelegate {
 
     func deliverScheduledForwardDelete() {
         guard scheduledForwardDeleteCount > 0 else { return }
+        performDefaultForwardDelete()
+    }
+
+    func performDefaultForwardDelete() {
         guard caretOffset < document.count else { return }
         let target = document.index(document.startIndex, offsetBy: caretOffset)
         document.remove(at: target)
@@ -1024,15 +1028,16 @@ struct ReturnDeliveryTests {
         #expect(calls == ["keyDown", "keyUp", "boundary:\(KeyCode.return)"])
     }
 
-    @Test("Blink Forward Delete keeps 마 and deletes the following 다")
-    func blinkMidTextForwardDelete() throws {
+    @Test("Blink Forward Delete keeps 마 and deletes the following 다",
+          arguments: ["com.google.Chrome", "com.openai.codex"])
+    func blinkMidTextForwardDelete(bundleID: String) throws {
         let composer = HangulComposer(
             statusBar: MockStatusBar(),
             configuration: MockConfiguration()
         )
         let host = FakeForwardDeleteHost()
         composer.markKeystroke(
-            bundleId: "com.google.Chrome",
+            bundleId: bundleID,
             usesBlinkNativeTextClient: false
         )
 
@@ -1055,12 +1060,13 @@ struct ReturnDeliveryTests {
             delegate: host
         )
 
-        #expect(handled)
+        #expect(handled == (bundleID != "com.google.Chrome"))
+        if !handled { host.performDefaultForwardDelete() }
         host.deliverScheduledForwardDelete()
         #expect(host.document == "가나마라")
         #expect(host.markedText.isEmpty)
         #expect(host.caretOffset == 3)
-        #expect(host.scheduledForwardDeleteCount == 1)
+        #expect(host.scheduledForwardDeleteCount == (bundleID == "com.google.Chrome" ? 0 : 1))
     }
 
     @Test(
@@ -1501,23 +1507,23 @@ struct ReturnDeliveryTests {
         #expect(pipeline.host.defaultReturnActionCount == 1)
     }
 
-    @Test("Blink browser web content consumes composed Return after one newline")
-    func blinkWebContentComposedReturn() {
+    @Test("Chrome commits and delivers the original Return exactly once",
+          arguments: [NSEvent.ModifierFlags(), .shift])
+    func blinkWebContentComposedReturn(modifiers: NSEvent.ModifierFlags) {
         let pipeline = ReturnDeliveryHarness()
         pipeline.bundleId = "com.google.Chrome"
         pipeline.typeGa()
         let returnEvent = TestEventFactory.keyEvent(
-            char: "\r",
-            keyCode: KeyCode.return,
-            timestamp: 10
+            char: "\r", keyCode: KeyCode.return, modifiers: modifiers, timestamp: 10
         )!
-
-        #expect(pipeline.dispatch(returnEvent))
-        #expect(pipeline.host.document == "가")
-        #expect(pipeline.host.defaultReturnActionCount == 0)
-        pipeline.host.deliverScheduledReturn()
+        #expect(!pipeline.dispatch(returnEvent))
         #expect(pipeline.host.document == "가\n")
         #expect(pipeline.host.defaultReturnActionCount == 1)
+        #expect(pipeline.host.scheduledReturnModifierFlags == nil)
+        pipeline.host.deliverScheduledReturn()
+        #expect(pipeline.host.defaultReturnActionCount == 1)
+        #expect(pipeline.dispatch(returnEvent))
+        #expect(pipeline.host.document == "가\n")
     }
 
     @Test("Codex composed Shift+Return preserves the last syllable and runs once")

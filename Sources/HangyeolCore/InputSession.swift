@@ -10,6 +10,7 @@ import InputMethodKit
 enum CompositionFinalizeReason: String {
     case appDeactivate          // NSWorkspace deactivation (earliest, host still accepts insertText)
     case deactivateServer       // IMK deactivateServer (fallback; native hosts may already ignore)
+    case hostShortcut           // Commit before Chrome moves focus for a shortcut
     case mouseCommit            // IMK commitComposition (click outside the composition)
     case modeTransition         // Hangyeol custom toggle key (한/영)
     case inputSourceOwnership   // macOS took ownership or reselected Hangyeol
@@ -22,6 +23,7 @@ enum CompositionFinalizeReason: String {
         case .appDeactivate: "app_deactivate"
         case .deactivateServer: "deactivate_server"
         case .mouseCommit: "mouse_commit"
+        case .hostShortcut: "host_shortcut"
         case .modeTransition: "mode_transition"
         case .inputSourceOwnership: "input_source_ownership"
         case .keyboardLayoutChange: "keyboard_layout_change"

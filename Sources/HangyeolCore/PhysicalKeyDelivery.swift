@@ -13,6 +13,7 @@ final class PhysicalKeyDelivery: @unchecked Sendable {
         let timestamp: TimeInterval
         let targetPID: pid_t
         let isHostReplay: Bool
+        var isInputHandoffReplay = false
     }
 
     private let lock = NSLock()
@@ -26,7 +27,8 @@ final class PhysicalKeyDelivery: @unchecked Sendable {
             isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
             timestamp: Double(event.timestamp) / 1_000_000_000,
             targetPID: pid_t(event.getIntegerValueField(.eventTargetUnixProcessID)),
-            isHostReplay: isHostReplay
+            isHostReplay: isHostReplay,
+            isInputHandoffReplay: event.getIntegerValueField(.eventSourceUserData) == ChromeInputHandoffGate.marker
         ))
     }
 
@@ -38,15 +40,15 @@ final class PhysicalKeyDelivery: @unchecked Sendable {
         }
     }
 
-    func consume(_ event: NSEvent, targetPID: pid_t) -> Key? {
+    func consume(_ event: NSEvent, targetPID: pid_t, removing: Bool = true) -> Key? {
         consume(keyCode: event.keyCode,
                 modifiers: event.modifierFlags.rawValue & Self.modifierMask,
                 isRepeat: event.isARepeat, deliveredAt: event.timestamp,
-                targetPID: targetPID)
+                targetPID: targetPID, removing: removing)
     }
 
     func consume(keyCode: UInt16, modifiers: UInt, isRepeat: Bool,
-                 deliveredAt: TimeInterval, targetPID: pid_t) -> Key? {
+                 deliveredAt: TimeInterval, targetPID: pid_t, removing: Bool = true) -> Key? {
         lock.withLock {
             keys.removeAll { deliveredAt - $0.timestamp > 2 }
             guard let index = keys.firstIndex(where: {
@@ -57,7 +59,7 @@ final class PhysicalKeyDelivery: @unchecked Sendable {
             let key = keys[index]
             // Host shortcuts need not reach IMK. Once a later physical key has
             // arrived here, the unmatched earlier records cannot arrive in order.
-            keys.removeFirst(index + 1)
+            if removing { keys.removeFirst(index + 1) }
             return key
         }
     }

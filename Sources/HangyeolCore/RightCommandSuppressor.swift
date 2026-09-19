@@ -33,6 +33,12 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     static let monitoredEventMask = (CGEventMask(1) << CGEventType.flagsChanged.rawValue)
         | (CGEventMask(1) << CGEventType.keyDown.rawValue)
         | (CGEventMask(1) << CGEventType.keyUp.rawValue)
+        | (CGEventMask(1) << CGEventType.leftMouseDown.rawValue)
+        | (CGEventMask(1) << CGEventType.leftMouseUp.rawValue)
+        | (CGEventMask(1) << CGEventType.rightMouseDown.rawValue)
+        | (CGEventMask(1) << CGEventType.rightMouseUp.rawValue)
+        | (CGEventMask(1) << CGEventType.otherMouseDown.rawValue)
+        | (CGEventMask(1) << CGEventType.otherMouseUp.rawValue)
     
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -230,6 +236,9 @@ public final class RightCommandSuppressor: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
 
+        if !DeferredHostKeyDelivery.isReplayedHostKey(event),
+           ChromeInputHandoffGate.shared.intercept(event, type: type) { return nil }
+        if [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp].contains(type) { return Unmanaged.passUnretained(event) }
         // Deferred Chromium host keys belong to the host even when the same key is
         // configured as a custom Hangyeol shortcut.
         if DeferredHostKeyDelivery.isReplayedHostKey(event) {
@@ -485,6 +494,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
         }
 
         if type == .keyDown {
+            ChromeInputHandoffGate.shared.observeNavigation(event)
             PhysicalKeyDelivery.shared.record(event)
         }
         return Unmanaged.passUnretained(event)
@@ -657,6 +667,7 @@ public final class RightCommandSuppressor: @unchecked Sendable {
     }
     
     private func tearDownEventTap() {
+        ChromeInputHandoffGate.shared.releasePending()
         if let eventTap {
             CGEvent.tapEnable(tap: eventTap, enable: false)
             CFMachPortInvalidate(eventTap)
