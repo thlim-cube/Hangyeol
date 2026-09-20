@@ -21,6 +21,8 @@ public struct PendingInputSourceActivation: Codable, Equatable, Sendable {
     public let token: String
     public let installationKind: InstallerInstallationKind
     public let shouldSelect: Bool
+    // Historical plist key retained for decoding existing pending requests.
+    // The source is now kept enabled after activation, not automatically removed.
     public let temporaryFallbackSourceID: String?
     public let version: String
     public let build: String
@@ -153,7 +155,8 @@ public enum PostInstallPreparation {
             return .invalid
         }
         switch phase {
-        case .disableTemporaryFallback, .verifyTemporaryFallbackDisabled:
+        case .selectFallback, .verifyFallbackSelected,
+             .disableTemporaryFallback, .verifyTemporaryFallbackDisabled:
             guard arguments.count == 3, !arguments[2].isEmpty else {
                 return .invalid
             }
@@ -380,12 +383,20 @@ public enum PostInstallPreparation {
                 let boundaries = InputSourceLifecycleRules.activationBoundaries(
                     shouldSelect: request.shouldSelect
                 )
-                let fallbackBoundary = InputSourceLifecycleRules
-                    .temporaryFallbackBoundary(
-                        shouldSelect: request.shouldSelect,
-                        hasTemporaryFallback:
-                            request.temporaryFallbackSourceID != nil
-                    )
+                // A still-selected mode may have a stale menu connection after bundle
+                // replacement. Force a real fallback -> Hangyeol transition after
+                // the new receipt/runtime is ready, even on ordinary updates.
+                guard prepareFallbackHandoff(
+                    shouldSelect: request.shouldSelect,
+                    fallbackSourceID: request.temporaryFallbackSourceID,
+                    runPhase: {
+                        runInstallerPhaseProcess(
+                            $0,
+                            temporaryFallbackSourceID: request.temporaryFallbackSourceID,
+                            executableURL: executableURL
+                        )
+                    }
+                ) else { return false }
                 let activated = convergeStableActivation(
                     boundaries: boundaries,
                     attempts: activationRetryDelays.count,
@@ -431,23 +442,9 @@ public enum PostInstallPreparation {
                                 )
                                 return false
                             }
-                            if let fallbackBoundary {
-                                guard retireTemporaryFallback(
-                                    boundary: fallbackBoundary,
-                                    runPhase: {
-                                        runInstallerPhaseProcess(
-                                            $0,
-                                            temporaryFallbackSourceID:
-                                                request.temporaryFallbackSourceID,
-                                            executableURL: executableURL,
-                                            timeout:
-                                                fallbackRetirementPhaseTimeout
-                                        )
-                                    }
-                                ) else {
-                                    return false
-                                }
-                            }
+                            // Keep the working fallback. Removing its HIToolbox entry
+                            // directly can diverge from TIS and empty the system menu.
+                            // The user can manage input sources in System Settings.
 
                             let retired = retireActivationRequest(
                                 removeMarker: {
@@ -475,6 +472,16 @@ public enum PostInstallPreparation {
             fputs("installer: pending activation repair failed: \(error)\n", stderr)
             return false
         }
+    }
+
+    internal static func prepareFallbackHandoff(
+        shouldSelect: Bool,
+        fallbackSourceID: String?,
+        runPhase: (InstallerActivationPhase) -> Int32
+    ) -> Bool {
+        guard shouldSelect, fallbackSourceID != nil else { return true }
+        guard runPhase(.selectFallback) == InstallerPhaseExit.success else { return false }
+        return runPhase(.verifyFallbackSelected) == InstallerPhaseExit.success
     }
 
     /// A fresh-process failure must leave both the temporary fallback and the
@@ -668,7 +675,8 @@ public enum PostInstallPreparation {
         let completion = DispatchSemaphore(value: 0)
         process.executableURL = executableURL
         switch phase {
-        case .disableTemporaryFallback, .verifyTemporaryFallbackDisabled:
+        case .selectFallback, .verifyFallbackSelected,
+             .disableTemporaryFallback, .verifyTemporaryFallbackDisabled:
             guard let temporaryFallbackSourceID else {
                 return InstallerPhaseExit.failed
             }

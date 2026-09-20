@@ -387,3 +387,82 @@ Shift+Return은 글자와 줄바꿈을 보존했다. 준비용 `한👨‍👩�
 2026-09-20 사용자는 설치 후 다시 로그인했으며 “이제 해결된 것 같네”라고 보고했다.
 이는 설치 후 사용자 실사용 확인이며, 위 Claude 자동 검증과 구분한다.
 Codex 직접 자동 검증은 수행하지 않았고, 모든 입력 타이밍의 해결을 단정하지 않는다.
+
+## 재설치 직후 입력 메뉴 소실 조사 (2026-09-21, 진행 중)
+
+사용자 요구는 재설치 후 재로그인 없이 `한결 설정…`과 `한결 정보`가 표시되고
+실행되는 것이다. 완료 판정은 같은 로그인 세션의 실제 재설치 후 두 항목의 표시와
+실행, 입력 소스 정상 동작을 확인하는 것으로 한다. TIS ready나 단위 검사만으로
+메뉴 복구를 판정하지 않는다.
+
+3.0.29/build 112를 08:00:41–08:00:50 재설치한 뒤 사용자가 제공한 스크린샷에서
+한결 선택 상태지만 두 항목 대신 비활성 점 표시가 나타나는 현상이 재현되었다.
+`/var/log/install.log`는 설치 성공을 기록했다. 한결 PID 96253은 08:00:50에
+시작되었으며, TextInputMenuAgent PID 57434는 전날 로그인부터 유지되고 있었다.
+활성화 대기 마커는 없었다. 로그에는 새 한결 프로세스의 InputMethodKit Menu 및
+Activate Server 요청이 있으므로 프로세스 생존·요청 수신만으로 정상 표시를
+보장할 수 없다. MenuAgent의 메뉴 항목 불일치 오류도 있지만 원인으로 확정하지 않는다.
+원본 진단 로그는 `/tmp/hangyeol-menu-reinstall-20260921.log`에 보존했다.
+
+복구 조건을 분리하기 위해 한결 PID 96253만 종료하고 같은 설치본을 PID 98170으로
+다시 시작했다. 준비 helper 실행 시 selected-before=false였으므로 선택 상태를
+강제로 변경하지 않았다. TextInputMenuAgent와 로그인 세션은 유지했다.
+이 조치 뒤 실제 메뉴 표시 여부는 사용자 확인 대기 중이다. 아직 수정·해결 또는
+새 패키지 검증 완료로 판단하지 않는다.
+
+사용자는 한결만 재시작한 뒤에도 점 표시가 유지된다고 확인했다. 다음 단계로
+입력 메뉴 프로세스만 재시작했다. `launchctl kickstart -k`는 SIP에 의해 거절되었고,
+보호 설정을 변경하지 않았다. 현재 사용자 소유 PID 57434에 정상 종료(SIGTERM)를
+보낸 뒤 macOS가 TextInputMenuAgent를 PID 98470으로 다시 시작한 것을 확인했다.
+한결 PID 98170은 유지되었다. 이 두 번째 조치 뒤 메뉴 표시는 사용자 확인 대기 중이다.
+
+메뉴 프로세스 재시작 뒤 사용자 스크린샷에서는 한결/ABC 목록 자체가 사라졌다.
+새 프로세스의 제품 상태 조회 역시 candidates=false, enabled=false, ready=false와
+verify-selected=false였다. 따라서 메뉴 프로세스 재시작만을 해결책으로 채택하지 않는다.
+기존 설치본에 register → enable-parent → enable-mode → select-mode를 각각 별도
+프로세스로 실행했고 모두 status=0이었다. 후속 별도 프로세스에서 candidates=true,
+enabled=true, ready=true 및 verify-selected=true를 확인했다. 이 복구 뒤 메뉴 항목
+표시·실행은 아직 사용자 확인 전이며, TIS 상태와 구분한다.
+
+사용자는 재등록 뒤에도 입력 소스 없는 메뉴가 유지되는 스크린샷을 제공했다.
+셸의 launchctl managername=Aqua, manageruid=501, 콘솔 사용자=thlim이며,
+launchctl asuser 501의 별도 상태 조회도 ready=true였다. System Settings의
+키보드 > 입력 소스 편집 화면을 Computer Use로 직접 열었을 때 목록에는
+한결 하나가 표시되었다. 따라서 현재 현상을 단순히 다른 로그인 세션에서
+등록한 결과라고 판단하지 않는다. 등록 UI와 상단 메뉴가 불일치하는 상태다.
+`메뉴 막대에서 입력 메뉴 보기`를 on→off→on으로 변경하고 원래 on 상태로
+복원한 뒤 완료를 눌렀다. 표시 갱신 결과는 사용자 확인 대기 중이다.
+
+
+사용자는 표시 토글 뒤에도 한결이 없다고 확인했다. 이후 System Settings에서 ABC를
+추가하고 한결 제거·재추가를 진행했다. 사용자의 상세 관찰로는 **ABC만 추가한
+시점에 이미 한결이 돌아왔고, ABC→한결 전환 후 설정·정보가 표시되었다**.
+따라서 제거·재추가 자체가 필요하다는 초기 해석은 철회한다. 최종 스크린샷에서
+ABC, 선택된 한결, 한결 설정, 한결 정보를 확인했다. 재로그인은 하지 않았다.
+
+추가 진단에서 `TISDisableInputSource(ABC)`는 status=0을 반환했지만 다음 별도
+프로세스의 TIS 목록에는 ABC가 여전히 enabled였다. 오류 반환을 무시한 것이
+직접 원인이라는 가설은 철회한다. 기존 설치 경로가 그 뒤 HIToolbox 목록을 직접
+편집해 ABC를 제거하는 것은 관측된 시스템 유지 상태와 충돌하는 경로다.
+이 현상만으로 최초 메뉴 소실의 모든 원인을 확정하지는 않는다.
+
+3.0.30/build 113 후보 변경:
+- 새 패키지 receipt를 확인한 뒤 fallback→한결 전환을 수행한다. 기존 TIS ready
+  preflight가 ordinary update의 실제 전환을 생략하지 않도록 한다.
+- 원래부터 활성 상태인 ABC도 전환 대상으로 전달한다. 원래 다른 입력기를
+  선택했던 사용자는 변경하지 않는다.
+- 활성화 완료 시 fallback을 자동 제거하거나 HIToolbox에서 강제 삭제하지 않는다.
+  설치 후 ABC가 남을 수 있으며 입력 소스 관리는 시스템 설정에서 할 수 있다.
+- 실패한 fallback 전환/별도 검증은 활성화 완료로 처리하지 않고 대기 요청을 남긴다.
+
+573 tests / 61 suites 통과. 수정된 debug executable의 select-fallback,
+verify-fallback-selected, select-mode, verify-selected를 순서대로 실행해 모두
+성공한 것을 확인했다. 이는 기존 설치본이 실행 중인 환경의 전환 명령 검증이며,
+새 패키지 재설치 후 메뉴 표시·설정/정보 실행 검증을 대신하지 않는다.
+최종 패키지 설치 후 재로그인 전 표시와 메뉴 명령 실행 검증은 미완료다.
+
+최종 3.0.30/build 113 상태에서 전체 573 tests / 61 suites가 통과했다
+(`/tmp/hangyeol-330-final-tests.log`). HangyeolVerify와 셸 구문 검사도 통과했다.
+`build_local.sh`로 4.2MB Local.pkg를 생성하고 압축을 푼 앱·설치 도우미의
+Apple Development 서명, 제품 ID, 버전/build, 등록 메타데이터를 검증했다
+(`/tmp/hangyeol-330-package.log`). 새 패키지는 아직 설치하지 않았다.

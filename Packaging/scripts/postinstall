@@ -105,9 +105,6 @@ SELECTED_BEFORE=$(run_as_console_user /usr/bin/defaults read \
 FALLBACK_SOURCE_ID=$(run_as_console_user /usr/bin/defaults read \
     com.thlim.inputmethod.Hangyeol \
     HangyeolFallbackInputSourceID 2>/dev/null || true)
-FALLBACK_WAS_ENABLED=$(run_as_console_user /usr/bin/defaults read \
-    com.thlim.inputmethod.Hangyeol \
-    HangyeolFallbackWasEnabled 2>/dev/null || true)
 PREVIOUS_BUNDLE_IDENTIFIER=$(run_as_console_user /usr/bin/defaults read \
     com.thlim.inputmethod.Hangyeol \
     HangyeolInstalledBundleIdentifier 2>/dev/null || true)
@@ -139,14 +136,6 @@ case "$SELECTED_BEFORE" in
         SHOULD_SELECT=false
         ;;
 esac
-case "$FALLBACK_WAS_ENABLED" in
-    0|false|FALSE|NO)
-        FALLBACK_WAS_ENABLED_NORMALIZED=false
-        ;;
-    *)
-        FALLBACK_WAS_ENABLED_NORMALIZED=true
-        ;;
-esac
 case "$INSTALLATION_KIND" in
     first-installation)
         SHOULD_SELECT=true
@@ -163,12 +152,14 @@ case "$INSTALLATION_KIND" in
         ;;
 esac
 
-TEMPORARY_FALLBACK_SOURCE_ID="-"
+# Retain the fallback identity even when it was already enabled: a fresh
+# fallback -> Hangyeol transition repairs stale same-session menu ownership.
+# The activation worker preserves this source instead of editing HIToolbox.
+ACTIVATION_FALLBACK_SOURCE_ID="-"
 if [ "$SHOULD_SELECT" = true ] \
-    && [ "$FALLBACK_WAS_ENABLED_NORMALIZED" = false ] \
     && [ -n "$FALLBACK_SOURCE_ID" ] \
     && [ "$FALLBACK_SOURCE_ID" != "-" ]; then
-    TEMPORARY_FALLBACK_SOURCE_ID="$FALLBACK_SOURCE_ID"
+    ACTIVATION_FALLBACK_SOURCE_ID="$FALLBACK_SOURCE_ID"
 fi
 
 # The installed executable writes a generation-tagged marker and a per-user
@@ -180,7 +171,7 @@ if ! run_as_console_user "$EXECUTABLE" \
     --schedule-input-source-repair \
     "$INSTALLATION_KIND" \
     "$SHOULD_SELECT" \
-    "$TEMPORARY_FALLBACK_SOURCE_ID" \
+    "$ACTIVATION_FALLBACK_SOURCE_ID" \
     --after-package-receipt; then
     echo "Hangyeol could not schedule input-source activation." >&2
     open_input_source_settings

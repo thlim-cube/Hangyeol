@@ -104,6 +104,8 @@ public enum InstallerActivationPhase: String, CaseIterable, Codable, Sendable {
     case verifyParent = "--installer-verify-parent"
     case enableMode = "--installer-enable-mode"
     case verifyMode = "--installer-verify-mode"
+    case selectFallback = "--installer-select-fallback"
+    case verifyFallbackSelected = "--installer-verify-fallback-selected"
     case selectMode = "--installer-select-mode"
     case verifySelected = "--installer-verify-selected"
     case disableTemporaryFallback = "--installer-disable-temporary-fallback"

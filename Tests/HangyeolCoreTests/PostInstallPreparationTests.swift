@@ -423,6 +423,46 @@ struct PostInstallPreparationTests {
         #expect(phaseCount == 0)
     }
 
+    @Test("Replacement switches to fallback even when the old mode was ready")
+    func fallbackHandoffAlwaysSelectsAndVerifies() {
+        var phases: [InstallerActivationPhase] = []
+        let ready = PostInstallPreparation.prepareFallbackHandoff(
+            shouldSelect: true,
+            fallbackSourceID: "com.apple.keylayout.ABC",
+            runPhase: { phases.append($0); return InstallerPhaseExit.success }
+        )
+        #expect(ready)
+        #expect(phases == [.selectFallback, .verifyFallbackSelected])
+    }
+
+    @Test("Fallback handoff failure prevents mode activation")
+    func fallbackHandoffRequiresBothActionAndFreshVerification() {
+        for failedPhase in [InstallerActivationPhase.selectFallback, .verifyFallbackSelected] {
+            var phases: [InstallerActivationPhase] = []
+            #expect(!PostInstallPreparation.prepareFallbackHandoff(
+                shouldSelect: true,
+                fallbackSourceID: "com.apple.keylayout.ABC",
+                runPhase: {
+                    phases.append($0)
+                    return $0 == failedPhase ? InstallerPhaseExit.retryable : InstallerPhaseExit.success
+                }
+            ))
+            #expect(phases == (failedPhase == .selectFallback
+                ? [.selectFallback] : [.selectFallback, .verifyFallbackSelected]))
+        }
+    }
+
+    @Test("A user-selected other source is not switched by installer handoff")
+    func fallbackHandoffPreservesOtherSelection() {
+        for (shouldSelect, fallback) in [(false, Optional("com.apple.keylayout.ABC")), (true, nil)] {
+            #expect(PostInstallPreparation.prepareFallbackHandoff(
+                shouldSelect: shouldSelect,
+                fallbackSourceID: fallback,
+                runPhase: { _ in Issue.record("Unexpected source change"); return InstallerPhaseExit.failed }
+            ))
+        }
+    }
+
     @Test("Temporary fallback retirement is a separate final boundary")
     func retiresTemporaryFallbackOnlyAfterStableActivation() {
         let fallback = InputSourceLifecycleRules.temporaryFallbackBoundary(
@@ -783,9 +823,11 @@ struct InstallerSessionContractTests {
         #expect(source.contains("postinstall_classification.sh"))
         #expect(source.contains("HangyeolSelectedBeforeInstall"))
         #expect(source.contains("HangyeolFallbackInputSourceID"))
-        #expect(source.contains("HangyeolFallbackWasEnabled"))
+        // Reuse an already-enabled fallback too; its previous state must not
+        // suppress the real post-replacement source transition.
+        #expect(!source.contains("FALLBACK_WAS_ENABLED_NORMALIZED"))
         #expect(source.contains("SHOULD_SELECT=true"))
-        #expect(source.contains("TEMPORARY_FALLBACK_SOURCE_ID"))
+        #expect(source.contains("ACTIVATION_FALLBACK_SOURCE_ID"))
         #expect(source.contains("HangyeolPendingPostInstallSetup"))
         #expect(source.contains("com.thlim.hangyeol.activation-repair"))
         #expect(source.contains("ordinary-update)"))
@@ -827,7 +869,9 @@ struct InstallerSessionContractTests {
         #expect(source.contains("HangyeolInstalledConnectionName"))
         #expect(source.contains("HangyeolInstalledInputModeSchema"))
         #expect(source.contains("HangyeolFallbackInputSourceID"))
-        #expect(source.contains("HangyeolFallbackWasEnabled"))
+        // Reuse an already-enabled fallback too; its previous state must not
+        // suppress the real post-replacement source transition.
+        #expect(!source.contains("FALLBACK_WAS_ENABLED_NORMALIZED"))
         #expect(!source.contains("HangyeolRunningProcessIdentifierBeforeInstall"))
         #expect(!source.contains("pgrep -x -u \"$USER_ID\" Hangyeol"))
     }
@@ -930,7 +974,7 @@ struct InstallerSessionContractTests {
         #expect(!source.contains("--post-install-prepare"))
     }
 
-    @Test("Installer retires its fallback and marker only after stable TIS verification")
+    @Test("Installer switches through fallback before activation and preserves it at retirement")
     func stableActivationPrecedesInstallerCleanup() throws {
         let source = try String(
             contentsOf: repoRoot
@@ -946,7 +990,7 @@ struct InstallerSessionContractTests {
             source.range(of: "guard activated else { return false }")
         )
         let fallbackRange = try #require(
-            source.range(of: "if let fallbackBoundary {")
+            source.range(of: "guard prepareFallbackHandoff(")
         )
         let readinessRange = try #require(
             source.range(of: "verifyFreshReadiness: {")
@@ -971,7 +1015,8 @@ struct InstallerSessionContractTests {
         #expect(stableRange.lowerBound < activatedGuardRange.lowerBound)
         #expect(activatedGuardRange.lowerBound < readinessRange.lowerBound)
         #expect(readinessRange.lowerBound < finalGenerationLockRange.lowerBound)
-        #expect(finalGenerationLockRange.lowerBound < fallbackRange.lowerBound)
+        #expect(fallbackRange.lowerBound < stableRange.lowerBound)
+        #expect(!source.contains("if let fallbackBoundary {"))
         #expect(finalGenerationLockRange.lowerBound < markerRemovalRange.lowerBound)
         #expect(schedulingLockRange.lowerBound < repairLockRange.lowerBound)
         #expect(

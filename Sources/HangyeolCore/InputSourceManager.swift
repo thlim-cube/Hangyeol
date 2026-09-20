@@ -240,6 +240,32 @@ public final class InputSourceManager: @unchecked Sendable {
                 ? InstallerPhaseExit.success
                 : InstallerPhaseExit.retryable
 
+        case .selectFallback:
+            guard let fallbackSourceID,
+                  let record = fallbackRecord(sourceID: fallbackSourceID) else {
+                return InstallerPhaseExit.failed
+            }
+            if !record.candidate.isEnabled {
+                guard TISEnableInputSource(record.source) == noErr else {
+                    return InstallerPhaseExit.retryable
+                }
+            }
+            let status = TISSelectInputSource(record.source)
+            print("installer: select-fallback status=\(status)")
+            return status == noErr ? InstallerPhaseExit.success : InstallerPhaseExit.retryable
+
+        case .verifyFallbackSelected:
+            guard let fallbackSourceID,
+                  let current = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+                  let selected = Self.installationRecord(for: current),
+                  let fallback = fallbackRecord(sourceID: fallbackSourceID) else {
+                return InstallerPhaseExit.failed
+            }
+            let ready = selected.candidate.sourceID == fallbackSourceID
+                && fallback.candidate.isEnabled
+            print("installer: verify-fallback-selected ready=\(ready)")
+            return ready ? InstallerPhaseExit.success : InstallerPhaseExit.retryable
+
         case .selectMode:
             guard installationRoster(includeAllInstalled: false).isEnabled,
                   let record = uniqueRecord(
