@@ -235,6 +235,7 @@ struct DeferredHostKeyReplayEnvironment: @unchecked Sendable {
     let makeEvents: (UInt16, UInt) -> DeferredHostKeyDelivery.Events?
     let scheduleInitial: (DeferredHostKeyPoll) -> Void
     let scheduleRetry: (DeferredHostKeyPoll) -> Void
+    let scheduleRendererSettlement: (DeferredHostKeyPoll) -> Void
     let postEvent: (CGEvent) -> Void
 
     static let live = DeferredHostKeyReplayEnvironment(
@@ -252,6 +253,11 @@ struct DeferredHostKeyReplayEnvironment: @unchecked Sendable {
         },
         scheduleRetry: { poll in
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(1)) {
+                poll.run()
+            }
+        },
+        scheduleRendererSettlement: { poll in
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(20)) {
                 poll.run()
             }
         },
@@ -411,6 +417,7 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
     private let environment: DeferredHostKeyReplayEnvironment
     private var retirementGate: DeferredCompositionRetirementGate?
     private var pollCount = 0
+    private var rendererSettlementCompleted = false
 
     var isArmed: Bool {
         guard retirementGate != nil else { return false }
@@ -526,6 +533,7 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
                 logSkip("host_key_target_changed")
                 return
             case .wait:
+                rendererSettlementCompleted = false
                 pollCount += 1
                 guard pollCount < Self.maxRetirementPolls else {
                     logSkip("marked_text_not_retired")
@@ -540,6 +548,29 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
 
         guard authorization.isAllowed() else {
             logSkip("stale_session")
+            return
+        }
+        // Jira can acknowledge compositionend and expose a collapsed IMK caret
+        // before its editor model has caught up. Live failures occurred with a
+        // replay 4.6/6.4 ms after compositionend. Give Chrome's renderer a short
+        // settlement turn, then re-read ownership, mark, selection and text above.
+        // Only composed Chrome Return uses this delay; ordinary keys and Delete do not.
+        if (keyCode == KeyCode.return || keyCode == KeyCode.numpadEnter),
+           client.bundleIdentifier() == "com.google.Chrome",
+           !rendererSettlementCompleted {
+            let settlementSelection = client.selectedRange()
+            environment.scheduleRendererSettlement(DeferredHostKeyPoll { [self] in
+                guard authorization.isAllowed() else {
+                    logSkip("stale_session")
+                    return
+                }
+                guard client.selectedRange() == settlementSelection else {
+                    logSkip("host_key_target_changed")
+                    return
+                }
+                rendererSettlementCompleted = true
+                deliverWhenReady()
+            })
             return
         }
         // Some Electron clients report zero length even for readable text and

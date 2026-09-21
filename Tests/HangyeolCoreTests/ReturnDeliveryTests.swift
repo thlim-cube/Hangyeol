@@ -253,6 +253,7 @@ private final class ManualHostKeyReplayDriver {
     private(set) var postedEventTypes: [CGEventType] = []
     private(set) var postedBoundaryCount = 0
     var onKeyDown: () -> Void = {}
+    private(set) var rendererSettlementCount = 0
 
     var environment: DeferredHostKeyReplayEnvironment {
         DeferredHostKeyReplayEnvironment(
@@ -267,6 +268,10 @@ private final class ManualHostKeyReplayDriver {
                 self?.polls.append(poll)
             },
             scheduleRetry: { [weak self] poll in
+                self?.polls.append(poll)
+            },
+            scheduleRendererSettlement: { [weak self] poll in
+                self?.rendererSettlementCount += 1
                 self?.polls.append(poll)
             },
             postEvent: { [weak self] event in
@@ -949,6 +954,82 @@ struct ReturnDeliveryTests {
             markedRange: NSRange(location: NSNotFound, length: 0),
             selectedRange: NSRange(location: 4, length: 0)
         ) == .cancel)
+    }
+
+    @Test("Chrome Return does not replace a syllable after IMK retires ahead of the editor",
+          arguments: [KeyCode.return, KeyCode.numpadEnter], [false, true])
+    func chromeReturnWaitsForRenderer(keyCode: UInt16, shift: Bool) throws {
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.google.Chrome"
+        client.document = "한글"
+        client.markedRangeValue = NSRange(location: 1, length: 1)
+        client.selectedRangeValue = NSRange(location: 2, length: 0)
+        let driver = ManualHostKeyReplayDriver()
+        var rendererReady = false
+        driver.onKeyDown = {
+            client.document = rendererReady ? "한글\n" : "한\n"
+        }
+        #expect(HostKeyTransaction.perform(
+            client: client, keyCode: keyCode,
+            modifierFlags: shift ? NSEvent.ModifierFlags.shift.rawValue : 0,
+            isClientWriteAllowed: { true }, didPost: { _ in },
+            expectedCommittedText: "글", environment: driver.environment,
+            commit: { client.markedRangeValue = NSRange(location: NSNotFound, length: 0) }
+        ))
+        try driver.runNextPoll()
+        try driver.runNextPoll()
+        // Real Jira failed even after the mark disappeared and the caret collapsed.
+        #expect(driver.postedEventTypes.isEmpty)
+        #expect(client.document == "한글")
+        #expect(driver.rendererSettlementCount == 1)
+        rendererReady = true
+        while !driver.polls.isEmpty { try driver.runNextPoll() }
+        #expect(driver.postedEventTypes == [.keyDown, .keyUp])
+        #expect(client.document == "한글\n")
+    }
+
+    @Test("Chrome settlement rechecks authorization and composition before replay",
+          arguments: ["revoked", "new-composition", "text-changed", "caret-moved", "mark-reappeared"])
+    func chromeSettlementRevalidatesTarget(change: String) throws {
+        let client = FakeIMKTextInput()
+        client.bundleID = "com.google.Chrome"
+        client.document = "한글"
+        let range = NSRange(location: 1, length: 1)
+        client.markedRangeValue = range
+        client.selectedRangeValue = NSRange(location: 2, length: 0)
+        var allowed = true
+        let driver = ManualHostKeyReplayDriver()
+        #expect(HostKeyTransaction.perform(
+            client: client, keyCode: KeyCode.return, modifierFlags: 0,
+            isClientWriteAllowed: { allowed }, didPost: { _ in },
+            expectedCommittedText: "글", environment: driver.environment,
+            commit: { client.markedRangeValue = NSRange(location: NSNotFound, length: 0) }
+        ))
+        try driver.runNextPoll()
+        try driver.runNextPoll()
+        #expect(driver.rendererSettlementCount == 1)
+        #expect(driver.postedEventTypes.isEmpty)
+        switch change {
+        case "revoked": allowed = false
+        case "new-composition": client.markedRangeValue = NSRange(location: 2, length: 1)
+        case "text-changed": client.document = "한가"
+        case "caret-moved": client.selectedRangeValue = NSRange(location: 0, length: 0)
+        default: client.markedRangeValue = range
+        }
+        try driver.runNextPoll()
+        #expect(driver.postedEventTypes.isEmpty)
+        if change == "mark-reappeared" {
+            client.markedRangeValue = NSRange(location: NSNotFound, length: 0)
+            try driver.runNextPoll()
+            try driver.runNextPoll()
+            #expect(driver.rendererSettlementCount == 2)
+            #expect(driver.postedEventTypes.isEmpty)
+            try driver.runNextPoll()
+            #expect(driver.postedEventTypes == [.keyDown, .keyUp])
+        } else {
+            while !driver.polls.isEmpty { try driver.runNextPoll() }
+            #expect(driver.postedEventTypes.isEmpty)
+        }
     }
 
     @Test("Shift+Return waits until the last composed syllable is visible")
