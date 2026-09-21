@@ -423,6 +423,18 @@ struct PostInstallPreparationTests {
         #expect(phaseCount == 0)
     }
 
+    @Test("Activation retries really wait on a worker without run-loop sources")
+    func activationRetryWaitsOnBackgroundWorker() async {
+        let elapsed: TimeInterval = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                let start = ProcessInfo.processInfo.systemUptime
+                PostInstallPreparation.waitForActivationRetry(0.08)
+                continuation.resume(returning: ProcessInfo.processInfo.systemUptime - start)
+            }
+        }
+        #expect(elapsed >= 0.07)
+    }
+
     @Test("Replacement switches to fallback even when the old mode was ready")
     func fallbackHandoffAlwaysSelectsAndVerifies() {
         var phases: [InstallerActivationPhase] = []

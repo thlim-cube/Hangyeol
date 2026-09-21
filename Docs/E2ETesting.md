@@ -466,3 +466,26 @@ verify-fallback-selected, select-mode, verify-selected를 순서대로 실행해
 `build_local.sh`로 4.2MB Local.pkg를 생성하고 압축을 푼 앱·설치 도우미의
 Apple Development 서명, 제품 ID, 버전/build, 등록 메타데이터를 검증했다
 (`/tmp/hangyeol-330-package.log`). 새 패키지는 아직 설치하지 않았다.
+
+
+## 3.0.30 설치 실패와 실제 대기 결함 (2026-09-21)
+
+사용자는 09:43에 3.0.30 설치 후 입력 소스가 없는 메뉴와 영문으로만 입력되는
+현상을 보고했다. 설치본 버전은 3.0.30, 한결 PID 3735였지만 새 프로세스의
+상태는 candidates=false/enabled=false/ready=false였고 대기 마커는 이미 없었다.
+따라서 3.0.30의 설치 후 복구는 실패로 판정하며 이전 로컬 검사와 구분한다.
+진단 로그는 `/tmp/hangyeol-330-install-failure.log`에 보존했다.
+
+안정화 검사 프로세스들이 09:43:22.7–23.6에 집중되어 있었다. 의도한 5개 안정
+관측 사이의 총 5.5초 대기는 실행되지 않았다. GCD worker의 RunLoop에 소스가
+없으면 RunLoop.run(until:)는 지정 시각까지 대기하지 않고 즉시 반환한다.
+실제 운영 호출이 사용하는 함수를 그대로 worker에서 검사하는 회귀 테스트에서
+80ms 요청이 약 0.305ms에 반환되어 실패했다(`/tmp/hangyeol-retry-before.log`).
+수정은 worker 대기를 Thread.sleep으로 바꾸며 IMK 메인 스레드는 차단하지 않는다.
+같은 방식의 활성화 완료 polling도 함께 수정했다.
+
+기존 설치본에 register/enable-parent/enable-mode 후 ABC→한결 선택을 수행하여
+TIS ready=true를 확인했지만 이는 사용자 화면 복구 증거와 구분한다.
+3.0.31/build 114 후보는 위 대기 결함을 수정한다. 전체 574 tests / 61 suites와
+실제 worker 대기 회귀 검사를 통과했다. 새 설치본의 재설치 검증은 아직 수행하지
+않았으므로 전체 메뉴 문제 해결을 확정하지 않는다.

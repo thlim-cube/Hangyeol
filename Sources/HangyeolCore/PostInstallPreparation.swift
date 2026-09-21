@@ -301,11 +301,7 @@ public enum PostInstallPreparation {
                 overflow || DispatchTime.now().uptimeNanoseconds < deadline
             },
             waitBeforeRetry: {
-                RunLoop.current.run(
-                    until: Date().addingTimeInterval(
-                        activationCompletionPollInterval
-                    )
-                )
+                waitForActivationRetry(activationCompletionPollInterval)
             }
         )
     }
@@ -413,11 +409,7 @@ public enum PostInstallPreparation {
                     },
                     waitBeforeRetry: { attempt in
                         let delay = activationRetryDelays[attempt]
-                        if delay > 0 {
-                            RunLoop.current.run(
-                                until: Date().addingTimeInterval(delay)
-                            )
-                        }
+                        waitForActivationRetry(delay)
                     }
                 )
                 guard activated else { return false }
@@ -472,6 +464,13 @@ public enum PostInstallPreparation {
             fputs("installer: pending activation repair failed: \(error)\n", stderr)
             return false
         }
+    }
+
+    internal static func waitForActivationRetry(_ delay: TimeInterval) {
+        guard delay > 0 else { return }
+        // A GCD worker has no run-loop sources; RunLoop.run can return immediately.
+        // This runs off the IMK main thread and must enforce a real elapsed interval.
+        Thread.sleep(forTimeInterval: delay)
     }
 
     internal static func prepareFallbackHandoff(
