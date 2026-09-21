@@ -1651,40 +1651,22 @@ struct ReturnDeliveryTests {
         #expect(pipeline.host.defaultReturnActionCount == 1)
     }
 
-    @Test("Chrome commits and delivers the original unmodified Return exactly once")
-    func blinkWebContentComposedReturn() {
-        let modifiers = NSEvent.ModifierFlags()
-        let pipeline = ReturnDeliveryHarness()
-        pipeline.bundleId = "com.google.Chrome"
-        pipeline.typeGa()
-        let returnEvent = TestEventFactory.keyEvent(
-            char: "\r", keyCode: KeyCode.return, modifiers: modifiers, timestamp: 10
-        )!
-        #expect(!pipeline.dispatch(returnEvent))
-        #expect(pipeline.host.document == "가\n")
-        #expect(pipeline.host.defaultReturnActionCount == 1)
-        #expect(pipeline.host.scheduledReturnModifierFlags == nil)
-        pipeline.host.deliverScheduledReturn()
-        #expect(pipeline.host.defaultReturnActionCount == 1)
-        #expect(pipeline.dispatch(returnEvent))
-        #expect(pipeline.host.document == "가\n")
-    }
-
-    // User-observed Jira/Atlassian editor: 한글 + Shift+Return became 한 + break.
-    // Unlike plain Return, the soft break must not reach the editor while its
-    // final syllable is still owned by composition.
-    @Test("Chrome rich-editor Shift+Return commits before delivering one soft break")
-    func chromeRichEditorSoftBreakWaitsForComposition() {
+    // User-observed Jira editor: both plain Return and Shift+Return can remove
+    // the final syllable. Commit must precede one host-owned line-break action.
+    @Test("Chrome rich-editor Return waits for composition and delivers once",
+          arguments: [KeyCode.return, KeyCode.numpadEnter], [false, true])
+    func chromeRichEditorReturnWaitsForComposition(keyCode: UInt16, shift: Bool) {
         let pipeline = ReturnDeliveryHarness()
         pipeline.bundleId = "com.google.Chrome"
         pipeline.typeBangSik()
+        let modifiers: NSEvent.ModifierFlags = shift ? [.shift] : []
         let event = TestEventFactory.keyEvent(
-            char: "\r", keyCode: KeyCode.return, modifiers: [.shift], timestamp: 10
+            char: "\r", keyCode: keyCode, modifiers: modifiers, timestamp: 10
         )!
         #expect(pipeline.dispatch(event))
         #expect(pipeline.host.document == "방식")
         #expect(pipeline.host.defaultReturnActionCount == 0)
-        #expect(NSEvent.ModifierFlags(rawValue: pipeline.host.scheduledReturnModifierFlags ?? 0).contains(.shift))
+        #expect(pipeline.host.scheduledReturnModifierFlags == modifiers.rawValue)
         pipeline.host.deliverScheduledReturn()
         #expect(pipeline.host.document == "방식\n")
         #expect(pipeline.host.defaultReturnActionCount == 1)

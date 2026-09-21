@@ -446,7 +446,7 @@ struct HangulComposerTests {
         #expect(delegate.fullText == "가\n")
     }
 
-    @Test("Chrome commits Return and leaves the original host action")
+    @Test("Chrome commits Return before delivering the host action")
     func blinkWebContentOwnsComposedReturn() throws {
         let (composer, delegate, _) = makeComposer()
         composer.markKeystroke(
@@ -472,13 +472,13 @@ struct HangulComposerTests {
         ))
         let handled = composer.handle(returnEvent, delegate: delegate)
 
-        #expect(!handled)
+        #expect(handled)
         #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeReturn)) == [
-            "insert:식"
+            "schedule:return", "insert:식"
         ])
         #expect(delegate.fullText == "방식")
         delegate.deliverScheduledReturns()
-        #expect(delegate.fullText == "방식")
+        #expect(delegate.fullText == "방식\n")
         #expect(delegate.markedText.isEmpty)
     }
 

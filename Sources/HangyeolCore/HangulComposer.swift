@@ -286,12 +286,11 @@ public class HangulComposer: @unchecked Sendable {
             ]
             let defersBlinkWebContentReturn = hadComposition
                 && lastInputHostSurface == .blinkWeb
-                && (lastInputBundleId != "com.google.Chrome" || modifierFlags.contains(.shift))
                 && modifierFlags.intersection(hostOwnedReturnModifiers).isEmpty
 
-            // Preserve Chrome's original plain Return path. Rich-editor soft
-            // breaks (observed in Jira) can replace the last marked syllable even
-            // after insertText returns, so Shift+Return must wait for retirement.
+            // Rich editors (observed in Jira) can replace the final marked syllable
+            // for both Return and Shift+Return even after insertText returns.
+            // Both line-break actions must wait for composition retirement.
             // This uses the existing readiness check, not a fixed typing delay.
             // Blink can acknowledge the commit before the renderer retires its
             // marked range. Capture that range first so the host Return is released
