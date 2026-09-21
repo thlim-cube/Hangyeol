@@ -1651,9 +1651,9 @@ struct ReturnDeliveryTests {
         #expect(pipeline.host.defaultReturnActionCount == 1)
     }
 
-    @Test("Chrome commits and delivers the original Return exactly once",
-          arguments: [NSEvent.ModifierFlags(), .shift])
-    func blinkWebContentComposedReturn(modifiers: NSEvent.ModifierFlags) {
+    @Test("Chrome commits and delivers the original unmodified Return exactly once")
+    func blinkWebContentComposedReturn() {
+        let modifiers = NSEvent.ModifierFlags()
         let pipeline = ReturnDeliveryHarness()
         pipeline.bundleId = "com.google.Chrome"
         pipeline.typeGa()
@@ -1668,6 +1668,30 @@ struct ReturnDeliveryTests {
         #expect(pipeline.host.defaultReturnActionCount == 1)
         #expect(pipeline.dispatch(returnEvent))
         #expect(pipeline.host.document == "가\n")
+    }
+
+    // User-observed Jira/Atlassian editor: 한글 + Shift+Return became 한 + break.
+    // Unlike plain Return, the soft break must not reach the editor while its
+    // final syllable is still owned by composition.
+    @Test("Chrome rich-editor Shift+Return commits before delivering one soft break")
+    func chromeRichEditorSoftBreakWaitsForComposition() {
+        let pipeline = ReturnDeliveryHarness()
+        pipeline.bundleId = "com.google.Chrome"
+        pipeline.typeBangSik()
+        let event = TestEventFactory.keyEvent(
+            char: "\r", keyCode: KeyCode.return, modifiers: [.shift], timestamp: 10
+        )!
+        #expect(pipeline.dispatch(event))
+        #expect(pipeline.host.document == "방식")
+        #expect(pipeline.host.defaultReturnActionCount == 0)
+        #expect(NSEvent.ModifierFlags(rawValue: pipeline.host.scheduledReturnModifierFlags ?? 0).contains(.shift))
+        pipeline.host.deliverScheduledReturn()
+        #expect(pipeline.host.document == "방식\n")
+        #expect(pipeline.host.defaultReturnActionCount == 1)
+        #expect(pipeline.dispatch(event))
+        pipeline.host.deliverScheduledReturn()
+        #expect(pipeline.host.document == "방식\n")
+        #expect(pipeline.host.defaultReturnActionCount == 1)
     }
 
     @Test("Codex composed Shift+Return preserves the last syllable and runs once")

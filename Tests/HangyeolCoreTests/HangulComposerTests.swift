@@ -545,10 +545,10 @@ struct HangulComposerTests {
             delegate: delegate
         )
 
-        #expect(!handled)
+        #expect(handled)
         #expect(delegate.fullText == "방식")
         delegate.deliverScheduledReturns()
-        #expect(delegate.fullText == "방식")
+        #expect(delegate.fullText == "방식\n")
     }
 
     @Test("Capability-selected Blink web mediates Return and Forward Delete")

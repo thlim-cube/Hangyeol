@@ -589,3 +589,34 @@ Chrome/Electron/Hermes 호환 계약은 유지했다. 시스템 호스트 네 �
 증거가 아니다. 메뉴 CUA 호출은 두 차례
 timeoutReached여서 허용된 네이티브 AX 읽기로 전환했으며 등록 상태를 변경하지 않았다.
 검증 자료: `/Users/thlim/Documents/Codex/hangyeol-focus-diagnostics-2026-09-22/installed-3.0.32/`.
+
+
+## Jira 설명 편집기의 조합 중 Shift+Return (2026-09-22)
+
+사용자가 지정한 실제 Chrome Jira QTF-145 설명 편집기에서 검사했다. 대상은
+`#ak-editor-textarea`이며 제목/인용/목록/빈 문단을 가진 Atlassian 편집기였다.
+현재 설치본은 3.0.32이며 3.1.0은 입력 코드 변경 없는 버전 갱신이었다.
+
+물리 CGEvent로 마지막 빈 문단에 `한글`을 입력하고 Shift+Return을 누르자
+`한`과 hardBreak만 남고 `글`이 사라졌다. Shift flagsChanged 누름/뗌을 포함한
+재검사에서도 같은 손실을 확인했다. 반면 오른쪽 화살표로 조합을 먼저 확정한 뒤
+Shift+Return, `한글`을 입력하면 `한글\n한글`이 유지됐다. 앱 전환 없이 지정된
+편집기에서 발생했으므로 앞서 수용한 앱 간 포커스 탈취 현상과 구분한다.
+
+검사 후 실행 취소로 원래 텍스트와 H3/blockquote/2개 li/빈 p 구조를 복구했다.
+저장 버튼을 누르지 않았고 이슈 내용은 게시하지 않았다.
+
+원인 후보는 Chrome web에 대해 일반 Enter와 Shift+Enter를 함께 즉시 pass-through하던
+예외다. 조합 확정 IPC가 반환됐다고 웹 편집기의 조합 종료까지 완료된 것은 아니다.
+Chrome web의 조합 중 Shift+Return만 기존 HostKeyTransaction 경로에 포함했다.
+이 경로는 소유한 조합 범위/선택의 해제와 읽을 수 있는 확정 텍스트를 검사하고,
+준비 조건이 충족되면 원래 Shift 플래그를 유지한 Return을 한 번 전달한다. 일반 Chrome Return, 비조합 줄바꿈,
+Command/Control/Option 단축키, 다른 호스트의 기존 처리는 유지한다. 앱 간 포커스
+문제용 지연을 추가한 것이 아니며 새 고정 대기 시간도 도입하지 않았다.
+
+새 회귀 검사는 변경 전 4개 assertion 실패를 확인했다. 변경 후 전체 576개/61 suites
+통과. 기존 Chrome Shift+Return의 즉시 통과를 기대하던 검사는 이번 실제 사용자 요구에
+맞춰 조합 확정 후 soft break 한 번 전달을 검증하도록 바꿨다. 일반 Return 즉시 전달
+검사와 지연 replay/빠른 Delete/보안 및 세션 교체 검사도 유지했다.
+3.1.1/build 117 후보의 실제 Jira 재검증은 설치 후 수행해야 하며 아직 완료가 아니다.
+설치 메뉴 소실 문제도 이 변경의 해결 범위에 포함하지 않는다.

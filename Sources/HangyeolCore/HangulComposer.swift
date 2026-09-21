@@ -286,12 +286,13 @@ public class HangulComposer: @unchecked Sendable {
             ]
             let defersBlinkWebContentReturn = hadComposition
                 && lastInputHostSurface == .blinkWeb
-                && lastInputBundleId != "com.google.Chrome"
+                && (lastInputBundleId != "com.google.Chrome" || modifierFlags.contains(.shift))
                 && modifierFlags.intersection(hostOwnedReturnModifiers).isEmpty
 
-            // Chrome preserves commit + original key ordering. An async replay
-            // can be overtaken by the next syllable and cancelled. Keep the
-            // existing replay compatibility path for other Blink clients.
+            // Preserve Chrome's original plain Return path. Rich-editor soft
+            // breaks (observed in Jira) can replace the last marked syllable even
+            // after insertText returns, so Shift+Return must wait for retirement.
+            // This uses the existing readiness check, not a fixed typing delay.
             // Blink can acknowledge the commit before the renderer retires its
             // marked range. Capture that range first so the host Return is released
             // only after the composition has actually become ordinary document text.
