@@ -100,7 +100,6 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
     }
 
     #if DEBUG
-    private var debugHandleLogCount = 0
     nonisolated(unsafe) private static var pendingToggleTrace: ToggleLatencyTrace?
     #endif
     private var lastKeyboardOverrideClientID: ObjectIdentifier?
@@ -721,6 +720,9 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         #if DEBUG
         assert(Thread.isMainThread, "IMK activateServer must run on main thread")
         #endif
+        DebugLogger.event("input.activation", metadata: [
+            .state("mode", Self.sharedInputModeStore.mode == .korean ? "korean" : "english")
+        ])
         Self.prepareForActivationDuringSessionRetirement(sessionRetirementInProgress)
         // The currently active owner invalidates its snapshot before IMK probing or
         // handoff. Once the claim completes, this controller republishes unknown.
@@ -800,6 +802,9 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         // fires earlier, while the host still accepts input); by the time
         // deactivateServer runs, native hosts like KakaoTalk have already resigned and
         // ignore insertText. If the observer already committed, this is a no-op.
+        DebugLogger.event("input.deactivation", metadata: [
+            .state("mode", Self.sharedInputModeStore.mode == .korean ? "korean" : "english")
+        ])
         let deactivation = Self.captureDeactivationSnapshot(session: session, sender: sender)
         let enclosingRetirement = sessionRetirementInProgress
         if let deactivation {
@@ -983,8 +988,14 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         firstHandleTrace?.mark(.firstHandle)
         #endif
 
+        DebugLogger.event("input.key_boundary", metadata: [
+            .state("mode", Self.sharedInputModeStore.mode == .korean ? "korean" : "english")
+        ])
+
         // 1. Resolve the session FIRST — all subsequent logic uses its fresh context.
-        guard let session = ensureSession(for: client) else { return false }
+        guard let session = ensureSession(for: client) else {
+            return Self.passKeyToHost(reason: "session_unavailable")
+        }
         let composer = session.composer
 
         // 2. Duplicate-keyDown suppression. Some hosts (observed: KakaoTalk) deliver
@@ -1015,19 +1026,16 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         guard Self.sharedController === self,
               self.session === session,
               !session.contextNeedsRefresh else {
-            return false
+            return Self.passKeyToHost(reason: "toggle_context_changed")
         }
 
         #if DEBUG
-        if debugHandleLogCount < 200 {
-            debugHandleLogCount += 1
-            DebugLogger.event("input.handle", metadata: [
-                .flag("repeat", event.isARepeat),
-                .state("mode", composer.inputMode == .korean ? "korean" : "english"),
-                .flag("lightweight_context", session.context.isLightweight),
-                .flag("immediate_delivery", session.context.shouldUseImmediateMode)
-            ])
-        }
+        DebugLogger.event("input.handle", metadata: [
+            .flag("repeat", event.isARepeat),
+            .state("mode", composer.inputMode == .korean ? "korean" : "english"),
+            .flag("lightweight_context", session.context.isLightweight),
+            .flag("immediate_delivery", session.context.shouldUseImmediateMode)
+        ])
         #endif
 
         // 3. Mark keystroke with current app's bundleId for cross-app hanja validation
@@ -1037,12 +1045,14 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         )
 
         // 4. DYNAMIC CHECK: Secure Input (password fields) — raw pass-through.
-        guard let contextLease = session.captureContextStateLease() else { return false }
+        guard let contextLease = session.captureContextStateLease() else {
+            return Self.passKeyToHost(reason: "context_lease_unavailable")
+        }
         let isSecureInput = shouldPassThroughSecureInput(client: client, context: session.context)
         guard session.isCurrent(contextLease),
               Self.sharedController === self,
               self.session === session else {
-            return false
+            return Self.passKeyToHost(reason: "secure_probe_context_changed")
         }
         publishHanjaShortcutSessionState(isSecureInput ? .secure : .nonsecure)
         if isSecureInput {
@@ -1053,7 +1063,9 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         // text in the host. This is the first point that proves client writes are
         // safe again; lifecycle callbacks alone must never perform this cleanup.
         _ = session.prepareForNonSecureClientWrites()
-        guard let writeLease = session.captureContextStateLease() else { return false }
+        guard let writeLease = session.captureContextStateLease() else {
+            return Self.passKeyToHost(reason: "write_lease_unavailable")
+        }
 
         // Apply a pending macOS ownership/source boundary only after the secure
         // client check. This makes the first normal key use Korean without allowing
@@ -1062,7 +1074,7 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         guard session.isCurrent(writeLease),
               Self.sharedController === self,
               self.session === session else {
-            return false
+            return Self.passKeyToHost(reason: "ownership_context_changed")
         }
 
         // A custom toggle inside Secure Input changes only Hangyeol's internal mode.
@@ -1074,7 +1086,7 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         guard session.isCurrent(writeLease),
               Self.sharedController === self,
               self.session === session else {
-            return false
+            return Self.passKeyToHost(reason: "keyboard_override_context_changed")
         }
 
         // 5. The delivery policy can flip mid-session (experimental flag toggled in
@@ -1082,7 +1094,22 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         session.ensureAdapterMatchesPolicy()
 
         // 6. Compose, then invalidate field identity for host-owned field boundaries.
-        return session.handleKeyDown(event)
+        let handled = session.handleKeyDown(event)
+        DebugLogger.event("input.key_result", metadata: [
+            .flag("handled", handled),
+            .state("mode", composer.inputMode == .korean ? "korean" : "english")
+        ])
+        return handled
+    }
+
+    /// Content-free diagnostics distinguish intentional English from a rejected
+    /// Korean input boundary. Release builds do not evaluate logger metadata.
+    private static func passKeyToHost(reason: StaticString) -> Bool {
+        DebugLogger.event("input.key_passthrough", metadata: [
+            .state("reason", reason),
+            .state("mode", sharedInputModeStore.mode == .korean ? "korean" : "english")
+        ])
+        return false
     }
 
     /// Secure fields receive the raw key. A host-passed field boundary can reuse the

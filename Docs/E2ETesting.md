@@ -489,3 +489,84 @@ TIS ready=true를 확인했지만 이는 사용자 화면 복구 증거와 구�
 3.0.31/build 114 후보는 위 대기 결함을 수정한다. 전체 574 tests / 61 suites와
 실제 worker 대기 회귀 검사를 통과했다. 새 설치본의 재설치 검증은 아직 수행하지
 않았으므로 전체 메뉴 문제 해결을 확정하지 않는다.
+
+## Chrome 반복 실행 중 영문 혼입 진단 (2026-09-21)
+
+사용자 요구: 다른 앱에서 한글을 입력할 때 백그라운드 Chrome 자동화/실행 때문에
+일시적으로 영문이 입력되지 않아야 한다. ABC 전환과 동일한 문제로 가정하지 않는다.
+
+설치본 3.0.30/build 113에서 별도 TextEdit 인스턴스에 물리 CGEvent로 `한글\n`을
+반복 입력하고, 별도 프로필 Chrome을 Playwright로 재실행했다. 전송 전 대상 PID를
+검사하고, 테스트 Chrome이 포커스를 가져간 경우 TextEdit로 돌아온 뒤 입력을 재개했다.
+사용자 문서/클립보드/원격 연결/입력 소스 등록은 변경하지 않았다.
+
+| 조건 | 결과 |
+| --- | --- |
+| 기존 Chrome에서 백그라운드 자동 입력, TextEdit 60줄 | 불일치 없음 (이전 검사) |
+| 창 있는 Chrome 재실행 12회, TextEdit 200줄 | 9줄 불일치. `한글` 대신 `g나글` 1회, 자모 분리/누락도 관찰 |
+| 같은 재실행 + TextEdit 복귀 후 75ms 대기 | 2줄 불일치. 영문은 관찰 안 됐지만 자모 분리/줄바꿈 누락이 남음 |
+| 화면 없는 Chrome 재실행 12회, TextEdit 200줄 | 불일치 0, 영문 혼입 0 |
+
+NSWorkspace 활성 앱 알림에는 Chrome→TextEdit의 짧은 왕복이 기록됐으며,
+2ms 간격 TIS 표본은 전부 한결이었다. 이는 표본 사이의 전환까지 배제하는 증명은 아니다.
+창 있는 재실행 실험의 첫 영문 혼입은 TextEdit 복귀 직후 관찰됐다. 고정 지연의
+한 번의 영문 미검출을 수정 성공으로 보지 않는다. 재현기는 원격 클라이언트 키 전달을
+거치지 않았으며 실제 앱의 모든 입력 경로를 검증한 것은 아니다.
+
+현재 배포 빌드는 DebugLogger가 컴파일에서 제거되어 내부 한영 상태 변경과
+context/ownership 경계에서의 raw pass-through를 구분할 수 없다. 입력기 결함의
+정확한 분기와 수정은 아직 미확정이다. 진단 코드만 활성화/비활성화, 키 경계,
+pass-through 사유, 처리 결과와 내부 모드를 기록하도록 확장했다. 문자, 키 코드,
+앱 이름, 문서 내용은 기록하지 않는다. 입력 처리/보안 판정의 반환값은 변경하지 않았다.
+
+관찰 자료: `/Users/thlim/Documents/Codex/hangyeol-focus-diagnostics-2026-09-21/`.
+`headed/native.log`의 `PASS/RESULT PASS`는 초기 탐침이 불일치를 계속 관찰하려고
+중단을 해제하면서 남긴 잘못된 요약이다. 해당 실험은 **9줄 불일치로 실패**다.
+후속 탐침은 불일치가 있으면 FAIL로 표시하며 보관한 소스도 실패 종료 코드를 반환한다.
+자동 테스트의 즉시 완화책은 가능한 시나리오를 headless로 실행하는 것이다.
+이는 한결 입력기 자체의 수정 완료를 의미하지 않는다.
+
+
+진단 준비 검증: 574개/61 suites 통과, HangyeolVerify 통과, release DebugLogger 2개
+검사 통과, git diff --check 통과. Apple Development 서명 앱/설치 helper를 담은
+`Hangyeol_3.0.31_FocusDiagnostic_Local.pkg`의 서명, payload 버전/build와 등록 metadata를
+검증했다 (SHA-256 `89599627ff8b9731c5a4f15902b605bb359a145c6447132bc220d898aff7ec63`).
+진단본은 DEBUG 빌드이며 최종 수정/배포본이 아니다. 설치된 3.0.30/PID 3735는
+교체하지 않았다. `sudo -n true`는 `a password is required`로 거절되어 관리자 인증이
+필요하다. 다음 단계는 진단본 설치 후 실행 중 바이너리 식별을 확인하고 동일 재현을
+실행해 `input.key_boundary`, `input.key_passthrough`, `input.key_result`,
+`input.activation/deactivation`, `toggle.transition_started`를 함께 대조하는 것이다.
+현재 수정은 진단 목적이며 근본 수정과 버전 증가/최종 커밋은 보류한다.
+
+
+## 3.0.31 진단본 설치 후 결과와 시스템 편집기 분류 수정 (2026-09-22)
+
+사용자 확인: 설치 후 입력 메뉴에서 기존 입력기들이 사라졌고, 키보드 하나를
+삭제·추가하자 한결이 다시 표시됐다. **3.0.31의 재설치 메뉴 문제는 미해결**이다.
+현재 정상으로 복구한 등록 상태는 변경하지 않았다. 설치 앱은 진단 PKG와 동일한
+3.0.31/build 114, CDHash `f7500bde12138230a5884cbdd16b40facea2f8c7`이다.
+
+진단본에서 창 있는 Chrome 재실행 12회/200줄 검사: 8줄 불일치, 영문 혼입은
+이번 실행에서 미검출. 1470개 키 경계/처리 결과가 기록됐고 내부 모드는 모두
+korean이었다. context guard의 key_passthrough와 toggle.transition은 없었다.
+이는 앞서 영문이 섞였던 순간의 내부 원인까지 증명하지 않는다. 후속 24회 검사는
+기준 입력 첫 줄부터 예상치 못한 문자가 관찰돼 깨끗한 대조 실험으로 채택하지 않았다.
+자료는 `/Users/thlim/Documents/Codex/hangyeol-focus-diagnostics-2026-09-22/`에 보관했다.
+
+별도 TextEdit 입력이 `host.capabilities surface=blink_web`으로 분류되어 Chrome용
+Return 재전송을 적용하는 결함을 확인했다. `NSTextInputReplacementRangeAttributeName`은
+Blink만의 속성이 아니며 WebKit의 AppKit SPI 선언에도 있다:
+https://github.com/WebKit/WebKit/blob/main/Source/WebCore/PAL/pal/spi/mac/NSTextInputContextSPI.h
+
+실제 관찰된 TextEdit과 알려진 시스템 렌더러 Finder/Safari에 대해서는 이 속성만으로
+Blink로 분류하지 않도록 수정했다. 식별하지 못한 호스트의 기존 capability fallback과
+Chrome/Electron/Hermes 호환 계약은 유지했다. 시스템 호스트 네 가지의 회귀 테스트가
+수정 전에 실패하는 것을 확인했고, 수정 후 전체 575개/61 suites가 통과했다.
+진단 로그는 DEBUG에서만 활성화된다. 이것은 확인된 분류 결함의 수정이며, 짧은
+포커스 왕복의 영문 혼입과 재설치 메뉴 문제 전체의 해결을 뜻하지 않는다.
+3.0.32/build 115 후보는 설치하지 않았으므로 변경 후 실제 호스트 검증은 아직 남아 있다.
+
+3.0.32 후보 최종 확인: 575개 테스트 통과, HangyeolVerify 통과, Apple Development
+서명 앱/설치 helper, 패키지 payload 버전 3.0.32/build 115와 등록 metadata 검증 통과.
+생성 파일은 `Hangyeol_3.0.32_Local.pkg`. 설치하지 않았다. 현재 실행 중 3.0.31
+진단본(PID 75284)의 CDHash도 진단 PKG와 일치하며 TextEdit 기본 입력 1/1 통과했다.

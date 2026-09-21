@@ -46,14 +46,22 @@ struct IMKClientCapabilitySnapshot: Sendable, Equatable {
     )
 }
 
-/// Maps capability evidence to one host surface. Bundle identity is a fallback,
-/// never stronger than the IMK capabilities observed for the current field.
+/// Resolve the renderer before distinguishing its web and native fields.
+/// AppKit and WebKit also advertise replacement ranges; that attribute alone
+/// cannot establish that a client uses Blink.
 enum HostSurfaceResolver {
     static func resolve(
         bundleId: String,
         capabilities: IMKClientCapabilitySnapshot
     ) -> HostSurface {
-        if capabilities.advertisesBlinkReplacementRange {
+        // These native/WebKit hosts advertise the same replacement attribute.
+        // Preserve capability fallback for unidentified hosts, including Electron
+        // wrappers, without overriding a positively known system renderer.
+        let knownSystemRenderer = [
+            "com.apple.TextEdit", "com.apple.finder",
+            "com.apple.Safari", "com.apple.SafariTechnologyPreview"
+        ].contains(bundleId)
+        if capabilities.advertisesBlinkReplacementRange && !knownSystemRenderer {
             return .blinkWeb
         }
 

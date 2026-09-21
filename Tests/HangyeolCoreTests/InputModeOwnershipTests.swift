@@ -548,7 +548,11 @@ struct ProcessWideInputOwnershipTests {
         let policyUse = try #require(source.range(of: "InputBoundaryOwnershipPolicy.requiresClaim("))
         let lateHandoff = try #require(source.range(of: "boundary: .lateKeyDown"))
         let sessionResolution = try #require(source.range(
-            of: "guard let session = ensureSession(for: client) else { return false }"
+            of: """
+            guard let session = ensureSession(for: client) else {
+                        return Self.passKeyToHost(reason: "session_unavailable")
+                    }
+            """
         ))
 
         #expect(policyUse.lowerBound < sessionResolution.lowerBound)

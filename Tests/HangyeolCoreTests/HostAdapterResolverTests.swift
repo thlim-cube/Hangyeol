@@ -538,6 +538,16 @@ struct MarkedTextPayloadTests {
 
 @Suite("Blink text-client classification")
 struct BlinkTextClientClassificationTests {
+    @Test("AppKit replacement-range support does not imply a Blink renderer",
+          arguments: ["com.apple.TextEdit", "com.apple.finder", "com.apple.Safari", "com.apple.SafariTechnologyPreview"])
+    func nativeReplacementRangeDoesNotSelectBlink(bundleID: String) {
+        let client = FakeIMKTextInput()
+        client.bundleID = bundleID
+        client.validAttributesValue = [NSAttributedString.Key("NSTextInputReplacementRangeAttributeName")]
+        let context = ClientContextDetector.analyze(client: client, experimentalDirectInsertion: false)
+        #expect(context.hostSurface == .appKit)
+    }
+
     @Test("Actual replacement-range capability selects Blink web before bundle fallback")
     func replacementRangeCapabilitySelectsBlinkWeb() {
         let capabilities = IMKClientCapabilitySnapshot(
