@@ -244,7 +244,8 @@ struct HostAdapterResolverTests {
             adapter.setMarkedText("가")
 
             #expect(adapter.deliveryMode == .markedText)
-            #expect(client.markedPayloadWasAttributed == [false])
+            #expect(client.markedPayloadWasAttributed == [true])
+            #expect(client.markedAttributeKeys == [[]])
         }
     }
 
@@ -320,7 +321,7 @@ struct HostAdapterResolverTests {
         #expect(client.insertCalls.isEmpty)
     }
 
-    @Test("Blink web content receives plain marked text while native hosts keep attributes")
+    @Test("Blink marked text requests the end caret without custom styling")
     func markedTextPayloadMatchesHostCompatibility() {
         let blinkClient = FakeIMKTextInput()
         MarkedTextAdapter(
@@ -328,7 +329,9 @@ struct HostAdapterResolverTests {
             hostSurface: .blinkWeb
         )
             .setMarkedText("가")
-        #expect(blinkClient.markedPayloadWasAttributed == [false])
+        #expect(blinkClient.markedPayloadWasAttributed == [true])
+        #expect(blinkClient.markedAttributeKeys == [[]])
+        #expect(blinkClient.markedSelectionRanges == [NSRange(location: 1, length: 0)])
 
         let nativeClient = FakeIMKTextInput()
         MarkedTextAdapter(
@@ -337,6 +340,7 @@ struct HostAdapterResolverTests {
         )
             .setMarkedText("가")
         #expect(nativeClient.markedPayloadWasAttributed == [true])
+        #expect(nativeClient.markedAttributeKeys == [[.underlineStyle, .underlineColor]])
     }
 
     @Test("Marked adapter exposes only its live preedit to host-key transactions")
@@ -513,11 +517,22 @@ struct CompositionRendererTests {
 
 @Suite("MarkedTextPayload")
 struct MarkedTextPayloadTests {
-    @Test("Blink hosts receive a plain NSString marked payload")
-    func blinkUsesPlainString() {
-        let payload = MarkedTextPayload.value("가", for: .blinkWeb)
-        #expect(payload is NSString)
-        #expect(!(payload is NSAttributedString))
+    // Google Ask anything: the plain NSString transport selected the composing
+    // syllable despite an end caret request. An attribute-free attributed value
+    // preserves that caret without the color/style attributes that previously
+    // trapped in AppKit's _forceAttributedString. See Docs/E2ETesting.md.
+    @Test("Blink marked payload preserves text without style attributes",
+          arguments: ["", "ㅎ", "하", "한", "한글", "😀한"])
+    func blinkUsesUnstyledAttributedString(text: String) throws {
+        let payload = try #require(
+            MarkedTextPayload.value(text, for: .blinkWeb) as? NSAttributedString
+        )
+        #expect(payload.string == text)
+        #expect(payload.length == text.utf16.count)
+        payload.enumerateAttributes(in: NSRange(location: 0, length: payload.length)) {
+            attributes, _, _ in
+            #expect(attributes.isEmpty)
+        }
     }
 
     @Test("System hosts retain attributed marked text with a clear underline")

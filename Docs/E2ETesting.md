@@ -690,3 +690,46 @@ Backspace가 직접 원인이라는 증거는 아니며, 이번 수집 구간의
 후속 입력을 검증하기 전에는 사용자 증상이 해결됐다고 판정하지 않는다.
 
 최종 코드에서 전체 577개/61 suites, HangyeolVerify, git diff --check 통과.
+
+
+## 3.1.4 Google 조합 커서 위치
+
+요구 출처: 2026-09-22 사용자 수정 요청. Google AI Overview의 Ask anything
+입력창에서 조합 중에도 커서가 현재 글자 뒤에 있어야 하며, 받침·Backspace·중간
+삽입과 삭제를 보존해야 한다. 전체 타이핑 지연이나 글자마다 강제 확정은 추가하지 않는다.
+
+macOS 26.6.2 / Chrome 153.0.8010.48, 기존 사용자 Google textarea에서
+CUA 키 입력과 DOM의 value/selectionStart/selectionEnd를 함께 관찰했다.
+원문 `여기서`를 기준으로 테스트 글자만 추가하고 매번 원문으로 복원했다.
+Google 질문 전송과 Jira 문서 저장은 하지 않았다.
+
+- 기존 3.1.3: `g,k` → `여기서하`, selection=(3,4). 한결은 (1,0)을 요청하지만
+  Chrome DOM에는 활성 음절을 선택한 범위가 나타났다.
+- Chrome CDP `Input.imeSetComposition`에 상대 caret=(1,1)을 직접 전달한 대조:
+  `여기서하`, selection=(4,4). 따라서 해당 Google textarea 자체가 끝 커서를
+  항상 앞쪽 선택으로 바꾸는 것은 아니다. 이 대조는 실제 한결 입력 검증과 구분한다.
+- 수정 후보: Blink에 스타일 없는 NSAttributedString을 전송 → (4,4).
+- 재시작 효과 대조: 동일 소스에서 payload만 기존 NSString으로 되돌린 debug
+  실행 파일로 프로세스를 교체한 뒤 같은 필드에서 다시 (3,4)를 관찰했다.
+- 수정 후보로 다시 교체: `여기서한글` → (5,5), `여기서한중글` → (5,5).
+  뒤 문자 Delete 결과는 `여기서한중`으로 현재 조합을 보존했다.
+- `하 → 한 → Backspace → 하`에서도 caret=(4,4)를 유지했다.
+- Shift+Return 시 `여기서한글`은 보존했으나 이 Google 입력창에서는 줄바꿈이
+  생기지 않았다. 이 실행을 줄바꿈 성공이나 물리 키의 빠른 연속 입력 검증으로
+  보고하지 않는다. Jira의 실제 빠른 Enter/Shift+Enter 재검증은 이번 범위 밖이다.
+
+비교 실행은 같은 bundle ID의 Apple Development 서명 debug 앱으로 수행했다.
+설치 디스크 앱은 변경하지 않았으며, 종료 후 `/Library/Input Methods/Hangyeol.app`
+3.1.3 프로세스로 복구했다. 배포할 release 패키지의 설치 후 실측과는 구분한다.
+
+변경은 Blink marked payload 형식뿐이다. 과거 `_forceAttributedString` 충돌이
+기록된 색상·밑줄 속성은 보내지 않는다. 위 실측에서 충돌은 관찰되지 않았으나 모든
+Electron 호스트·macOS 버전의 무충돌을 입증한 것은 아니다. Native/WebKit 스타일,
+조합 커서의 UTF-16 끝 범위, 기존 3.1.3의 Chrome Return 안정화는 유지한다.
+
+기존 payload 테스트를 확장해 빈 조합·자모·음절·복수 음절·보조 평면 문자의
+문자열 보존 및 Blink의 빈 속성 집합을 검증한다. 기존 NSString 구현에서는 6개
+입력이 실패했고 수정 후 통과했다. 호스트 변경 테스트는 단순 attributed 여부뿐
+아니라 AppKit 스타일 → Blink 빈 속성 전환을 검사하도록 유지했다.
+전체 577 tests / 61 suites 통과. 실제 IMK/Chrome 커서 개선의 근거는 위 대조 실측이며,
+mock 테스트가 macOS 전송 계층을 재현한다고 주장하지 않는다.

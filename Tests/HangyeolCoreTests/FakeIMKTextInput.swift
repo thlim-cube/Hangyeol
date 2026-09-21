@@ -12,6 +12,8 @@ class FakeIMKTextInput: NSObject, IMKTextInput {
     var insertCalls: [(String, NSRange)] = []
     var markCalls: [String] = []
     var markedPayloadWasAttributed: [Bool] = []
+    var markedAttributeKeys: [Set<NSAttributedString.Key>] = []
+    var markedSelectionRanges: [NSRange] = []
     var firstRectValue = NSRect.zero
     var onInsertText: (() -> Void)?
     var onSetMarkedText: (() -> Void)?
@@ -52,6 +54,12 @@ class FakeIMKTextInput: NSObject, IMKTextInput {
         let text = plainString(string)
         markCalls.append(text)
         markedPayloadWasAttributed.append(string is NSAttributedString)
+        let attributed = string as? NSAttributedString
+        let attributes = attributed.flatMap {
+            $0.length > 0 ? $0.attributes(at: 0, effectiveRange: nil) : nil
+        } ?? [:]
+        markedAttributeKeys.append(Set(attributes.keys))
+        markedSelectionRanges.append(selectionRange)
         markedText = text
         if text.isEmpty {
             markedRangeValue = NSRange(location: NSNotFound, length: 0)

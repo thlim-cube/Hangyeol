@@ -224,10 +224,9 @@ final class MarkedTextAdapter: BaseClientAdapter {
         renderedMarkedText = text
         // Canonical marked-text protocol, matching Apple's own input methods:
         // set the marked text directly with replacementRange = NSNotFound (an
-        // empty string clears the composition). Blink web content receives a plain
-        // NSString to avoid macOS 26's unstable attributed-string path; Blink-native
-        // fields use DirectInsertionAdapter. Native/WebKit hosts retain clear-
-        // underline attributes. The previous non-canonical path
+        // empty string clears the composition). MarkedTextPayload keeps Blink's
+        // requested caret without sending custom styling; Native/WebKit hosts
+        // retain clear-underline attributes. The previous non-canonical path
         // (clearing via insertText("") over an explicit marked
         // range) left native hosts like KakaoTalk in an inconsistent composition
         // state — a stranded/underlined preedit that never committed on focus loss.

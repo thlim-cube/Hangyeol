@@ -2,13 +2,15 @@ import AppKit
 
 /// Builds the canonical marked-text payload for the current renderer.
 ///
-/// AppKit on macOS 26 regenerates marked-text styling, so attributes cannot hide
-/// the system underline. Blink web clients receive plain `NSString` because their
-/// attributed path can crash inside AppKit; native hosts receive an attributed value.
+/// Blink needs an attributed value to preserve the requested preedit caret on
+/// macOS 26. A plain NSString selects the composing syllable in Chrome textareas.
+/// Keep Blink's attributes empty: styled payloads previously trapped inside
+/// AppKit's _forceAttributedString. Native hosts retain their existing styling.
+/// Live transport comparisons and limits are recorded in Docs/E2ETesting.md.
 enum MarkedTextPayload {
     static func value(_ text: String, for hostSurface: HostSurface) -> Any {
         if hostSurface == .blinkWeb {
-            return text as NSString
+            return NSAttributedString(string: text)
         }
         return attributedValue(text)
     }

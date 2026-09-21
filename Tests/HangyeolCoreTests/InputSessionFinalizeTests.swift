@@ -1456,7 +1456,8 @@ struct InputSessionFinalizeTests {
         #expect(session.adapter.hostSurface == .blinkWeb)
 
         session.adapter.setMarkedText("가")
-        #expect(client.markedPayloadWasAttributed == [true, false])
+        #expect(client.markedPayloadWasAttributed == [true, true])
+        #expect(client.markedAttributeKeys == [[.underlineStyle, .underlineColor], []])
     }
 
     @Test("Secure context refresh rebuilds policy without committing old fallback")
