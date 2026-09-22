@@ -267,7 +267,7 @@ public class HangulComposer: @unchecked Sendable {
 
     // MARK: - Private Helpers
     
-    /// Handle special keys (Return, Escape, Space, Arrow, Tab, Delete)
+    /// Handle special keys (Return, Escape, Space, Navigation, Tab, Delete)
     /// - Returns: `nil` if not a special key, otherwise the result to return from handle()
     private func handleSpecialKey(
         keyCode: UInt16,
@@ -375,9 +375,8 @@ public class HangulComposer: @unchecked Sendable {
         // Non-space: reset space state
         textConvenience.resetSpaceState()
         
-        // Arrow keys
-        if keyCode == KeyCode.leftArrow || keyCode == KeyCode.rightArrow ||
-           keyCode == KeyCode.upArrow || keyCode == KeyCode.downArrow {
+        // Navigation keys, including synthetic Home/End/Page events without text.
+        if KeyCode.isNavigation(keyCode) {
             commitComposition(delegate: delegate)
             localTextBuffer = ""
             return false
@@ -520,11 +519,10 @@ public class HangulComposer: @unchecked Sendable {
         }
         
         // Global context invalidation:
-        // Any navigation or confirmation key (Arrow, Tab, Return) invalidates our local text context
+        // Any navigation or confirmation key invalidates our local text context
         // because the cursor has likely moved, changing the text before it.
         let keyCode = event.keyCode
-        if keyCode == KeyCode.leftArrow || keyCode == KeyCode.rightArrow ||
-           keyCode == KeyCode.upArrow || keyCode == KeyCode.downArrow ||
+        if KeyCode.isNavigation(keyCode) ||
            keyCode == KeyCode.tab || keyCode == KeyCode.return || keyCode == KeyCode.numpadEnter {
             clearLocalBuffer()
         }
@@ -583,9 +581,9 @@ public class HangulComposer: @unchecked Sendable {
         }
 
         // Special keys are identified by hardware keyCode, not by their text
-        // payload. Some IMK clients deliver Return/Numpad Enter with empty
+        // payload. IMK clients can deliver Return or navigation with empty
         // `characters`; checking the payload first would leave the last Hangul
-        // syllable uncommitted while the host performs its Return action.
+        // syllable uncommitted while the host handles the key.
         if let result = handleSpecialKey(
             keyCode: keyCode,
             modifierFlags: event.modifierFlags,
@@ -604,8 +602,7 @@ public class HangulComposer: @unchecked Sendable {
         )
         
         // Filter: If input contains non-printable characters (e.g., function keys, arrows)
-        // This catches Fn+Arrow (Home/End/PageUp/PageDown) and other navigation keys
-        // that don't match the KeyCode enum in handleSpecialKey.
+        // This catches other function/control keys not handled by hardware code.
         if let firstScalar = inputCharacters.unicodeScalars.first {
             let firstCharCode = UInt32(firstScalar.value)
             if KeyCode.shouldPassThrough(firstCharCode) {

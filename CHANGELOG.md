@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.5] - 2026-09-22
+
+### Fixed
+
+- 문자 정보가 비어 있는 Home·End·Page Up·Page Down 이벤트에서도 한글 조합을 확정한 뒤 앱에 키를 전달합니다. Shift 선택과 기존 탐색 동작을 유지하며 지연은 추가하지 않습니다.
+
+### Known Issues
+
+- Chrome ChatGPT에서 Keyboard Maestro의 Home → ⌘←가 이동하지 않는 사용자 증상은 실제 매크로 경로에서 아직 재현하지 못했습니다. 위 수정만으로 해당 증상이 해결됐다고 판정하지 않습니다.
+
 ## [3.0.24] - 2026-09-18
 
 ### Fixed

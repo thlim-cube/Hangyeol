@@ -31,6 +31,18 @@ public enum KeyCode {
     
     /// Tab key (48)
     public static let tab: UInt16 = 48
+
+    /// Home key (115)
+    public static let home: UInt16 = 115
+
+    /// End key (119)
+    public static let end: UInt16 = 119
+
+    /// Page Up key (116)
+    public static let pageUp: UInt16 = 116
+
+    /// Page Down key (121)
+    public static let pageDown: UInt16 = 121
     
     // MARK: - Arrow Keys
     
@@ -85,6 +97,16 @@ public enum KeyCode {
     public static let carriageReturnCharCode: UInt32 = 13
     
     // MARK: - Helper Methods
+
+    /// Navigation remains host-owned, even when an IMK event has no text payload.
+    public static func isNavigation(_ keyCode: UInt16) -> Bool {
+        switch keyCode {
+        case leftArrow, rightArrow, upArrow, downArrow, home, end, pageUp, pageDown:
+            return true
+        default:
+            return false
+        }
+    }
     
     /// Checks if a character code represents a printable ASCII character
     /// - Parameter charCode: Unicode scalar value

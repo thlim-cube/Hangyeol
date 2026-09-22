@@ -733,3 +733,32 @@ Electron 호스트·macOS 버전의 무충돌을 입증한 것은 아니다. Nat
 아니라 AppKit 스타일 → Blink 빈 속성 전환을 검사하도록 유지했다.
 전체 577 tests / 61 suites 통과. 실제 IMK/Chrome 커서 개선의 근거는 위 대조 실측이며,
 mock 테스트가 macOS 전송 계층을 재현한다고 주장하지 않는다.
+
+## 3.1.5 문자 정보가 없는 탐색키
+
+요구 출처: 2026-09-22 사용자 요청. Chrome ChatGPT에서 `안녕` 조합 직후
+Keyboard Maestro의 Home → Command+Left가 이동하지 않고 오류처럼 반응한다는
+보고다. 특수키는 조합을 보존한 채 앱의 이동/Shift 선택 동작으로 이어져야 한다.
+
+코드에서 별도로 확인한 결함은 Home/End/Page Up/Page Down이 문자 코드 fallback에만
+의존해 `characters`가 nil/빈 문자열이면 조합 확정 전에 반환된다는 점이다.
+기존 화살표와 같은 하드웨어 keyCode 경로로 처리하고 이동 전 로컬 문자 문맥을
+무효화한다. 이벤트 modifier를 바꾸거나 재전송 대기 시간을 추가하지 않는다.
+
+기존 composer 테스트에 네 키 × nil/빈 문자열 × Fn/Shift 조합을 추가했다.
+최초 Fn 및 Shift+Fn 16개 조합은 수정 전 48개 assertion 실패를 확인했다.
+최종 검사에는 modifier 없음과 Shift 단독도 포함하여 32개 조합에서 확정 문자열,
+조합 해제, host pass-through, Shift 보존과 확정 호출 순서를 확인한다.
+전체 578 tests / 61 suites가 통과했다.
+
+설치된 3.1.4에서 CUA의 개별 키 입력으로 실제 ChatGPT에 `안녕`을 조합한 뒤
+Command+Left를 직접 보내면 글자를 보존하며 DOM caret이 (2,2)에서 (0,0)으로
+이동했다. 첫 DOM keydown은 composing=true였고, compositionend 뒤의 후속
+keydown은 composing=false였다. 직접 보낸 Home/Command+Left에 해당하는
+Keyboard Maestro Engine 실행 로그가 없었으므로 실제 매크로 재현으로 보지 않는다.
+메시지는 전송하지 않았고 테스트 문구와 임시 이벤트 리스너는 제거했다.
+
+따라서 본 변경은 문자 정보가 없는 탐색키의 composer 계약을 수정한 것이다.
+사용자가 보고한 물리 Home → Keyboard Maestro → Chrome 전체 경로의 실패 원인과
+설치 후 해결 여부는 미확인이다. 기존 합성키 modifier 보존 정책과 Return 안정화는
+유지한다. Keyboard Maestro 설정은 변경하지 않았다.

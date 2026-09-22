@@ -2,6 +2,18 @@ import Testing
 import Cocoa
 @testable import HangyeolCore
 
+/// IMK clients can omit the text payload of a hardware navigation event.
+private final class NavigationEventWithoutText: NSEvent {
+    var navigationKeyCode: UInt16 = 0
+    var navigationModifiers: NSEvent.ModifierFlags = []
+    var textPayload: String?
+
+    override var type: NSEvent.EventType { .keyDown }
+    override var keyCode: UInt16 { navigationKeyCode }
+    override var modifierFlags: NSEvent.ModifierFlags { navigationModifiers }
+    override var characters: String? { textPayload }
+}
+
 // MARK: - HangulComposer Tests
 
 @Suite("HangulComposer")
@@ -924,6 +936,31 @@ struct HangulComposerTests {
         #expect(delegate.insertedTexts.contains("가"))
         #expect(delegate.markedText == "")
         #expect(shiftHome.modifierFlags.contains(.shift))
+    }
+
+    @Test("Home, End and Page keys commit before pass-through without a text payload",
+          arguments: [UInt16(115), 119, 116, 121], [nil, ""] as [String?])
+    func navigationKeysWithoutTextCommitComposition(keyCode: UInt16, characters: String?) {
+        for modifiers: NSEvent.ModifierFlags in [[], [.function], [.shift], [.shift, .function]] {
+            let (composer, delegate, _) = makeComposer()
+            _ = composer.handle(TestEventFactory.keyEvent(char: "r", keyCode: 15)!, delegate: delegate)
+            _ = composer.handle(TestEventFactory.keyEvent(char: "k", keyCode: 40)!, delegate: delegate)
+            #expect(delegate.markedText == "가")
+            let callCountBeforeNavigation = delegate.orderedCalls.count
+
+            let navigation = NavigationEventWithoutText()
+            navigation.navigationKeyCode = keyCode
+            navigation.navigationModifiers = modifiers
+            navigation.textPayload = characters
+            let handled = composer.handle(navigation, delegate: delegate)
+
+            #expect(!handled, "The host must retain navigation and Shift-selection semantics")
+            #expect(delegate.insertedTexts == ["가"])
+            #expect(delegate.markedText.isEmpty)
+            #expect(composer.localTextBuffer.isEmpty)
+            #expect(Array(delegate.orderedCalls.dropFirst(callCountBeforeNavigation)) == ["insert:가"])
+            #expect(navigation.modifierFlags == modifiers)
+        }
     }
     
     @Test("Cmd shortcut without composition just passes through")
