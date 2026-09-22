@@ -893,6 +893,44 @@ struct HanjaCandidateLifecycleTests {
         }
     }
 
+    @Test("A presented Hanja candidate receives navigation before remaining Blink mark recovery",
+          arguments: [KeyCode.upArrow, KeyCode.downArrow, KeyCode.return])
+    func candidateOwnsNavigationWithRemainingMark(keyCode: UInt16) throws {
+        let presenter = MockHanjaCandidatePresenter()
+        presenter.consumedKeyCodes = [keyCode]
+        let client = RetainedHanjaMarkedTextClient()
+        client.bundleID = "com.google.Chrome"
+        let composer = makeComposer(presenter: presenter)
+        composer.markKeystroke(bundleId: client.bundleID, usesBlinkNativeTextClient: false)
+        let session = InputSession(client: client, context: context(bundleId: client.bundleID), composer: composer)
+        session.prepareForNonSecureClientWrites()
+        composeGa(in: session)
+        composer.triggerHanjaLookup()
+        try #require(presenter.isVisible)
+        #expect(!composer.hasActiveComposition)
+        #expect(client.markedText == "가")
+        let commitCount = client.insertCalls.count
+        var scheduledCount = 0
+        var postedCount = 0
+        let environment = DeferredHostKeyReplayEnvironment(
+            canReplay: { true }, makeEvents: { keyCode, flags in
+                DeferredHostKeyDelivery.makeEvents(keyCode: keyCode, modifierFlags: flags)
+            }, scheduleInitial: { _ in scheduledCount += 1 },
+            scheduleRetry: { _ in scheduledCount += 1 },
+            scheduleRendererSettlement: { _ in scheduledCount += 1 },
+            postEvent: { _ in postedCount += 1 }
+        )
+        #expect(session.handleKeyDown(try #require(TestEventFactory.keyEvent(
+            char: "", keyCode: keyCode
+        )), hostKeyEnvironment: environment))
+        #expect(presenter.handledKeyCodes == [keyCode])
+        #expect(scheduledCount == 0)
+        #expect(postedCount == 0)
+        #expect(client.insertCalls.count == commitCount)
+        #expect(client.markedText == "가")
+        #expect(presenter.isVisible)
+    }
+
     @Test("A reactivated session refreshes context before Hanja identity is used")
     func reactivatedSessionRefreshesContext() {
         let presenter = MockHanjaCandidatePresenter()
@@ -1456,12 +1494,22 @@ struct HanjaCandidateLifecycleTests {
 
 private final class VisibleSessionOwner {}
 
+private final class RetainedHanjaMarkedTextClient: FakeIMKTextInput {
+    override func insertText(_ string: Any!, replacementRange: NSRange) {
+        let text = (string as? NSAttributedString)?.string ?? (string as? String) ?? ""
+        insertCalls.append((text, replacementRange))
+        // Models a renderer whose mark remains live after the candidate lookup
+        // has synchronously emptied the engine through the canonical commit.
+    }
+}
+
 private final class MockHanjaCandidatePresenter: HanjaCandidatePresenting, @unchecked Sendable {
     var isVisible = false
     var visiblePresentationID: HanjaCandidatePresentationID? {
         isVisible ? presentationID : nil
     }
     var consumedKeyCodes: Set<UInt16> = []
+    private(set) var handledKeyCodes: [UInt16] = []
     private(set) var dismissCount = 0
     private(set) var shownEntries: [[HanjaEntry]] = []
     private(set) var selectionCallbacks: [@Sendable (HanjaEntry) -> Void] = []
@@ -1496,6 +1544,7 @@ private final class MockHanjaCandidatePresenter: HanjaCandidatePresenting, @unch
         presentationID: HanjaCandidatePresentationID
     ) -> Bool {
         guard self.presentationID == presentationID else { return false }
+        handledKeyCodes.append(event.keyCode)
         return consumedKeyCodes.contains(event.keyCode)
     }
 }

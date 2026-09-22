@@ -9,7 +9,7 @@ struct DeferredHostKeySessionTests {
     }
 
     @Test("Only a continuously authorized session delivers its queued host key",
-          arguments: [KeyCode.return, KeyCode.forwardDelete], Boundary.allCases)
+          arguments: [KeyCode.return, KeyCode.forwardDelete, KeyCode.leftArrow], Boundary.allCases)
     func deferredKeyAfterSessionBoundary(keyCode: UInt16, boundary: Boundary) throws {
         let client = FakeIMKTextInput()
         client.bundleID = "com.google.Chrome"
@@ -254,6 +254,8 @@ private final class ManualHostKeyReplayDriver {
     private(set) var postedBoundaryCount = 0
     var onKeyDown: () -> Void = {}
     private(set) var rendererSettlementCount = 0
+    private(set) var postedKeyCodes: [UInt16] = []
+    private(set) var postedModifierFlags: [UInt64] = []
 
     var environment: DeferredHostKeyReplayEnvironment {
         DeferredHostKeyReplayEnvironment(
@@ -276,6 +278,8 @@ private final class ManualHostKeyReplayDriver {
             },
             postEvent: { [weak self] event in
                 self?.postedEventTypes.append(event.type)
+                self?.postedKeyCodes.append(UInt16(event.getIntegerValueField(.keyboardEventKeycode)))
+                self?.postedModifierFlags.append(event.flags.rawValue)
                 if event.type == .keyDown {
                     self?.onKeyDown()
                 }
@@ -300,6 +304,7 @@ private final class DelayedBlinkForwardDeleteClient: FakeIMKTextInput {
     private let selectionTracksMarkedText: Bool
     private var markLocation = 2
     private var pendingCommittedText: String?
+    var delaysCanonicalCommits = true
 
     init(
         exposesLiveMarkedRange: Bool,
@@ -313,6 +318,10 @@ private final class DelayedBlinkForwardDeleteClient: FakeIMKTextInput {
     }
 
     override func insertText(_ string: Any!, replacementRange: NSRange) {
+        if !delaysCanonicalCommits {
+            super.insertText(string, replacementRange: replacementRange)
+            return
+        }
         let text: String
         if let attributed = string as? NSAttributedString {
             text = attributed.string
@@ -407,6 +416,39 @@ private final class DelayedBlinkForwardDeleteClient: FakeIMKTextInput {
         var units = Array(document.utf16)
         units.remove(at: selectedRangeValue.location)
         document = String(decoding: units, as: UTF16.self)
+    }
+}
+
+/// Uses the production marked-text adapter and retirement transaction, replacing
+/// only event posting/scheduling with the existing deterministic driver.
+private final class NavigationTransactionAdapter: HangulComposerDelegate {
+    let adapter: MarkedTextAdapter
+    let driver: ManualHostKeyReplayDriver
+    var canSchedule = true
+
+    init(client: FakeIMKTextInput, driver: ManualHostKeyReplayDriver) {
+        adapter = MarkedTextAdapter(client: client, hostSurface: .blinkWeb)
+        self.driver = driver
+    }
+
+    func insertText(_ text: String) { adapter.insertText(text) }
+    func setMarkedText(_ text: String) { adapter.setMarkedText(text) }
+    func textBeforeCursor(length: Int) -> String? { adapter.textBeforeCursor(length: length) }
+    func replaceTextBeforeCursor(length: Int, with text: String) {
+        adapter.replaceTextBeforeCursor(length: length, with: text)
+    }
+
+    func tryPerformHostKeyTransaction(
+        keyCode: UInt16, modifierFlags: UInt, commit: () -> Void
+    ) -> Bool {
+        guard canSchedule else { return false }
+        return HostKeyTransaction.perform(
+            client: adapter.client, keyCode: keyCode, modifierFlags: modifierFlags,
+            isClientWriteAllowed: adapter.captureDeferredClientWriteValidator(),
+            didPost: { _ in }, expectedCommittedText: adapter.hostTransactionMarkedText,
+            expectedMarkedRange: adapter.hostTransactionMarkedRange,
+            environment: driver.environment, commit: commit
+        )
     }
 }
 
@@ -507,6 +549,178 @@ private final class LengthlessForwardDeleteClient: FakeIMKTextInput {
 
 @Suite("Return exactly-once delivery")
 struct ReturnDeliveryTests {
+    @Test("Navigation replay keeps native arrow characters, modifiers, and its recursion marker",
+          arguments: [
+              (KeyCode.leftArrow, UInt32(0xF702)),
+              (KeyCode.rightArrow, UInt32(0xF703)),
+              (KeyCode.upArrow, UInt32(0xF700)),
+              (KeyCode.downArrow, UInt32(0xF701))
+          ])
+    func navigationReplayKeepsNativeEvent(keyCode: UInt16, scalar: UInt32) throws {
+        let flags: NSEvent.ModifierFlags = [.option, .shift, .function, .numericPad]
+        let pair = try #require(DeferredHostKeyDelivery.makeEvents(
+            keyCode: keyCode, modifierFlags: flags.rawValue
+        ))
+        for event in [pair.keyDown, pair.keyUp] {
+            let native = try #require(NSEvent(cgEvent: event))
+            #expect(native.keyCode == keyCode)
+            #expect(native.modifierFlags == flags)
+            #expect(native.characters?.unicodeScalars.map(\.value) == [scalar])
+            #expect(DeferredHostKeyDelivery.isReplayedHostKey(native))
+        }
+    }
+
+    @Test("Navigation cannot schedule without owned marked text")
+    func navigationRequiresOwnedMarkedText() {
+        let client = FakeIMKTextInput()
+        client.markedRangeValue = NSRange(location: 0, length: 1)
+        client.selectedRangeValue = NSRange(location: 1, length: 0)
+        let driver = ManualHostKeyReplayDriver()
+        var commits = 0
+        #expect(!HostKeyTransaction.perform(
+            client: client, keyCode: KeyCode.leftArrow,
+            modifierFlags: NSEvent.ModifierFlags.command.rawValue,
+            isClientWriteAllowed: { true }, didPost: { _ in },
+            expectedCommittedText: nil, environment: driver.environment,
+            commit: { commits += 1 }
+        ))
+        #expect(commits == 0)
+        #expect(driver.polls.isEmpty)
+    }
+
+    @Test("Blink navigation preserves the last marked syllable before forwarding the original shortcut",
+          arguments: [
+              (KeyCode.leftArrow, NSEvent.ModifierFlags.command),
+              (KeyCode.leftArrow, .option),
+              (KeyCode.leftArrow, NSEvent.ModifierFlags([.command, .shift])),
+              (KeyCode.rightArrow, NSEvent.ModifierFlags([.option, .shift])),
+              (KeyCode.home, NSEvent.ModifierFlags()),
+              (KeyCode.end, .shift),
+              (KeyCode.pageUp, NSEvent.ModifierFlags()),
+              (KeyCode.pageDown, .shift)
+          ], [true, false])
+    func blinkNavigationWaitsForMarkedText(
+        shortcut: (UInt16, NSEvent.ModifierFlags), selectionTracksMarkedText: Bool
+    ) throws {
+        let (keyCode, flags) = shortcut
+        let client = DelayedBlinkForwardDeleteClient(
+            exposesLiveMarkedRange: true, selectionTracksMarkedText: selectionTracksMarkedText
+        )
+        client.bundleID = "com.google.Chrome"
+        client.document = ""
+        client.selectedRangeValue = NSRange(location: 0, length: 0)
+        client.delaysCanonicalCommits = false
+        let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
+        composer.markKeystroke(bundleId: client.bundleID, usesBlinkNativeTextClient: false)
+        let driver = ManualHostKeyReplayDriver()
+        let adapter = NavigationTransactionAdapter(client: client, driver: driver)
+        for (char, key) in [("d", 2), ("k", 40), ("s", 1), ("s", 1), ("u", 32), ("d", 2)] {
+            #expect(composer.handle(try #require(TestEventFactory.keyEvent(
+                char: char, keyCode: UInt16(key)
+            )), delegate: adapter))
+        }
+        #expect(client.document == "안")
+        #expect(client.markedText == "녕")
+        client.delaysCanonicalCommits = true
+        // Characterizes the user's reported corruption if a control-key payload
+        // reaches the host before the last syllable retires. This is a model of
+        // that report, not proof of Chrome's internal cause.
+        driver.onKeyDown = {
+            if !client.markedText.isEmpty { client.document = "안\u{001C}" }
+            else { client.selectedRangeValue = NSRange(location: 0, length: 0) }
+        }
+        let handled = composer.handle(try #require(TestEventFactory.keyEvent(
+            char: "\u{001C}", keyCode: keyCode, modifiers: flags
+        )), delegate: adapter)
+        if !handled { driver.onKeyDown() }
+        #expect(handled)
+        #expect(!composer.hasActiveComposition)
+        #expect(client.document == "안")
+        #expect(driver.postedEventTypes.isEmpty)
+        try driver.runNextPoll()
+        #expect(driver.postedEventTypes.isEmpty)
+        try client.promotePendingCommit()
+        try driver.runNextPoll()
+        #expect(driver.postedEventTypes.isEmpty)
+        client.retireMarkedText()
+        while !driver.polls.isEmpty { try driver.runNextPoll() }
+        #expect(client.document == "안녕")
+        #expect(client.selectedRangeValue == NSRange(location: 0, length: 0))
+        #expect(driver.postedEventTypes == [.keyDown, .keyUp])
+        #expect(driver.postedKeyCodes == [keyCode, keyCode])
+        #expect(driver.postedModifierFlags == [UInt64(flags.rawValue), UInt64(flags.rawValue)])
+        #expect(driver.rendererSettlementCount == 0)
+    }
+
+    @Test("Navigation retires only a freshly authorized remaining mark after modifier finalization")
+    func remainingMarkNavigationAfterFinalize() throws {
+        let client = RangeForwardDeleteClient(followingText: "", initialMarkedText: "")
+        client.bundleID = "com.google.Chrome"
+        let context = ClientContext(bundleId: client.bundleID, hasTextInputCapability: true,
+                                    isLikelyDesktopArea: false, documentAccessSafe: true)
+        let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
+        composer.markKeystroke(bundleId: client.bundleID, usesBlinkNativeTextClient: false)
+        let session = InputSession(client: client, context: context, composer: composer)
+        session.prepareForNonSecureClientWrites()
+        #expect(composer.handle(try #require(TestEventFactory.keyEvent(char: "a", keyCode: 0)),
+                                delegate: session.adapter))
+        client.ignoresCanonicalCommits = true
+        #expect(session.finalize(reason: .hostShortcut))
+        session.finishHostCommitBoundary()
+        #expect(!composer.hasActiveComposition)
+        #expect(client.markedText == "ㅁ")
+        session.refreshContext(context, fieldIdentityMayHaveChanged: true)
+        session.prepareForNonSecureClientWrites()
+        client.ignoresCanonicalCommits = false
+        let driver = ManualHostKeyReplayDriver()
+        #expect(session.handleKeyDown(try #require(TestEventFactory.keyEvent(
+            char: "\u{001C}", keyCode: KeyCode.leftArrow, modifiers: [.command, .shift]
+        )), hostKeyEnvironment: driver.environment))
+        while !driver.polls.isEmpty { try driver.runNextPoll() }
+        #expect(client.document == "가나ㅁ라")
+        #expect(client.markedText.isEmpty)
+        #expect(driver.postedEventTypes == [.keyDown, .keyUp])
+        #expect(driver.postedModifierFlags == Array(repeating: UInt64(
+            NSEvent.ModifierFlags([.command, .shift]).rawValue), count: 2))
+        #expect(driver.rendererSettlementCount == 0)
+    }
+
+    @Test("Queued navigation cancels when its caret or field changes",
+          arguments: ["caret", "selection", "field"])
+    func navigationCancelsChangedTarget(change: String) throws {
+        let (session, client) = remainingMarkSession()
+        let driver = ManualHostKeyReplayDriver()
+        #expect(session.handleKeyDown(try #require(TestEventFactory.keyEvent(
+            char: "", keyCode: KeyCode.leftArrow, modifiers: .option
+        )), hostKeyEnvironment: driver.environment))
+        if change == "field" { session.markContextStale() }
+        else { client.selectedRangeValue = NSRange(location: 0, length: change == "selection" ? 1 : 0) }
+        while !driver.polls.isEmpty { try driver.runNextPoll() }
+        #expect(client.document == "가나마다라")
+        #expect(driver.postedEventTypes.isEmpty)
+        #expect(driver.rendererSettlementCount == 0)
+    }
+
+    @Test("Native navigation and unavailable replay retain commit and host pass-through",
+          arguments: ["native", "unavailable"])
+    func navigationKeepsPassThroughWithoutTransaction(scenario: String) throws {
+        let client = FakeIMKTextInput()
+        let composer = HangulComposer(statusBar: MockStatusBar(), configuration: MockConfiguration())
+        composer.markKeystroke(bundleId: scenario == "native" ? "com.apple.TextEdit" : "com.google.Chrome",
+                               usesBlinkNativeTextClient: false)
+        let driver = ManualHostKeyReplayDriver()
+        let adapter = NavigationTransactionAdapter(client: client, driver: driver)
+        adapter.canSchedule = scenario != "unavailable"
+        #expect(composer.handle(try #require(TestEventFactory.keyEvent(char: "a", keyCode: 0)), delegate: adapter))
+        #expect(!composer.handle(try #require(TestEventFactory.keyEvent(
+            char: "\u{001C}", keyCode: KeyCode.leftArrow, modifiers: .command
+        )), delegate: adapter))
+        #expect(client.document == "ㅁ")
+        #expect(client.markedText.isEmpty)
+        #expect(driver.polls.isEmpty)
+        #expect(driver.postedEventTypes.isEmpty)
+    }
+
     @Test("Lengthless Electron deletes the following grapheme without replaying a destructive key",
           arguments: ["글", "", "👨‍👩‍👧‍👦", "e\u{301}"], [false, true])
     func lengthlessElectronForwardDelete(following: String, staleMark: Bool) throws {
@@ -801,7 +1015,7 @@ struct ReturnDeliveryTests {
 
     @Test("Remaining-mark host keys require a fresh nonsecure field and stable readable mark",
           arguments: ["unapproved", "secure", "stale", "unreadable", "mark_changed", "field_changed"],
-          [KeyCode.return, KeyCode.forwardDelete])
+          [KeyCode.return, KeyCode.forwardDelete, KeyCode.leftArrow])
     func remainingMarkDeleteRejectsUnprovenInput(boundary: String, keyCode: UInt16) throws {
         let (session, client) = remainingMarkSession(approved: boundary != "unapproved")
         var reads = 0

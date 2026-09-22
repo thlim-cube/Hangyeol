@@ -910,6 +910,18 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
         assert(Thread.isMainThread, "IMK handle must run on main thread")
         #endif
         guard let event = event, let client = sender as? IMKTextInput else { return false }
+        #if DEBUG
+        if event.type == .flagsChanged || KeyCode.isNavigation(event.keyCode) {
+            DebugLogger.event("input.navigation_boundary", metadata: [
+                .flag("modifier_edge", event.type == .flagsChanged),
+                .flag("command", event.modifierFlags.contains(.command)),
+                .flag("option", event.modifierFlags.contains(.option)),
+                .flag("composition", session?.composer.hasActiveComposition == true),
+                .flag("context_stale", session?.contextNeedsRefresh == true),
+                .flag("active_controller", Self.sharedController === self)
+            ])
+        }
+        #endif
         // Chrome may switch tabs before delivering the shortcut keyDown. End
         // this owned composition on the physical shortcut modifier boundary.
         // Right Command and user-configured mode/Hanja modifiers remain owned

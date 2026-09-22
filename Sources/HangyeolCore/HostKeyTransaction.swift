@@ -276,6 +276,9 @@ enum DeferredCompositionRetirementDecision: Equatable {
 enum DeferredHostKeyTargetPolicy {
     case compositionOnly
     case caretAnchored
+    /// Keep the post-commit caret anchor, but allow Blink's preedit-start caret
+    /// while the exact owned marked range is still live.
+    case navigation
 }
 
 /// Waits until the exact composition targeted by a host-owned key has retired.
@@ -290,7 +293,7 @@ struct DeferredCompositionRetirementGate {
     private var stableUnmarkedObservations = 0
 
     var requiresCaretAnchor: Bool {
-        targetPolicy == .caretAnchored || originalMarkedRange == nil
+        targetPolicy != .compositionOnly || originalMarkedRange == nil
     }
 
     func committedTextVerificationRange(for selectedRange: NSRange) -> NSRange? {
@@ -381,6 +384,12 @@ struct DeferredCompositionRetirementGate {
             stableUnmarkedObservations = 0
             return .wait
         }
+        if targetPolicy == .navigation, let originalMarkedRange,
+           markedRange == originalMarkedRange,
+           selectedRange == NSRange(location: originalMarkedRange.location, length: 0) {
+            stableUnmarkedObservations = 0
+            return .wait
+        }
         if requiresCaretAnchor {
             guard committedTextVerificationRange(for: selectedRange) != nil else {
                 return .cancel
@@ -443,9 +452,14 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
         let normalizedExpectedCommittedText = expectedCommittedText?
             .precomposedStringWithCanonicalMapping
         self.expectedCommittedText = normalizedExpectedCommittedText
-        let targetPolicy: DeferredHostKeyTargetPolicy = keyCode == KeyCode.forwardDelete
-            ? .caretAnchored
-            : .compositionOnly
+        let targetPolicy: DeferredHostKeyTargetPolicy
+        if KeyCode.isNavigation(keyCode) {
+            targetPolicy = .navigation
+        } else if keyCode == KeyCode.forwardDelete {
+            targetPolicy = .caretAnchored
+        } else {
+            targetPolicy = .compositionOnly
+        }
         let initialMarkedRange = client.markedRange()
         retirementGate = DeferredCompositionRetirementGate(
             markedRange: initialMarkedRange,
@@ -473,7 +487,8 @@ private final class DeferredHostKeyReplay: @unchecked Sendable {
                     .precomposedStringWithCanonicalMapping == normalizedExpectedCommittedText,
                authorization.isAllowed() {
                 retirementGate = DeferredCompositionRetirementGate(
-                    markedRange: selected, targetPolicy: .caretAnchored
+                    markedRange: selected,
+                    targetPolicy: targetPolicy == .navigation ? .navigation : .caretAnchored
                 )
             }
         }
@@ -743,6 +758,10 @@ enum HostKeyTransaction {
         confirmedMarkedRange: NSRange? = nil,
         environment: DeferredHostKeyReplayEnvironment = .live
     ) -> DeferredHostKeyReplay? {
+        // Navigation belongs here only when an adapter or a freshly verified live
+        // mark supplies the exact text. Direct insertion has no marked-text proof.
+        guard !KeyCode.isNavigation(keyCode)
+                || expectedCommittedText?.isEmpty == false else { return nil }
         guard environment.canReplay(),
               isClientWriteAllowed(),
               let events = environment.makeEvents(keyCode, modifierFlags) else { return nil }
@@ -775,6 +794,7 @@ enum DeferredHostKeyDelivery {
         keyCode == KeyCode.return
             || keyCode == KeyCode.numpadEnter
             || keyCode == KeyCode.forwardDelete
+            || KeyCode.isNavigation(keyCode)
     }
 
     static func makeEvents(

@@ -549,23 +549,25 @@ public class HangulComposer: @unchecked Sendable {
         }
         
         // If Hanja candidate window is visible, forward keys to it
-        if hanjaMode, let presentationID = hanjaPresentationID {
-            let consumed = candidateWindow.handleKey(
-                event,
-                presentationID: presentationID
-            )
-            if candidateWindow.visiblePresentationID != presentationID {
-                invalidateHanjaState()
-            }
-            if consumed {
-                return true
-            }
-            // If not consumed (regular key dismissed the window),
-            // fall through to normal key processing below so the
-            // keystroke is handled by the Hangul composer instead
-            // of being passed raw to the app (which would produce English).
+        if handleHanjaCandidateKey(event) {
+            return true
         }
         
+        // A Blink editor can still own the marked syllable after insertText
+        // returns. Keep navigation (including modifier shortcuts) from replacing
+        // that syllable until the existing host transaction proves retirement.
+        // Hanja candidates get first refusal above; ordinary shortcuts stay below.
+        if KeyCode.isNavigation(event.keyCode), !context.isEmpty(),
+           lastInputHostSurface == .blinkWeb,
+           delegate.tryPerformHostKeyTransaction(
+               keyCode: event.keyCode,
+               modifierFlags: event.modifierFlags.rawValue,
+               commit: { commitComposition(delegate: delegate) }
+           ) {
+            localTextBuffer = ""
+            return true
+        }
+
         // Option key: no longer intercepted here.
         // Right Option key is handled via CGEventTap in RightCommandSuppressor.
         // Pass through if modifiers (Command, Control, Option) are present
@@ -912,6 +914,20 @@ public class HangulComposer: @unchecked Sendable {
         hanjaGeneration &+= 1
         hanjaMode = false
         hanjaPresentationID = nil
+    }
+
+    /// Candidate navigation belongs to its presentation even when lookup already
+    /// emptied the engine and Blink has not retired the committed mark yet.
+    /// Sessions call this before remaining-mark recovery; standalone composition
+    /// keeps the same first-refusal behavior through `handle`.
+    func handleHanjaCandidateKey(_ event: NSEvent) -> Bool {
+        guard inputMode == .korean, hanjaMode,
+              let presentationID = hanjaPresentationID else { return false }
+        let consumed = candidateWindow.handleKey(event, presentationID: presentationID)
+        if candidateWindow.visiblePresentationID != presentationID {
+            invalidateHanjaState()
+        }
+        return consumed
     }
     
     /// Trigger Hanja lookup externally (called by RightCommandSuppressor via CGEventTap)

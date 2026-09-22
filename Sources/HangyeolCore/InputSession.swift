@@ -615,7 +615,9 @@ final class InputSession: @unchecked Sendable {
         hostKeyEnvironment: DeferredHostKeyReplayEnvironment = .live
     ) -> Bool {
         let handled: Bool
-        if handleRemainingMarkedTextHostKey(event, environment: hostKeyEnvironment) {
+        if composer.handleHanjaCandidateKey(event) {
+            handled = true
+        } else if handleRemainingMarkedTextHostKey(event, environment: hostKeyEnvironment) {
             composer.clearLocalBuffer()
             handled = true
         } else {
@@ -637,10 +639,11 @@ final class InputSession: @unchecked Sendable {
         environment: DeferredHostKeyReplayEnvironment
     ) -> Bool {
         let isReturn = event.keyCode == KeyCode.return || event.keyCode == KeyCode.numpadEnter
-        let excludedModifiers: NSEvent.ModifierFlags = isReturn
+        let isNavigation = KeyCode.isNavigation(event.keyCode)
+        let excludedModifiers: NSEvent.ModifierFlags = isNavigation ? [] : isReturn
             ? [.command, .control, .option] : [.command, .control, .option, .shift]
         guard event.type == .keyDown,
-              isReturn || event.keyCode == KeyCode.forwardDelete,
+              isReturn || isNavigation || event.keyCode == KeyCode.forwardDelete,
               event.modifierFlags.intersection(excludedModifiers).isEmpty,
               composer.inputMode == .korean,
               !composer.hasActiveComposition,

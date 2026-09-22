@@ -762,3 +762,32 @@ Keyboard Maestro Engine 실행 로그가 없었으므로 실제 매크로 재현
 사용자가 보고한 물리 Home → Keyboard Maestro → Chrome 전체 경로의 실패 원인과
 설치 후 해결 여부는 미확인이다. 기존 합성키 modifier 보존 정책과 Return 안정화는
 유지한다. Keyboard Maestro 설정은 변경하지 않았다.
+
+## 조합 중 Keyboard Maestro 탐색키 손상 재현 (2026-09-22)
+
+사용자가 기존 ChatGPT 입력창에서 직접 입력했고, DOM 이벤트와 별도의 읽기 전용
+navigation-only event tap을 함께 관찰했다. 설치본은 3.1.4였다. 요청된 동작은
+`안녕`을 보존한 채 Home/Command/Option/Shift 탐색을 앱에 정확히 한 번 전달하는 것이다.
+
+- Home → Keyboard Maestro Command+Left: `안녕` 뒤 ArrowLeft keydown/up은
+  composing=true였고 compositionend가 없었다. 약 1.39초 뒤 Space에서
+  compositionupdate가 ` `로 바뀌며 문서는 `안 `이 되었다.
+- 실제 Command+Left → Keyboard Maestro Option+Left: 최종 `녕` input 뒤
+  약 725ms 후 ArrowLeft(alt=true, meta=false, composing=true)가 도착했고,
+  약 0.3ms 뒤 compositionupdate 데이터가 U+001C, 다음 input은 `안\u{001C}`였다.
+  따라서 단순히 마지막 받침과 이동키가 빠르게 겹치는 경우에만 국한되지 않는다.
+- Keyboard Maestro Engine 로그에 두 매크로 실행이 각각 기록되었다.
+  읽기 전용 event tap에서도 물리 Home(PID 0)과 KM 화살표(PID 57509)를 구분했다.
+  CGEvent Unicode는 U+001C지만 NSEvent.characters는 정상 U+F702였다.
+  CGEvent의 U+001C만 보고 잘못된 문자 payload로 판단하거나 일괄 치환하지 않는다.
+- CUA에서 직접 보낸 Option+Left는 기존 설치본에서도 `안녕`을 유지하며
+  caret을 (2,2)에서 (0,0)으로 옮겼다. 이 자동 입력은 KM 경로를 검증하지 않는다.
+
+위 손상은 관찰된 호스트 결과다. Chromium 내부 어느 분기가 실행됐는지까지
+계측한 것은 아니다. 회귀 모델은 mark가 남은 채 raw navigation을 넘기면 마지막
+음절을 제어문자로 대체하는 이 결과를 고정하고, 조합 종료 확인 전에는 키가
+호스트에 전달되지 않도록 검사한다. 새 고정 대기 시간은 사용하지 않는다.
+
+3.1.6/build 122는 이 모델에 맞춰 Blink 조합 중 탐색키를 기존 host key
+transaction으로만 전달한다. 한자 후보가 떠 있으면 후보 창이 먼저 소비한다.
+단위·모델 검증은 실제 Keyboard Maestro 설치본 재현과 구분한다.

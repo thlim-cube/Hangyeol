@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.6] - 2026-09-22
+
+### Fixed
+
+- Chrome에서 한글 조합이 화면에 남아 있는 동안 Keyboard Maestro가 만든 Home·End·Page·화살표 단축키가 마지막 글자를 제어문자로 바꾸던 경로를 막습니다. 조합이 실제로 끝난 뒤에만 원래 modifier를 유지한 채 앱에 한 번 전달하며, 새 고정 대기는 추가하지 않습니다.
+- 한자 후보 창이 떠 있으면 같은 탐색키를 후보 이동에 먼저 사용하고, 남은 조합 복구보다 우선합니다.
+
+### Known Issues
+
+- 실제 Keyboard Maestro → Chrome 경로의 설치 후 재검증은 아직 남아 있습니다.
+
 ## [3.1.5] - 2026-09-22
 
 ### Fixed
