@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -ne 4 ]; then
-    echo "Usage: $0 <raw-pkg> <payload-root> <scripts-dir> <output-pkg>" >&2
+    echo "Usage: $0 <raw-pkg> <payload-root> <scripts-dir|--no-scripts> <output-pkg>" >&2
     exit 64
 fi
 
@@ -21,12 +21,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for required_path in "$RAW_PKG" "$PAYLOAD_ROOT" "$SCRIPTS_DIR"; do
+for required_path in "$RAW_PKG" "$PAYLOAD_ROOT"; do
     if [ ! -e "$required_path" ]; then
         echo "Required package input does not exist: $required_path" >&2
         exit 1
     fi
 done
+if [ "$SCRIPTS_DIR" != "--no-scripts" ] && [ ! -d "$SCRIPTS_DIR" ]; then
+    echo "Required package scripts do not exist: $SCRIPTS_DIR" >&2
+    exit 1
+fi
 
 mkdir -p "$ASSEMBLY_DIR"
 pkgutil --expand "$RAW_PKG" "$RAW_EXPANDED"
@@ -77,11 +81,17 @@ archive_directory() {
 }
 
 archive_directory "$PAYLOAD_ROOT" Payload
-archive_directory "$SCRIPTS_DIR" Scripts
+if [ "$SCRIPTS_DIR" != "--no-scripts" ]; then
+    archive_directory "$SCRIPTS_DIR" Scripts
+fi
 
 (
     cd "$ASSEMBLY_DIR"
-    xar --compression none -cf "$CLEAN_PKG" Bom PackageInfo Payload Scripts
+    if [ "$SCRIPTS_DIR" = "--no-scripts" ]; then
+        xar --compression none -cf "$CLEAN_PKG" Bom PackageInfo Payload
+    else
+        xar --compression none -cf "$CLEAN_PKG" Bom PackageInfo Payload Scripts
+    fi
 )
 
 PAYLOAD_FILES=$(pkgutil --payload-files "$CLEAN_PKG")

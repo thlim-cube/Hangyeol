@@ -829,7 +829,7 @@ struct InstallerSessionContractTests {
         #expect(!source.contains("for user_home in /Users/*"))
     }
 
-    @Test("Ordinary update hands the live session to the packaged signed app before replacement")
+    @Test("Legacy direct installer hands the live session to the packaged signed app")
     func ordinaryUpdateUsesTemporaryRuntime() throws {
         let preinstall = try script(named: "preinstall")
         let postinstall = try script(named: "postinstall")
@@ -873,7 +873,7 @@ struct InstallerSessionContractTests {
         }
     }
 
-    @Test("Postinstall keeps a verified session runtime and schedules next-login repair")
+    @Test("Legacy direct postinstall keeps a verified session runtime and schedules next-login repair")
     func postinstallWaitsForActivationCompletion() throws {
         let source = try script(named: "postinstall")
         let validationRange = try #require(
@@ -987,6 +987,12 @@ struct InstallerSessionContractTests {
     func packagingAllowsIdentifierMigrationWithoutRelocation() throws {
         for scriptName in ["build_local.sh", "build_debug.sh", "build_release.sh"] {
             let source = try repositoryFile(named: scriptName)
+            if scriptName == "build_local.sh" {
+                #expect(source.contains("com.thlim.hangyeol.staged-update"))
+                #expect(source.contains("--install-location"))
+                #expect(source.contains("--no-scripts"))
+                continue
+            }
             let analyzeRange = try #require(source.range(of: "pkgbuild --analyze"))
             let strictIdentifierRange = try #require(
                 source.range(of: "BundleHasStrictIdentifier -bool NO")
@@ -1010,6 +1016,13 @@ struct InstallerSessionContractTests {
     func packagingPreservesRegisteredAppDirectory() throws {
         for scriptName in ["build_local.sh", "build_debug.sh", "build_release.sh"] {
             let source = try repositoryFile(named: scriptName)
+            if scriptName == "build_local.sh" {
+                #expect(source.contains("pending-app.tar.gz"))
+                #expect(source.contains("--install-location"))
+                #expect(source.contains("apply_staged_update.sh"))
+                #expect(source.contains("--no-scripts"))
+                continue
+            }
             let payloadApp = scriptName == "build_local.sh"
                 ? "$APP_BUNDLE" : "$PAYLOAD_DIR/$APP_BUNDLE"
             #expect(source.contains("pkgbuild --analyze --root \"\(payloadApp)\""),
@@ -1017,6 +1030,21 @@ struct InstallerSessionContractTests {
             #expect(source.contains("pkgbuild --root \"\(payloadApp)\""))
             #expect(source.contains("/Library/Input Methods/Hangyeol.app"))
         }
+    }
+
+    @Test("Local update stages an opaque app archive and waits until boot to replace the registered app")
+    func stagedUpdateDoesNotTouchLiveInputMethod() throws {
+        let boot = try repositoryFile(named: "Packaging/scripts/apply_staged_update.sh")
+        let build = try repositoryFile(named: "build_local.sh")
+        #expect(!build.contains("--scripts \"$SCRIPTS_DIR\""))
+        #expect(!build.contains("HangyeolInstallerHelper"))
+        #expect(!build.contains("postinstall_staged"))
+        #expect(!build.contains("--verify-launch"))
+        #expect(boot.contains("loginwindow"))
+        #expect(boot.contains("codesign --verify --strict"))
+        #expect(build.contains("pkgutil --payload-files"))
+        #expect(build.contains("Library/Application Support/Hangyeol/Updater"))
+        #expect(!build.contains("--install-location \"/Library/Input Methods/Hangyeol.app\""))
     }
 
     @Test("Installed app presents settings independently of Accessibility permission")
