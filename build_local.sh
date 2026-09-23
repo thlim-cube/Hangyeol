@@ -54,7 +54,8 @@ codesign --verify --strict --verbose=2 "$APP_BUNDLE"
 bash Tools/stage_package_scripts.sh \
     release \
     "$SCRIPTS_DIR" \
-    "$SIGNING_IDENTITY"
+    "$SIGNING_IDENTITY" \
+    "$APP_BUNDLE"
 
 pkgbuild --analyze --root "$PAYLOAD_DIR" "$COMPONENT_PLIST"
 plutil -replace 0.BundleIsRelocatable -bool NO "$COMPONENT_PLIST"
@@ -96,6 +97,17 @@ if [ -z "$EXPANDED_HELPER" ]; then
     exit 1
 fi
 codesign --verify --strict --verbose=2 "$EXPANDED_HELPER"
+EXPANDED_SESSION_APP=$(find "$EXPANDED_DIR" -type d \
+    -name HangyeolSession.app -print -quit)
+if [ -z "$EXPANDED_SESSION_APP" ]; then
+    echo "Packaged current-session app was not found during validation." >&2
+    exit 1
+fi
+codesign --verify --strict --verbose=2 "$EXPANDED_SESSION_APP"
+/usr/bin/cmp -s "$EXPANDED_SESSION_APP/Contents/Info.plist" \
+    "$EXPANDED_APP/Contents/Info.plist"
+/usr/bin/cmp -s "$EXPANDED_SESSION_APP/Contents/MacOS/Hangyeol" \
+    "$EXPANDED_APP/Contents/MacOS/Hangyeol"
 EXPANDED_PACKAGED_INFO=$(find "$EXPANDED_DIR" -type f \
     -name HangyeolPackagedInfo.plist -print -quit)
 if [ -z "$EXPANDED_PACKAGED_INFO" ]; then

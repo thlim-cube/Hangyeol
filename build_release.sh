@@ -83,7 +83,8 @@ codesign --verify --strict --verbose=2 "$PAYLOAD_DIR/$APP_BUNDLE"
 bash Tools/stage_package_scripts.sh \
     release \
     "$SCRIPTS_DIR" \
-    "$APP_SIGN_IDENTITY"
+    "$APP_SIGN_IDENTITY" \
+    "$PAYLOAD_DIR/$APP_BUNDLE"
 
 # Building the PKG
 APP_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Info.plist)

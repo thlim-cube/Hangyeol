@@ -1,4 +1,5 @@
 import Carbon
+import Darwin
 import Foundation
 import HangyeolInstallerSupport
 
@@ -242,6 +243,69 @@ private func waitForProcessExit(arguments: ArraySlice<String>) -> Int32 {
     return HelperExit.failure
 }
 
+private func runningHangyeolExecutablePaths() -> [String]? {
+    let process = Process()
+    let output = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+    process.arguments = ["-x", "-u", String(getuid()), "Hangyeol"]
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    do {
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0,
+              let pidList = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        var paths: [String] = []
+        for value in pidList.split(whereSeparator: \.isNewline) {
+            guard let pid = Int32(value) else { return nil }
+            var path = [CChar](repeating: 0, count: 4096)
+            let length = proc_pidpath(pid, &path, UInt32(path.count))
+            guard length > 0 else { return nil }
+            let bytes = path.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }
+            paths.append(String(decoding: bytes, as: UTF8.self))
+        }
+        return paths
+    } catch {
+        return nil
+    }
+}
+
+private func verifySessionRuntime(arguments: ArraySlice<String>) -> Int32 {
+    guard arguments.count == 2,
+          let expectedPath = arguments.first,
+          expectedPath.hasPrefix("/private/tmp/hangyeol-session."),
+          expectedPath.hasSuffix("/Hangyeol.app/Contents/MacOS/Hangyeol"),
+          let selectedArgument = arguments.dropFirst().first,
+          selectedArgument == "true" || selectedArgument == "false" else {
+        return HelperExit.invalidArguments
+    }
+    let deadline = Date().addingTimeInterval(3)
+    repeat {
+        if let paths = runningHangyeolExecutablePaths(),
+           paths.count == 1,
+           URL(fileURLWithPath: paths[0]).resolvingSymlinksInPath().path
+             == URL(fileURLWithPath: String(expectedPath)).resolvingSymlinksInPath().path,
+           let sources = TISCreateInputSourceList(nil, false)?
+             .takeRetainedValue() as? [TISInputSource],
+           InputSourceLifecycleRules.roster(
+             from: sources.compactMap(candidate(for:)), identity: identity
+           ).isEnabled,
+           let selectedSource = TISCopyCurrentKeyboardInputSource()?
+             .takeRetainedValue(),
+           let selectedCandidate = candidate(for: selectedSource),
+           identity.owns(selectedCandidate) == (selectedArgument == "true") {
+            print("session-runtime-path=\(paths[0])")
+            return HelperExit.success
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    } while Date() < deadline
+    fputs("session-runtime: process or input-source state differs\n", stderr)
+    return HelperExit.failure
+}
+
 let arguments = CommandLine.arguments.dropFirst()
 guard let command = arguments.first else {
     exit(HelperExit.invalidArguments)
@@ -256,6 +320,8 @@ case "--prepare-update":
     exit(prepareForUpdate())
 case "--wait-for-process-exit":
     exit(waitForProcessExit(arguments: arguments.dropFirst()))
+case "--verify-session-runtime":
+    exit(verifySessionRuntime(arguments: arguments.dropFirst()))
 default:
     exit(HelperExit.invalidArguments)
 }

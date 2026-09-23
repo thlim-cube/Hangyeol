@@ -6,8 +6,12 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 PACKAGED_HELPER="$SCRIPT_DIR/HangyeolInstallerHelper"
 PACKAGED_INFO_PLIST="$SCRIPT_DIR/HangyeolPackagedInfo.plist"
+PACKAGED_SESSION_APP="$SCRIPT_DIR/HangyeolSession.app"
 STAGING_DIR=""
 STAGED_HELPER=""
+SESSION_DIR=""
+SESSION_APP=""
+SESSION_KEEP=false
 
 # shellcheck source=postinstall_classification.sh
 . "$SCRIPT_DIR/postinstall_classification.sh"
@@ -15,6 +19,10 @@ STAGED_HELPER=""
 cleanup() {
     if [ -n "$STAGING_DIR" ] && [ -d "$STAGING_DIR" ]; then
         /bin/rm -rf "$STAGING_DIR"
+    fi
+    if [ "$SESSION_KEEP" = false ] \
+        && [ -n "$SESSION_DIR" ] && [ -d "$SESSION_DIR" ]; then
+        /bin/rm -rf "$SESSION_DIR"
     fi
 }
 trap cleanup EXIT
@@ -99,10 +107,22 @@ if [ -n "$CURRENT_USER" ]; then
             "$PACKAGED_CONNECTION_NAME" \
             "$PACKAGED_INPUT_MODE_SCHEMA")
 
-        # Every replacement requires a verified fallback before stopping the old
-        # server. Keeping it alive leaves the previous executable mapped after
-        # PackageKit replaces the bundle and can retire its input-source entry.
+        # The ordinary update retains the selected source and menu connection.
+        # Its signed package app runs from a separate path before PackageKit
+        # replaces the canonical bundle; other installation kinds still need a
+        # verified fallback and the normal registration repair.
         PREPARATION_COMMAND="--prepare-update"
+        if [ "$INSTALLATION_KIND" = "ordinary-update" ]; then
+            PREPARATION_COMMAND="--snapshot-update"
+            if [ ! -d "$PACKAGED_SESSION_APP" ] \
+                || ! /usr/bin/codesign --verify --strict "$PACKAGED_SESSION_APP" \
+                || ! /usr/bin/cmp -s \
+                    "$PACKAGED_SESSION_APP/Contents/Info.plist" \
+                    "$PACKAGED_INFO_PLIST"; then
+                echo "Hangyeol session app is not the signed packaged app." >&2
+                exit 1
+            fi
+        fi
         if ! PREPARE_OUTPUT=$(run_as_console_user \
             "$STAGED_HELPER" "$PREPARATION_COMMAND"); then
             echo "Hangyeol could not prepare the input-source update." >&2
@@ -172,9 +192,27 @@ if [ -n "$CURRENT_USER" ]; then
             com.thlim.inputmethod.Hangyeol \
             HangyeolFallbackWasEnabled -bool "$FALLBACK_WAS_ENABLED"
 
-        # The fallback has been selected and verified above. Stop only our input
-        # methods before replacement, including same-registration updates.
+        if [ "$INSTALLATION_KIND" = "ordinary-update" ]; then
+            SESSION_DIR=$(/usr/bin/mktemp -d "/private/tmp/hangyeol-session.XXXXXX")
+            /bin/chmod 755 "$SESSION_DIR"
+            SESSION_APP="$SESSION_DIR/Hangyeol.app"
+            /usr/bin/ditto "$PACKAGED_SESSION_APP" "$SESSION_APP"
+            if ! /usr/bin/codesign --verify --strict "$SESSION_APP" \
+                || ! /usr/bin/cmp -s \
+                    "$SESSION_APP/Contents/Info.plist" "$PACKAGED_INFO_PLIST" \
+                || ! run_as_console_user \
+                    "$SESSION_APP/Contents/MacOS/Hangyeol" --verify-launch; then
+                echo "Hangyeol could not stage its signed current-session app." >&2
+                exit 1
+            fi
+        fi
+
+        # Stop only the old input-method process after the replacement session
+        # app is ready. First installs and registration changes retain fallback.
         PROCESS_NAMES="Hangyeol PriType PriTypeV2"
+        if [ "$INSTALLATION_KIND" = "ordinary-update" ]; then
+            PROCESS_NAMES="Hangyeol"
+        fi
         for process_name in $PROCESS_NAMES; do
             /usr/bin/pkill -TERM -x -u "$USER_ID" "$process_name" \
                 2>/dev/null || true
@@ -190,6 +228,35 @@ if [ -n "$CURRENT_USER" ]; then
                 echo "Hangyeol input-method process did not terminate." >&2
                 exit 1
             fi
+        fi
+
+        if [ "$INSTALLATION_KIND" = "ordinary-update" ]; then
+            if ! run_as_console_user /usr/bin/open -n -g "$SESSION_APP" \
+                || ! run_as_console_user "$STAGED_HELPER" \
+                    --verify-session-runtime \
+                    "$SESSION_APP/Contents/MacOS/Hangyeol" \
+                    "$SELECTED_BEFORE"; then
+                echo "Hangyeol current-session handoff failed; restoring old app." >&2
+                /usr/bin/pkill -TERM -x -u "$USER_ID" Hangyeol \
+                    >/dev/null 2>&1 || true
+                if ! run_as_console_user "$STAGED_HELPER" \
+                    --wait-for-process-exit 2 Hangyeol \
+                    >/dev/null 2>&1; then
+                    /usr/bin/pkill -KILL -x -u "$USER_ID" Hangyeol \
+                        >/dev/null 2>&1 || true
+                    run_as_console_user "$STAGED_HELPER" \
+                        --wait-for-process-exit 2 Hangyeol \
+                        >/dev/null 2>&1 || true
+                fi
+                run_as_console_user /usr/bin/open \
+                    "/Library/Input Methods/Hangyeol.app" \
+                    >/dev/null 2>&1 || true
+                exit 1
+            fi
+            SESSION_KEEP=true
+            run_as_console_user /usr/bin/defaults write \
+                com.thlim.inputmethod.Hangyeol \
+                HangyeolCurrentSessionAppPath -string "$SESSION_APP"
         fi
 
         # Retired identities cannot reuse their Accessibility grants. The

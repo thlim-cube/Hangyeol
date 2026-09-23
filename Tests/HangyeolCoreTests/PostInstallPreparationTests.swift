@@ -5,6 +5,16 @@ import Testing
 
 @Suite("Post-install Preparation")
 struct PostInstallPreparationTests {
+    @Test("Only the installed bundle runs the next-login activation repair")
+    func temporarySessionAppDoesNotRetireActivationMarker() {
+        #expect(PostInstallPreparation.canRepairFromCurrentBundle(
+            URL(fileURLWithPath: "/Library/Input Methods/Hangyeol.app")
+        ))
+        #expect(!PostInstallPreparation.canRepairFromCurrentBundle(
+            URL(fileURLWithPath: "/private/tmp/hangyeol-session.ABCDEF/Hangyeol.app")
+        ))
+    }
+
     @Test("Parses one exact private installer command and rejects mixed commands")
     func parsesPrivateInstallerCommands() {
         #expect(PostInstallPreparation.command(
@@ -62,7 +72,13 @@ struct PostInstallPreparationTests {
         #expect(PostInstallPreparation.command(arguments: args + ["--after-package-receipt"]) ==
             .scheduleRepair(installationKind: .ordinaryUpdate, shouldSelect: true,
                             temporaryFallbackSourceID: nil, waitForPackageReceipt: true))
+        #expect(PostInstallPreparation.command(arguments: args + [
+            "--after-package-receipt", "--next-login-only"
+        ]) == .scheduleRepair(installationKind: .ordinaryUpdate, shouldSelect: true,
+                             temporaryFallbackSourceID: nil, waitForPackageReceipt: true,
+                             nextLoginOnly: true))
         #expect(PostInstallPreparation.command(arguments: args + ["unknown"]) == .invalid)
+        #expect(PostInstallPreparation.command(arguments: args + ["--next-login-only"]) == .invalid)
     }
 
     @Test("Old or unavailable package receipts cannot release activation")
@@ -578,6 +594,35 @@ struct PostInstallPreparationTests {
             PostInstallPreparation.repairPendingArgument
         ])
         #expect(PostInstallPreparation.hasPendingActivation(homeDirectory: home))
+        #expect(PostInstallPreparation.shouldRepairOnOrdinaryLaunch(homeDirectory: home))
+    }
+
+    @Test("Current-session updates leave their activation marker for the next login")
+    func defersSessionUpdateRepairUntilNextLogin() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HangyeolNextLogin.\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let executable = URL(fileURLWithPath:
+            "/Library/Input Methods/Hangyeol.app/Contents/MacOS/Hangyeol")
+        #expect(PostInstallPreparation.scheduleActivationRepair(
+            installationKind: .ordinaryUpdate,
+            shouldSelect: true,
+            waitForPackageReceipt: true,
+            nextLoginOnly: true,
+            executableURL: executable,
+            version: "3.1.8",
+            build: "124",
+            homeDirectory: home
+        ))
+        let marker = home.appendingPathComponent(
+            "Library/Application Support/Hangyeol/input-source-activation-pending.plist")
+        let request = try PropertyListDecoder().decode(
+            PendingInputSourceActivation.self,
+            from: Data(contentsOf: marker)
+        )
+        #expect(request.nextLoginOnly == true)
+        #expect(!PostInstallPreparation.shouldRepairOnOrdinaryLaunch(homeDirectory: home))
+        #expect(PostInstallPreparation.hasPendingActivation(homeDirectory: home))
     }
 
     @Test("A retired marker remains authoritative when stale agent cleanup fails")
@@ -717,7 +762,7 @@ struct InstallerSessionContractTests {
         #expect(try classifyInstallation(wasInstalled: "") == "registration-change")
     }
 
-    @Test("Preinstall verifies fallback before stopping the server for every update")
+    @Test("Preinstall stages a signed session app or verifies fallback before stopping the server")
     func preinstallClassifiesBeforeChangingTheActiveSession() throws {
         let source = try script(named: "preinstall")
         let packagedSignatureRange = try #require(
@@ -745,8 +790,9 @@ struct InstallerSessionContractTests {
 
         #expect(source.contains("PACKAGED_INFO_PLIST="))
         #expect(source.contains("HangyeolPackagedInfo.plist"))
-        #expect(!source.contains("--snapshot-update"))
+        #expect(source.contains("--snapshot-update"))
         #expect(source.contains("PREPARATION_COMMAND=\"--prepare-update\""))
+        #expect(source.contains("PREPARATION_COMMAND=\"--snapshot-update\""))
         #expect(source.contains("PROCESS_NAMES=\"Hangyeol PriType PriTypeV2\""))
         #expect(!source.contains(
             "if [ \"$INSTALLATION_KIND\" != \"ordinary-update\" ]; then"
@@ -783,6 +829,34 @@ struct InstallerSessionContractTests {
         #expect(!source.contains("for user_home in /Users/*"))
     }
 
+    @Test("Ordinary update hands the live session to the packaged signed app before replacement")
+    func ordinaryUpdateUsesTemporaryRuntime() throws {
+        let preinstall = try script(named: "preinstall")
+        let postinstall = try script(named: "postinstall")
+        let staging = try repositoryFile(named: "Tools/stage_package_scripts.sh")
+
+        let stageRange = try #require(preinstall.range(of:
+            "ditto \"$PACKAGED_SESSION_APP\" \"$SESSION_APP\""))
+        let stopRange = try #require(preinstall.range(of: "pkill -TERM -x -u \"$USER_ID\""))
+        let launchRange = try #require(preinstall.range(of: "open -n -g \"$SESSION_APP\""))
+        let verifyRange = try #require(preinstall.range(of: "--verify-session-runtime"))
+        #expect(staging.contains("HangyeolSession.app"))
+        #expect(staging.contains("codesign --verify --strict --verbose=2"))
+        #expect(preinstall.contains("PREPARATION_COMMAND=\"--snapshot-update\""))
+        #expect(stageRange.lowerBound < stopRange.lowerBound)
+        #expect(stopRange.lowerBound < launchRange.lowerBound)
+        #expect(launchRange.lowerBound < verifyRange.lowerBound)
+
+        let verifyPostRange = try #require(postinstall.range(of: "--verify-session-runtime"))
+        let stopPostRange = try #require(postinstall.range(of: "pkill -TERM -x -u \"$USER_ID\""))
+        #expect(verifyPostRange.lowerBound < stopPostRange.lowerBound)
+        #expect(postinstall.contains("if [ \"$INSTALLATION_KIND\" = \"ordinary-update\" ]; then"))
+        #expect(postinstall.contains(
+            "\"$SESSION_APP/Contents/MacOS/Hangyeol\" \"$EXECUTABLE\""))
+        #expect(postinstall.contains("REPAIR_TIMING=(--next-login-only)"))
+        #expect(postinstall.contains("--after-package-receipt \"${REPAIR_TIMING[@]}\""))
+    }
+
     @Test("Installer scripts reference only commands available on macOS")
     func installerAbsoluteCommandPathsExist() throws {
         for scriptName in ["preinstall", "postinstall"] {
@@ -799,7 +873,7 @@ struct InstallerSessionContractTests {
         }
     }
 
-    @Test("Postinstall lets PackageKit finish before the one-shot repair verifies activation")
+    @Test("Postinstall keeps a verified session runtime and schedules next-login repair")
     func postinstallWaitsForActivationCompletion() throws {
         let source = try script(named: "postinstall")
         let validationRange = try #require(
@@ -811,7 +885,9 @@ struct InstallerSessionContractTests {
         let scheduleRange = try #require(
             source.range(of: "--schedule-input-source-repair")
         )
-        #expect(!source.contains("if [ \"$INSTALLATION_KIND\" = \"ordinary-update\" ]; then"))
+        #expect(source.contains("if [ \"$INSTALLATION_KIND\" = \"ordinary-update\" ]; then"))
+        #expect(source.contains("SESSION_RUNTIME_READY=true"))
+        #expect(source.contains("if [ \"${SESSION_RUNTIME_READY:-false}\" = true ]; then"))
         let terminateRange = try #require(
             source.range(of: "pkill -TERM -x -u \"$USER_ID\"")
         )

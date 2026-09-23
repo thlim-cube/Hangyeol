@@ -73,7 +73,8 @@ codesign -vv -d "$PAYLOAD_DIR/$APP_BUNDLE"
 bash Tools/stage_package_scripts.sh \
     debug \
     "$SCRIPTS_DIR" \
-    "$APP_SIGN"
+    "$APP_SIGN" \
+    "$PAYLOAD_DIR/$APP_BUNDLE"
 
 APP_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Info.plist)
 PKG_VERSION="${APP_VERSION}-debug"

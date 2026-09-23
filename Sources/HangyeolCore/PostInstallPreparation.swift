@@ -10,7 +10,8 @@ public enum PostInstallCommand: Equatable, Sendable {
         installationKind: InstallerInstallationKind,
         shouldSelect: Bool,
         temporaryFallbackSourceID: String?,
-        waitForPackageReceipt: Bool = false
+        waitForPackageReceipt: Bool = false,
+        nextLoginOnly: Bool = false
     )
     case repairPending
     case phase(InstallerActivationPhase, sourceID: String?)
@@ -28,6 +29,8 @@ public struct PendingInputSourceActivation: Codable, Equatable, Sendable {
     public let build: String
     public let packageReceiptVersion: String?
     public let previousReceiptDate: Date?
+    // Optional so pending requests written by earlier versions still decode.
+    public let nextLoginOnly: Bool?
 
     public init(
         token: String,
@@ -37,7 +40,8 @@ public struct PendingInputSourceActivation: Codable, Equatable, Sendable {
         version: String,
         build: String,
         packageReceiptVersion: String? = nil,
-        previousReceiptDate: Date? = nil
+        previousReceiptDate: Date? = nil,
+        nextLoginOnly: Bool = false
     ) {
         self.token = token
         self.installationKind = installationKind
@@ -47,10 +51,17 @@ public struct PendingInputSourceActivation: Codable, Equatable, Sendable {
         self.build = build
         self.packageReceiptVersion = packageReceiptVersion
         self.previousReceiptDate = previousReceiptDate
+        self.nextLoginOnly = nextLoginOnly ? true : nil
     }
 }
 
 public enum PostInstallPreparation {
+    public static func canRepairFromCurrentBundle(_ bundleURL: URL) -> Bool {
+        bundleURL.resolvingSymlinksInPath().path
+            == URL(fileURLWithPath: "/Library/Input Methods/Hangyeol.app")
+                .resolvingSymlinksInPath().path
+    }
+
     public static let statusArgument = "--post-install-status"
     public static let launchProbeArgument = "--verify-launch"
     public static let waitForActivationArgument =
@@ -134,21 +145,26 @@ public enum PostInstallPreparation {
             return arguments.count == 2 ? .repairPending : .invalid
         }
         if present[0] == scheduleRepairArgument {
-            guard (arguments.count == 5 || (arguments.count == 6 && arguments[5] == "--after-package-receipt")),
+            guard arguments.count == 5
+                    || (arguments.count == 6 && arguments[5] == "--after-package-receipt")
+                    || (arguments.count == 7 && arguments[5] == "--after-package-receipt"
+                        && arguments[6] == "--next-login-only"),
                   let kind = InstallerInstallationKind(rawValue: arguments[2]),
                   let shouldSelect = parseBoolean(arguments[3]) else {
                 return .invalid
             }
             let fallbackSourceID = arguments[4] == "-" ? nil : arguments[4]
             guard fallbackSourceID?.isEmpty != true,
-                  shouldSelect || fallbackSourceID == nil else {
+                  shouldSelect || fallbackSourceID == nil,
+                  arguments.count != 7 || kind == .ordinaryUpdate else {
                 return .invalid
             }
             return .scheduleRepair(
                 installationKind: kind,
                 shouldSelect: shouldSelect,
                 temporaryFallbackSourceID: fallbackSourceID,
-                waitForPackageReceipt: arguments.count == 6
+                waitForPackageReceipt: arguments.count >= 6,
+                nextLoginOnly: arguments.count == 7
             )
         }
         guard let phase = InstallerActivationPhase(rawValue: present[0]) else {
@@ -226,6 +242,7 @@ public enum PostInstallPreparation {
         shouldSelect: Bool,
         temporaryFallbackSourceID: String? = nil,
         waitForPackageReceipt: Bool = false,
+        nextLoginOnly: Bool = false,
         executableURL: URL,
         version: String,
         build: String,
@@ -251,7 +268,8 @@ public enum PostInstallPreparation {
                 previousReceiptDate: waitForPackageReceipt
                     ? (try? FileManager.default.attributesOfItem(atPath:
                         "/var/db/receipts/com.thlim.hangyeol.plist"))?[.modificationDate] as? Date
-                    : nil
+                    : nil,
+                nextLoginOnly: nextLoginOnly
             )
             let agentData = try activationAgentData(
                 executableURL: executableURL,
@@ -280,6 +298,17 @@ public enum PostInstallPreparation {
         FileManager.default.fileExists(
             atPath: activationPaths(homeDirectory: homeDirectory).marker.path
         )
+    }
+
+    public static func shouldRepairOnOrdinaryLaunch(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> Bool {
+        let marker = activationPaths(homeDirectory: homeDirectory).marker
+        guard let data = try? Data(contentsOf: marker),
+              let request = try? PropertyListDecoder().decode(
+                PendingInputSourceActivation.self, from: data
+              ) else { return true }
+        return request.nextLoginOnly != true
     }
 
     /// Keeps PackageKit's completion boundary behind the asynchronous IMK/TIS

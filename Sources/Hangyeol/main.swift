@@ -42,13 +42,15 @@ if let command = PostInstallPreparation.command(
         installationKind,
         shouldSelect,
         temporaryFallbackSourceID,
-        waitForPackageReceipt
+        waitForPackageReceipt,
+        nextLoginOnly
     ):
         let scheduled = PostInstallPreparation.scheduleActivationRepair(
             installationKind: installationKind,
             shouldSelect: shouldSelect,
             temporaryFallbackSourceID: temporaryFallbackSourceID,
             waitForPackageReceipt: waitForPackageReceipt,
+            nextLoginOnly: nextLoginOnly,
             executableURL: executableURL,
             version: version,
             build: build
@@ -170,10 +172,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     }
 
     private func schedulePendingInputSourceRepair() {
+        // The current-session copy serves input only. The canonical app owns
+        // the durable repair request at the next login.
+        guard PostInstallPreparation.canRepairFromCurrentBundle(Bundle.main.bundleURL) else {
+            return
+        }
         let pending: PendingInstallerRepair?
         if let pendingInstallerRepair {
             pending = pendingInstallerRepair
-        } else if PostInstallPreparation.hasPendingActivation() {
+        } else if PostInstallPreparation.hasPendingActivation(),
+                  PostInstallPreparation.shouldRepairOnOrdinaryLaunch() {
             pending = Self.currentInstallerIdentity()
         } else {
             pending = nil

@@ -152,6 +152,34 @@ case "$INSTALLATION_KIND" in
         ;;
 esac
 
+if [ "$INSTALLATION_KIND" = "ordinary-update" ]; then
+    SESSION_APP=$(run_as_console_user /usr/bin/defaults read \
+        com.thlim.inputmethod.Hangyeol \
+        HangyeolCurrentSessionAppPath 2>/dev/null || true)
+    SESSION_DIR="${SESSION_APP%/Hangyeol.app}"
+    case "$SESSION_APP" in
+        /private/tmp/hangyeol-session.??????/Hangyeol.app)
+            if [ "$SESSION_DIR" != "$SESSION_APP" ] \
+                && [ "$(/usr/bin/stat -f '%u' "$SESSION_DIR" 2>/dev/null)" = 0 ] \
+                && [ "$(/usr/bin/stat -f '%Lp' "$SESSION_DIR" 2>/dev/null)" = 755 ] \
+                && /usr/bin/codesign --verify --strict "$SESSION_APP" \
+                && /usr/bin/cmp -s \
+                    "$SESSION_APP/Contents/Info.plist" "$INFO_PLIST" \
+                && /usr/bin/cmp -s \
+                    "$SESSION_APP/Contents/MacOS/Hangyeol" "$EXECUTABLE" \
+                && run_as_console_user "$STAGED_HELPER" \
+                    --verify-session-runtime \
+                    "$SESSION_APP/Contents/MacOS/Hangyeol" \
+                    "$SHOULD_SELECT"; then
+                # The signed current-session IMK owns the selected source while
+                # PackageKit installs the same build at the canonical path.
+                # The pending agent below uses that path on the next login.
+                SESSION_RUNTIME_READY=true
+            fi
+            ;;
+    esac
+fi
+
 # Retain the fallback identity even when it was already enabled: a fresh
 # fallback -> Hangyeol transition repairs stale same-session menu ownership.
 # The activation worker preserves this source instead of editing HIToolbox.
@@ -167,12 +195,16 @@ fi
 # execute later in separate processes owned by the GUI user after the current
 # login session has a persistent IMK runtime. The 2.8.18 contract starts that
 # runtime with `open`; the LaunchAgent is only a next-login retry.
+REPAIR_TIMING=()
+if [ "${SESSION_RUNTIME_READY:-false}" = true ]; then
+    REPAIR_TIMING=(--next-login-only)
+fi
 if ! run_as_console_user "$EXECUTABLE" \
     --schedule-input-source-repair \
     "$INSTALLATION_KIND" \
     "$SHOULD_SELECT" \
     "$ACTIVATION_FALLBACK_SOURCE_ID" \
-    --after-package-receipt; then
+    --after-package-receipt "${REPAIR_TIMING[@]}"; then
     echo "Hangyeol could not schedule input-source activation." >&2
     open_input_source_settings
     exit 0
@@ -186,14 +218,13 @@ if [ ! -f "$ACTIVATION_AGENT" ] || [ ! -f "$ACTIVATION_MARKER" ]; then
     exit 0
 fi
 
-# Apply ordinary updates in this login session too. The next-login agent is a
-# recovery path, not the normal completion path for an installed update.
+if [ "${SESSION_RUNTIME_READY:-false}" = true ]; then
+    exit 0
+fi
 
-# Same-session apply follows the 2.8.18 contract: stop only this product's
-# auto-relaunched IMK, then `open` the replacement so DidFinishLaunching can
-# consume the marker. Do not bootstrap the repair agent now; a second Hangyeol
-# process would race the Aqua connection. The LaunchAgent remains a next-login
-# retry if this session cannot start the app.
+# Initial installs, registration changes, and failed session handoffs still
+# start the canonical app and repair TIS here. A verified ordinary update
+# returns above without interrupting its temporary IMK again.
 for process_name in Hangyeol PriType PriTypeV2; do
     /usr/bin/pkill -TERM -x -u "$USER_ID" "$process_name" \
         2>/dev/null || true
