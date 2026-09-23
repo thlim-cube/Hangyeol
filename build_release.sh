@@ -8,7 +8,7 @@ BUILD_DIR=".build/release"
 LEGACY_PAYLOAD_DIR="Packaging/Payload"
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/hangyeol-release-payload.XXXXXX")
 PAYLOAD_DIR="$TMP_ROOT/Payload"
-INSTALL_DIR="/Library/Input Methods"
+INSTALL_DIR="/Library/Input Methods/Hangyeol.app"
 APP_BUNDLE="${APP_NAME}.app"
 CONTENTS_DIR="${PAYLOAD_DIR}/${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
@@ -94,7 +94,7 @@ echo "[4/6] Building the PKG installer..."
 
 # Disable relocation by generating a component plist
 echo "Generating component plist to disable relocation..."
-pkgbuild --analyze --root "$PAYLOAD_DIR" "$COMPONENT_PLIST"
+pkgbuild --analyze --root "$PAYLOAD_DIR/$APP_BUNDLE" "$COMPONENT_PLIST"
 # Keep the canonical input-method path while replacing retired identifiers.
 plutil -replace 0.BundleIsRelocatable -bool NO "$COMPONENT_PLIST"
 plutil -replace 0.BundleHasStrictIdentifier -bool NO "$COMPONENT_PLIST"
@@ -112,7 +112,7 @@ if [ -z "$PKG_SIGN_IDENTITY" ]; then
 fi
 
 echo "Using Installer Identity: $PKG_SIGN_IDENTITY"
-pkgbuild --root "$PAYLOAD_DIR" \
+pkgbuild --root "$PAYLOAD_DIR/$APP_BUNDLE" \
          --component-plist "$COMPONENT_PLIST" \
          --install-location "$INSTALL_DIR" \
          --scripts "$SCRIPTS_DIR" \
@@ -122,7 +122,7 @@ pkgbuild --root "$PAYLOAD_DIR" \
 
 bash Tools/rebuild_clean_package.sh \
     "$RAW_PKG" \
-    "$PAYLOAD_DIR" \
+    "$PAYLOAD_DIR/$APP_BUNDLE" \
     "$SCRIPTS_DIR" \
     "$CLEAN_PKG"
 rm -f "$PKG_OUTPUT"

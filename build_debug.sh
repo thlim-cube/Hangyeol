@@ -8,7 +8,7 @@ BUILD_DIR=".build/debug"
 LEGACY_PAYLOAD_DIR="Packaging/Payload"
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/hangyeol-debug-payload.XXXXXX")
 PAYLOAD_DIR="$TMP_ROOT/Payload"
-INSTALL_DIR="/Library/Input Methods"
+INSTALL_DIR="/Library/Input Methods/Hangyeol.app"
 APP_BUNDLE="${APP_NAME}.app"
 CONTENTS_DIR="${PAYLOAD_DIR}/${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
@@ -80,11 +80,11 @@ APP_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Inf
 PKG_VERSION="${APP_VERSION}-debug"
 
 echo "[4/6] Building the PKG installer..."
-pkgbuild --analyze --root "$PAYLOAD_DIR" "$COMPONENT_PLIST"
+pkgbuild --analyze --root "$PAYLOAD_DIR/$APP_BUNDLE" "$COMPONENT_PLIST"
 plutil -replace 0.BundleIsRelocatable -bool NO "$COMPONENT_PLIST"
 plutil -replace 0.BundleHasStrictIdentifier -bool NO "$COMPONENT_PLIST"
 
-pkgbuild --root "$PAYLOAD_DIR" \
+pkgbuild --root "$PAYLOAD_DIR/$APP_BUNDLE" \
          --component-plist "$COMPONENT_PLIST" \
          --install-location "$INSTALL_DIR" \
          --scripts "$SCRIPTS_DIR" \
@@ -94,7 +94,7 @@ pkgbuild --root "$PAYLOAD_DIR" \
 
 bash Tools/rebuild_clean_package.sh \
     "$RAW_PKG" \
-    "$PAYLOAD_DIR" \
+    "$PAYLOAD_DIR/$APP_BUNDLE" \
     "$SCRIPTS_DIR" \
     "$CLEAN_PKG"
 rm -f "$PKG_OUTPUT"

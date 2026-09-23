@@ -1006,6 +1006,19 @@ struct InstallerSessionContractTests {
         #expect(staging.contains("codesign --verify --strict --verbose=2"))
     }
 
+    @Test("Updates copy bundle contents without atomically replacing the registered app")
+    func packagingPreservesRegisteredAppDirectory() throws {
+        for scriptName in ["build_local.sh", "build_debug.sh", "build_release.sh"] {
+            let source = try repositoryFile(named: scriptName)
+            let payloadApp = scriptName == "build_local.sh"
+                ? "$APP_BUNDLE" : "$PAYLOAD_DIR/$APP_BUNDLE"
+            #expect(source.contains("pkgbuild --analyze --root \"\(payloadApp)\""),
+                    "\(scriptName) must not make Hangyeol.app a PackageKit bundle component")
+            #expect(source.contains("pkgbuild --root \"\(payloadApp)\""))
+            #expect(source.contains("/Library/Input Methods/Hangyeol.app"))
+        }
+    }
+
     @Test("Installed app presents settings independently of Accessibility permission")
     func installedAppAlwaysPresentsSettings() throws {
         let source = try String(

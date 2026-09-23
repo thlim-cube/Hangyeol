@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.9] - 2026-09-23
+
+### Fixed
+
+- 설치 패키지가 기존 `Hangyeol.app` 디렉터리를 통째로 교체하지 않고 서명된 `Contents`만 갱신하도록 변경했습니다. 3.1.8 설치에서 PackageKit이 앱 번들을 원자적으로 교체하고 `postinstall` 뒤 최종 등록하면서 활성 입력 소스가 사라진 문제를 겨냥합니다.
+
+### Verification pending
+
+- 실제 설치 직후 한결 메뉴·입력 유지와 재로그인 후 정식 앱 전환은 설치 호스트에서 확인해야 합니다.
+
 ## [3.1.8] - 2026-09-23
 
 ### Changed
@@ -14,9 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 등록 구조가 같은 업데이트에서는 새 버전의 서명 앱을 현재 로그인 세션용 임시 경로에 먼저 실행하고, 입력 소스 선택·활성 상태와 실행 경로를 확인한 뒤 정식 앱을 설치합니다. 현재 세션의 임시 앱은 입력을 이어 받고, 다음 로그인에는 정식 경로의 앱이 복구 요청을 처리합니다.
 - 최초 설치와 입력 소스 등록 구조 변경은 기존 대체 입력 소스·복구 절차를 유지합니다.
 
-### Verification pending
+### Known issue
 
-- 실제 패키지 설치 직후 입력 메뉴의 한결·설정·정보 표시와 재로그인 후 정식 앱 전환은 설치 호스트에서 확인해야 합니다.
+- 실제 설치에서는 PackageKit의 최종 번들 교체 뒤 한결 입력 소스가 사라졌습니다. 임시 앱 프로세스 확인만으로 메뉴·입력 유지를 증명할 수 없었습니다.
 
 ## [3.1.7] - 2026-09-23
 

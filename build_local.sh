@@ -57,12 +57,15 @@ bash Tools/stage_package_scripts.sh \
     "$SIGNING_IDENTITY" \
     "$APP_BUNDLE"
 
-pkgbuild --analyze --root "$PAYLOAD_DIR" "$COMPONENT_PLIST"
+pkgbuild --analyze --root "$APP_BUNDLE" "$COMPONENT_PLIST"
 plutil -replace 0.BundleIsRelocatable -bool NO "$COMPONENT_PLIST"
 plutil -replace 0.BundleHasStrictIdentifier -bool NO "$COMPONENT_PLIST"
-pkgbuild --root "$PAYLOAD_DIR" \
+# Keep the registered app directory in place. Packaging Hangyeol.app itself as
+# a component makes PackageKit atomically shove it after postinstall returns,
+# which removes the active input source after our same-session verification.
+pkgbuild --root "$APP_BUNDLE" \
     --component-plist "$COMPONENT_PLIST" \
-    --install-location "/Library/Input Methods" \
+    --install-location "/Library/Input Methods/Hangyeol.app" \
     --scripts "$SCRIPTS_DIR" \
     --identifier "com.thlim.hangyeol" \
     --version "$APP_VERSION" \
@@ -70,7 +73,7 @@ pkgbuild --root "$PAYLOAD_DIR" \
 
 bash Tools/rebuild_clean_package.sh \
     "$RAW_PKG" \
-    "$PAYLOAD_DIR" \
+    "$APP_BUNDLE" \
     "$SCRIPTS_DIR" \
     "$PKG_OUTPUT"
 
@@ -83,11 +86,20 @@ case "$PAYLOAD_FILES" in
 esac
 
 pkgutil --expand-full "$PKG_OUTPUT" "$EXPANDED_DIR"
-EXPANDED_APP=$(find "$EXPANDED_DIR" -type d -name "$APP_NAME.app" -print -quit)
-if [ -z "$EXPANDED_APP" ]; then
-    echo "Packaged app was not found during validation." >&2
+if ! /usr/bin/grep -Fq \
+    'install-location="/Library/Input Methods/Hangyeol.app"' \
+    "$EXPANDED_DIR/PackageInfo"; then
+    echo "Package would replace the registered app directory." >&2
     exit 1
 fi
+EXPANDED_CONTENTS="$EXPANDED_DIR/Payload/Contents"
+if [ ! -d "$EXPANDED_CONTENTS" ]; then
+    echo "Packaged app contents were not found during validation." >&2
+    exit 1
+fi
+EXPANDED_APP="$TEMP_DIR/Reconstructed/$APP_NAME.app"
+mkdir -p "$EXPANDED_APP"
+/usr/bin/ditto "$EXPANDED_CONTENTS" "$EXPANDED_APP/Contents"
 
 codesign --verify --strict --verbose=2 "$EXPANDED_APP"
 EXPANDED_HELPER=$(find "$EXPANDED_DIR" -type f \

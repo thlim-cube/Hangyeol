@@ -833,5 +833,25 @@ TIS 복구 절차를 사용한다.
 버전·서명·실제 한글 입력, (3) 디스크 정식 앱의 동일한 버전·서명,
 (4) 재로그인 후 정식 실행 파일과 메뉴·실제 입력. TIS ready나 패키지
 서명만으로 메뉴 표시와 실제 입력을 통과 처리하지 않는다. 자동 검사는
-이전 스크립트의 ordinary update 경로와 다음 로그인 마커를 검증하지만,
-실제 PackageKit 설치·메뉴 표시·재로그인은 아직 수행하지 않았다.
+ordinary update 경로와 다음 로그인 마커를 검증하며, 실제 설치 결과는
+아래에 별도로 기록한다.
+
+### 3.1.8 설치 후 관찰
+
+2026-09-23 10:52 설치에서는 패키지 receipt와 디스크 앱이 3.1.8이었고,
+임시 앱 프로세스도 계속 실행 중이었다. 그러나 입력 메뉴에서 한결이 사라지고
+영문이 그대로 입력됐다. 설치 로그는 `preinstall`의 임시 앱 경로 확인 뒤
+`Parent bundle ... will be atomically shoved`, `postinstall`의 경로 확인 뒤
+최종 bundle 등록을 기록했다.
+직후 `--post-install-status`는 `candidates=false enabled=false ready=false`였고,
+한결은 `AppleInputSourceHistory`에만 남았다. 수동 TIS 등록·활성·선택 결과는
+사용자의 시스템 설정 삭제·재등록과 시점이 겹쳐 메뉴 복구의 독립 증거가 아니다.
+
+### 3.1.9 패키지 구조 변경
+
+패키지의 설치 루트를 `Hangyeol.app` 자체로 옮겨 payload가 `Contents/`부터
+시작하게 했다. PackageKit의 component 목록에 최상위 입력기 번들이 들어가지
+않게 하여 정식 앱 디렉터리를 통째로 교체하는 경로를 피한다. 정적 검증에서는
+추출한 `Contents`로 앱을 재구성해 Apple Development 서명을 확인한다.
+설치 후 메뉴와 실제 입력 유지는 다시 호스트에서 확인해야 하며, TIS의
+`selected`·`ready` 값만으로 통과 처리하지 않는다.
