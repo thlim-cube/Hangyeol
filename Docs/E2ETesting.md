@@ -791,3 +791,23 @@ navigation-only event tap을 함께 관찰했다. 설치본은 3.1.4였다. 요�
 3.1.6/build 122는 이 모델에 맞춰 Blink 조합 중 탐색키를 기존 host key
 transaction으로만 전달한다. 한자 후보가 떠 있으면 후보 창이 먼저 소비한다.
 단위·모델 검증은 실제 Keyboard Maestro 설치본 재현과 구분한다.
+
+## 3.1.7 Chrome 탐색 단축키 검증 (2026-09-23)
+
+3.1.6 설치본에서 사용자가 `안뇽` 뒤 Home을 누르면 ChatGPT 메시지가 제출되고,
+Command+Left를 누르면 `Try again` 화면이 열렸다. Chrome DOM 기록에서
+탐색키 직후 조합 데이터가 줄바꿈으로 바뀌는 손상이 확인됐다. Chrome의
+`flagsChanged`에서 왼쪽 Command·Control만으로 조합을 미리 확정하던 경로를
+제거하고, 실제 keyDown의 기존 host key transaction에 처리를 맡겼다.
+
+Apple Development 서명한 3.1.7 debug 후보를 실행 중인 IMK로 대조한 뒤,
+사용자가 같은 Chrome ChatGPT 입력창에서 Keyboard Maestro Home과
+Command+Left를 직접 시험했다. Keyboard Maestro Engine에 두 매크로 실행이
+기록됐고, Chrome DOM에는 첫 탐색키 keydown에서 `안녕`의 마지막 음절이
+정상 compositionend로 끝나고 후속 keydown에서 caret이 이동한 기록이 남았다.
+사용자도 동작을 확인했다.
+전체 585개 단위 테스트와 55개 ReturnDelivery 테스트가 통과했고, Chrome
+브라우저 탭 직후 첫 음절 E2E 시나리오가 통과했다. 같은 E2E 실행의 TextEdit
+기본 Return 검사는 `한글\n` 대신 `한글`이 관찰돼 전체 E2E 통과로 판정하지
+않는다. 이번 변경은 Chrome 전용 modifier 조기 확정만 제거한다. 3.1.7
+설치본의 재로그인 후 검증은 별도다.

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.7] - 2026-09-23
+
+### Fixed
+
+- Chrome에서 Command·Control 수정키를 누른 순간 한글 조합을 미리 확정하지 않습니다. 실제 탐색 단축키가 도착했을 때 기존 조합 종료·호스트 키 전달 절차를 사용해 Keyboard Maestro의 Home과 Command+Left가 마지막 글자를 손상하거나 ChatGPT 입력을 제출하던 문제를 해결합니다.
+
 ## [3.1.6] - 2026-09-22
 
 ### Fixed

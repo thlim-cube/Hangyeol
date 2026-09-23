@@ -922,27 +922,9 @@ public class HangyeolInputController: IMKInputController, @unchecked Sendable {
             ])
         }
         #endif
-        // Chrome may switch tabs before delivering the shortcut keyDown. End
-        // this owned composition on the physical shortcut modifier boundary.
-        // Right Command and user-configured mode/Hanja modifiers remain owned
-        // by the existing timestamped shortcut path.
-        if event.type == .flagsChanged, [55, 59, 62].contains(event.keyCode),
-           !event.modifierFlags.intersection([.command, .control]).isEmpty,
-           NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.google.Chrome",
-           Self.sharedController === self,
-           let session, session.matches(client), !session.contextNeedsRefresh,
-           session.composer.hasActiveComposition,
-           ShortcutBindingRouter.routeModifierKey(
-               keyCode: Int64(event.keyCode),
-               toggleBinding: ConfigurationManager.shared.toggleKeyBinding,
-               hanjaBinding: ConfigurationManager.shared.hanjaKeyBinding,
-               hangyeolToggleEnabled: !ConfigurationManager.shared.capsLockInputSourceSwitchEnabled
-           ) == nil,
-           !shouldPassThroughSecureInput(client: client, context: session.context) {
-            _ = session.finalize(reason: .hostShortcut)
-            session.finishHostCommitBoundary()
-            return false
-        }
+        // A modifier press alone does not identify the host action. Leave the
+        // marked syllable owned by this session until the actual shortcut key
+        // can be handled and its composition retirement verified.
         let physicalKey = event.type == .keyDown
             ? PhysicalKeyDelivery.shared.consume(
                 event, targetPID: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0,
