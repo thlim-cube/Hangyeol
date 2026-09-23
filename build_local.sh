@@ -19,6 +19,7 @@ UPDATER_DIR="$PAYLOAD_DIR/Library/Application Support/Hangyeol/Updater"
 LAUNCH_DAEMONS_DIR="$PAYLOAD_DIR/Library/LaunchDaemons"
 EXPANDED_DIR="$TEMP_DIR/Expanded"
 RAW_PKG="$TEMP_DIR/Hangyeol.raw.pkg"
+SCRIPTS_DIR="$TEMP_DIR/Scripts"
 
 cleanup() {
     rm -rf "$TEMP_DIR"
@@ -27,6 +28,7 @@ trap cleanup EXIT
 
 cd "$REPO_ROOT"
 swift build -c release --product "$APP_NAME"
+swift build -c release --product HangyeolInstallerHelper
 
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp ".build/release/$APP_NAME" "$MACOS_DIR/$APP_NAME"
@@ -53,6 +55,11 @@ codesign --verify --strict --verbose=2 "$APP_BUNDLE"
 # PackageKit only receives opaque update data. The registered input-method
 # bundle is left untouched throughout the current login session.
 mkdir -p "$UPDATER_DIR" "$LAUNCH_DAEMONS_DIR"
+/usr/bin/install -m 755 .build/release/HangyeolInstallerHelper "$UPDATER_DIR/HangyeolInstallerHelper"
+codesign --force --options runtime --timestamp=none \
+    --sign "$SIGNING_IDENTITY" "$UPDATER_DIR/HangyeolInstallerHelper"
+mkdir -p "$SCRIPTS_DIR"
+/usr/bin/install -m 755 Packaging/scripts/postinstall_session "$SCRIPTS_DIR/postinstall"
 (
     cd "$TEMP_DIR/Build"
     /usr/bin/tar --format ustar --no-acls --no-fflags \
@@ -73,13 +80,14 @@ mkdir -p "$UPDATER_DIR" "$LAUNCH_DAEMONS_DIR"
 pkgbuild --root "$PAYLOAD_DIR" \
     --install-location "/" \
     --identifier "com.thlim.hangyeol.staged-update" \
+    --scripts "$SCRIPTS_DIR" \
     --version "$APP_VERSION" \
     "$RAW_PKG"
 
 bash Tools/rebuild_clean_package.sh \
     "$RAW_PKG" \
     "$PAYLOAD_DIR" \
-    --no-scripts \
+    "$SCRIPTS_DIR" \
     "$PKG_OUTPUT"
 
 PAYLOAD_FILES=$(pkgutil --payload-files "$PKG_OUTPUT")
@@ -96,8 +104,9 @@ if ! /usr/bin/grep -Fq 'install-location="/"' \
     echo "Package has an unexpected installation location." >&2
     exit 1
 fi
-if /usr/bin/grep -Fq '<scripts>' "$EXPANDED_DIR/PackageInfo"; then
-    echo "Local package must not run code in the active login session." >&2
+if [ -e "$EXPANDED_DIR/Scripts/preinstall" ] \
+    || ! /usr/bin/cmp -s "$EXPANDED_DIR/Scripts/postinstall" Packaging/scripts/postinstall_session; then
+    echo "Local package contains an unexpected session activation script." >&2
     exit 1
 fi
 if /usr/bin/grep -Fq '/Library/Input Methods/' \
@@ -111,6 +120,7 @@ if /usr/bin/lsbom -p u "$EXPANDED_DIR/Bom" \
     exit 1
 fi
 EXPANDED_UPDATER="$EXPANDED_DIR/Payload/Library/Application Support/Hangyeol/Updater"
+codesign --verify --strict --verbose=2 "$EXPANDED_UPDATER/HangyeolInstallerHelper"
 EXPANDED_ARCHIVE="$EXPANDED_UPDATER/pending-app.tar.gz"
 EXPANDED_HASH=$(/usr/bin/awk 'NR == 1 { print $1 }' \
     "$EXPANDED_UPDATER/pending-app.sha256")

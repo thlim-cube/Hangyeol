@@ -57,6 +57,9 @@ if let command = PostInstallPreparation.command(
         )
         exit(scheduled ? EXIT_SUCCESS : PostInstallPreparation.failureExitCode)
     case .repairPending:
+        guard PostInstallPreparation.hasMatchingPendingActivation(version: version, build: build) else {
+            exit(EXIT_SUCCESS)
+        }
         pendingInstallerRepair = PendingInstallerRepair(
             executableURL: executableURL,
             version: version,
@@ -70,6 +73,48 @@ if let command = PostInstallPreparation.command(
         ))
     case .invalid:
         exit(EX_USAGE)
+    }
+}
+
+// LaunchServices may remember the last session copy for this bundle identifier.
+// On a later login, redirect to the durable app before creating an IMK server.
+if SessionRuntimeLease.isSessionApp(Bundle.main.bundleURL),
+   let lease = SessionRuntimeLease.load(for: Bundle.main.bundleURL),
+   !lease.permits(userID: getuid(), sessionID: SessionRuntimeLease.currentSessionID()) {
+    let installedExecutable = "/Library/Input Methods/Hangyeol.app/Contents/MacOS/Hangyeol"
+    func installedRuntimeIsRunning() -> Bool {
+        NSRunningApplication.runningApplications(withBundleIdentifier: ProductIdentity.bundleID)
+            .contains { $0.executableURL?.path == installedExecutable && !$0.isTerminated }
+    }
+    // More than one client can ask LaunchServices to reopen the expired copy.
+    // Serialize redirects so those requests do not start duplicate IMK servers.
+    let support = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Hangyeol")
+    do {
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+    } catch { exit(EXIT_FAILURE) }
+    let lockFD = open(support.appendingPathComponent("session-redirect.lock").path,
+                      O_CREAT | O_RDWR | O_NOFOLLOW, S_IRUSR | S_IWUSR)
+    guard lockFD >= 0 else { exit(EXIT_FAILURE) }
+    let deadline = Date().addingTimeInterval(5)
+    while flock(lockFD, LOCK_EX | LOCK_NB) != 0 {
+        guard errno == EWOULDBLOCK, Date() < deadline else { exit(EXIT_FAILURE) }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    }
+    if installedRuntimeIsRunning() { exit(EXIT_SUCCESS) }
+    let launcher = Process()
+    launcher.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    launcher.arguments = ["-n", "-g", "/Library/Input Methods/Hangyeol.app"]
+    do {
+        try launcher.run()
+        while Date() < deadline {
+            if installedRuntimeIsRunning() { exit(EXIT_SUCCESS) }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        if launcher.isRunning { launcher.terminate() }
+        exit(EXIT_FAILURE)
+    } catch {
+        exit(EXIT_FAILURE)
     }
 }
 

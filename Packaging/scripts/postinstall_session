@@ -1,0 +1,90 @@
+#!/bin/bash
+set -euo pipefail
+umask 022
+
+UPDATER_DIR="/Library/Application Support/Hangyeol/Updater"
+HELPER="$UPDATER_DIR/HangyeolInstallerHelper"
+ARCHIVE="$UPDATER_DIR/pending-app.tar.gz"
+HASH_FILE="$UPDATER_DIR/pending-app.sha256"
+DAEMON_LABEL="com.thlim.hangyeol.apply-staged-update"
+DAEMON_PLIST="/Library/LaunchDaemons/$DAEMON_LABEL.plist"
+SESSION_DIR=""
+KEEP_SESSION=false
+
+cleanup() {
+    if [ "$KEEP_SESSION" = false ] && [ -n "$SESSION_DIR" ]; then
+        /bin/rm -rf "$SESSION_DIR"
+    fi
+}
+trap cleanup EXIT
+
+start_deferred_update() {
+    /bin/launchctl bootstrap system "$DAEMON_PLIST" >/dev/null 2>&1 || true
+    /bin/launchctl kickstart "system/$DAEMON_LABEL" >/dev/null 2>&1 || true
+}
+
+CURRENT_USER=$(/usr/bin/stat -f '%Su' /dev/console)
+case "$CURRENT_USER" in
+    root|loginwindow|_mbsetupuser|"")
+        start_deferred_update
+        exit 0
+        ;;
+esac
+USER_ID=$(/usr/bin/id -u "$CURRENT_USER")
+run_as_console_user() {
+    /bin/launchctl asuser "$USER_ID" /usr/bin/sudo -H -u "$CURRENT_USER" "$@"
+}
+
+# Only the standalone helper is queried here. Never run a temporary IMK app
+# as a CLI, rewrite the canonical bundle, or schedule source-registration repair.
+if [ ! -d "/Library/Input Methods/Hangyeol.app" ]; then
+    start_deferred_update
+    exit 0
+fi
+for trusted_file in "$HELPER" "$ARCHIVE" "$HASH_FILE"; do
+    if [ ! -f "$trusted_file" ] \
+        || [ "$(/usr/bin/stat -f '%u' "$trusted_file")" != 0 ]; then
+        echo "Hangyeol session update deferred: invalid staged file." >&2
+        start_deferred_update
+        exit 0
+    fi
+done
+EXPECTED_HASH=$(/usr/bin/awk 'NR == 1 { print $1 }' "$HASH_FILE")
+ACTUAL_HASH=$(/usr/bin/shasum -a 256 "$ARCHIVE" | /usr/bin/awk '{ print $1 }')
+if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ] \
+    || ! /usr/bin/codesign --verify --strict "$HELPER"; then
+    echo "Hangyeol session update deferred: invalid checksum or helper signature." >&2
+    start_deferred_update
+    exit 0
+fi
+SESSION_ID=$(run_as_console_user "$HELPER" --session-id) || {
+    start_deferred_update
+    exit 0
+}
+case "$SESSION_ID" in
+    ""|*[!0-9]*)
+        start_deferred_update
+        exit 0
+        ;;
+esac
+SESSION_DIR=$(/usr/bin/mktemp -d /private/tmp/hangyeol-session.XXXXXX)
+/bin/chmod 755 "$SESSION_DIR"
+/usr/bin/tar -xzf "$ARCHIVE" -C "$SESSION_DIR"
+SESSION_APP="$SESSION_DIR/Hangyeol.app"
+if ! /usr/bin/codesign --verify --strict "$SESSION_APP"; then
+    start_deferred_update
+    exit 0
+fi
+/usr/bin/printf '{"userID":%s,"sessionID":%s}\n' "$USER_ID" "$SESSION_ID" \
+    > "$SESSION_DIR/session.json"
+
+# Keep the runtime's files even on an uncertain activation failure. A later
+# login is redirected by its lease, and /private/tmp is cleared on reboot.
+KEEP_SESSION=true
+if run_as_console_user "$HELPER" --activate-session-runtime "$SESSION_APP"; then
+    echo "Hangyeol session update applied: $SESSION_APP"
+else
+    echo "Hangyeol session update was not confirmed; deferred update remains scheduled." >&2
+fi
+start_deferred_update
+exit 0

@@ -311,6 +311,18 @@ public enum PostInstallPreparation {
         return request.nextLoginOnly != true
     }
 
+    public static func hasMatchingPendingActivation(
+        version: String, build: String,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> Bool {
+        let marker = activationPaths(homeDirectory: homeDirectory).marker
+        guard let data = try? Data(contentsOf: marker),
+              let request = try? PropertyListDecoder().decode(PendingInputSourceActivation.self, from: data) else {
+            return false
+        }
+        return request.version == version && request.build == build
+    }
+
     /// Keeps PackageKit's completion boundary behind the asynchronous IMK/TIS
     /// repair. The repair removes its marker only after a fresh-process status
     /// check, so the marker is the single durable completion boundary.

@@ -5,6 +5,21 @@ import Testing
 
 @Suite("Post-install Preparation")
 struct PostInstallPreparationTests {
+    @Test("Stale next-login repair cannot start another IMK runtime")
+    func nextLoginRepairRequiresMatchingVersionAndBuild() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        #expect(!PostInstallPreparation.hasMatchingPendingActivation(version: "3.1.13", build: "129", homeDirectory: home))
+        let marker = home.appendingPathComponent("Library/Application Support/Hangyeol/input-source-activation-pending.plist")
+        try FileManager.default.createDirectory(at: marker.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let request = PendingInputSourceActivation(token: "test", installationKind: .ordinaryUpdate,
+            shouldSelect: true, temporaryFallbackSourceID: nil, version: "3.1.13", build: "129")
+        try PropertyListEncoder().encode(request).write(to: marker)
+        #expect(PostInstallPreparation.hasMatchingPendingActivation(version: "3.1.13", build: "129", homeDirectory: home))
+        #expect(!PostInstallPreparation.hasMatchingPendingActivation(version: "3.1.12", build: "129", homeDirectory: home))
+        #expect(!PostInstallPreparation.hasMatchingPendingActivation(version: "3.1.13", build: "128", homeDirectory: home))
+    }
+
     @Test("Only the installed bundle runs the next-login activation repair")
     func temporarySessionAppDoesNotRetireActivationMarker() {
         #expect(PostInstallPreparation.canRepairFromCurrentBundle(
@@ -990,7 +1005,7 @@ struct InstallerSessionContractTests {
             if scriptName == "build_local.sh" {
                 #expect(source.contains("com.thlim.hangyeol.staged-update"))
                 #expect(source.contains("--install-location"))
-                #expect(source.contains("--no-scripts"))
+                #expect(source.contains("Packaging/scripts/postinstall_session"))
                 continue
             }
             let analyzeRange = try #require(source.range(of: "pkgbuild --analyze"))
@@ -1020,7 +1035,7 @@ struct InstallerSessionContractTests {
                 #expect(source.contains("pending-app.tar.gz"))
                 #expect(source.contains("--install-location"))
                 #expect(source.contains("apply_staged_update.sh"))
-                #expect(source.contains("--no-scripts"))
+                #expect(source.contains("Packaging/scripts/postinstall_session"))
                 continue
             }
             let payloadApp = scriptName == "build_local.sh"
@@ -1032,12 +1047,18 @@ struct InstallerSessionContractTests {
         }
     }
 
-    @Test("Local update stages an opaque app archive and waits until boot to replace the registered app")
+    @Test("Local update activates only a session copy while deferring canonical replacement")
     func stagedUpdateDoesNotTouchLiveInputMethod() throws {
         let boot = try repositoryFile(named: "Packaging/scripts/apply_staged_update.sh")
         let build = try repositoryFile(named: "build_local.sh")
-        #expect(!build.contains("--scripts \"$SCRIPTS_DIR\""))
-        #expect(!build.contains("HangyeolInstallerHelper"))
+        let postinstall = try repositoryFile(named: "Packaging/scripts/postinstall_session")
+        #expect(build.contains("--scripts \"$SCRIPTS_DIR\""))
+        #expect(build.contains("HangyeolInstallerHelper"))
+        #expect(postinstall.contains("--activate-session-runtime"))
+        #expect(!postinstall.contains("--schedule-input-source-repair"))
+        #expect(!postinstall.contains("--installer-register"))
+        #expect(!postinstall.contains("tccutil"))
+        #expect(postinstall.contains("session.json"))
         #expect(!build.contains("postinstall_staged"))
         #expect(!build.contains("--verify-launch"))
         #expect(boot.contains("loginwindow"))
