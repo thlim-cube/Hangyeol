@@ -209,11 +209,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         DebugLogger.log("AppDelegate: applicationShouldHandleReopen")
-        // Only show settings when explicitly launched from Launchpad/Finder (reopen)
-        DispatchQueue.main.async {
-            SettingsWindowController.shared.showSettings()
-        }
-        return true
+        // IMK/LaunchServices can reopen this app when an existing host reconnects
+        // after an update. A reopen is not an explicit preferences request: opening
+        // a window here steals the host's focus and loses its first keystrokes.
+        // Preferences remain available through the input-source menu action.
+        return false
     }
 
     private func schedulePendingInputSourceRepair() {

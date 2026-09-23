@@ -17,6 +17,14 @@ public enum SessionRuntimeActivationResult: Equatable {
 }
 
 public enum SessionRuntimeActivation {
+    public static func compatibleConnectionName(installed: String?, proposed: String?, bundleID: String?) -> Bool {
+        guard let installed, let proposed else { return false }
+        if installed == proposed { return true }
+        return bundleID == "com.thlim.inputmethod.Hangyeol"
+            && installed == "Hangyeol_InputString"
+            && proposed == "com.thlim.inputmethod.Hangyeol_Connection"
+    }
+
     public static func shouldRestoreSelection(
         selectedBefore: Bool, currentSourceID: String?, fallbackID: String?
     ) -> Bool {

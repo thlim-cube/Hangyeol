@@ -1,3 +1,4 @@
+import AppKit
 import Carbon
 import Darwin
 import Foundation
@@ -333,12 +334,17 @@ private final class CurrentSessionRuntimeHost: SessionRuntimeHost {
               lease.permits(userID: getuid(), sessionID: SessionRuntimeLease.currentSessionID()),
               let installed = metadata(installedURL),
               let proposed = metadata(candidateURL) else { return reject("path, lease, or metadata mismatch") }
-        for key in ["CFBundleIdentifier", "InputMethodConnectionName",
+        for key in ["CFBundleIdentifier",
                     "InputMethodServerControllerClass", "ComponentInputModeDict",
                     "tsInputMethodCharacterRepertoireKey"] {
             guard let lhs = installed[key] as? NSObject,
                   let rhs = proposed[key] as? NSObject, lhs.isEqual(rhs) else { return reject("registration key \(key) differs") }
         }
+        guard SessionRuntimeActivation.compatibleConnectionName(
+            installed: installed["InputMethodConnectionName"] as? String,
+            proposed: proposed["InputMethodConnectionName"] as? String,
+            bundleID: proposed["CFBundleIdentifier"] as? String
+        ) else { return reject("connection name is incompatible") }
         var installedCode: SecStaticCode?
         var proposedCode: SecStaticCode?
         var requirement: SecRequirement?
@@ -416,7 +422,8 @@ private final class CurrentSessionRuntimeHost: SessionRuntimeHost {
     func stopCurrentRuntime() -> Bool {
         guard let processes = knownProcesses() else { return false }
         for (pid, _) in processes {
-            guard kill(pid, SIGTERM) == 0 || errno == ESRCH else { return false }
+            guard let app = NSRunningApplication(processIdentifier: pid) else { return false }
+            guard app.isTerminated || app.terminate() else { return false }
         }
         return waitUntil { self.knownProcesses()?.isEmpty == true }
     }
@@ -446,6 +453,7 @@ private final class CurrentSessionRuntimeHost: SessionRuntimeHost {
         return waitUntil {
             guard let processes = self.knownProcesses(), processes.count == 1,
                   processes[0].1 == expected,
+                  NSRunningApplication(processIdentifier: processes[0].0)?.isFinishedLaunching == true,
                   let sources = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource],
                   InputSourceLifecycleRules.roster(from: sources.compactMap(candidate(for:)), identity: identity).isEnabled else {
                 consecutivePasses = 0

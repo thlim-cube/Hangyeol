@@ -88,6 +88,12 @@ public final class HangyeolE2ERunner {
             print("실행 중 입력기: \(identity)")
         }
 
+        if configuration.scenarioFilter == "Slack 현재 입력창" {
+            return [runScenario("Slack 현재 입력창") {
+                try self.verifySlackExistingComposer(toggleBinding: inputSourceLease.toggleBinding)
+            }]
+        }
+
         var results: [E2EScenarioResult?] = []
         let textEdit = try TextEditFixture.launch(
             driver: driver,
@@ -354,6 +360,85 @@ public final class HangyeolE2ERunner {
 
     private func milliseconds(_ duration: TimeInterval) -> String {
         String(format: "%.1f ms", duration * 1_000)
+    }
+
+    private func verifySlackExistingComposer(toggleBinding: KeyBinding) throws {
+        guard let slack = NSRunningApplication.runningApplications(
+            withBundleIdentifier: "com.tinyspeck.slackmacgap"
+        ).first else { throw HangyeolE2EError.unavailable("Slack을 먼저 실행하세요.") }
+        let pid = slack.processIdentifier
+        slack.activate(options: [])
+        try Poll.wait(timeout: 5, description: "Slack foreground") {
+            NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+        }
+        guard accessibility.isRecipientlessSlackComposer(pid: pid),
+              accessibility.focusedValue(pid: pid)?.trimmingCharacters(in: .newlines).isEmpty == true else {
+            throw HangyeolE2EError.unavailable("수신인 없는 새 메시지의 빈 본문에 초점을 두세요. 기존 초안은 변경하지 않습니다.")
+        }
+        print("Slack 기존 프로세스: pid=\(pid)")
+        func requireFocus() throws {
+            guard !slack.isTerminated,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                  self.accessibility.isRecipientlessSlackComposer(pid: pid) else {
+                throw HangyeolE2EError.unexpected("입력 중 Slack 프로세스 또는 초점이 바뀌었습니다.")
+            }
+        }
+        func expect(_ text: String) throws {
+            try self.accessibility.waitForFocusedValue(pid: pid, expected: text)
+            try requireFocus()
+        }
+        var toggled = false
+        func toggle() throws {
+            try requireFocus()
+            self.driver.perform(binding: toggleBinding)
+            toggled.toggle()
+        }
+        let knownProbeValues: Set<String> = ["gksrmf", "한글", "한글 ", "한글 hello", "한글 hello안녕"]
+        defer {
+            // A focus change or user edit must never turn cleanup into deletion
+            // of another draft. Never send Return/Shift-Return in this scenario.
+            if (try? requireFocus()) != nil,
+               let value = accessibility.focusedValue(pid: pid),
+               knownProbeValues.contains(value.trimmingCharacters(in: .newlines)) {
+                // Commit marked text before cleanup. Cmd+A followed immediately
+                // by Backspace can race IMK's deferred shortcut delivery.
+                driver.keyPair(.space)
+                let committed = value.trimmingCharacters(in: .newlines) + " "
+                _ = try? accessibility.waitForFocusedValue(pid: pid, expected: committed)
+                if toggled { driver.perform(binding: toggleBinding) }
+                accessibility.clearRecipientlessSlackComposer(pid: pid, expected: committed)
+            }
+        }
+        driver.typePhysicalKeys("gksrmf")
+        let initial = try accessibility.waitForFocusedValue(pid: pid, matching: {
+            ExactTextContract.matches($0, expected: "한글") || ExactTextContract.matches($0, expected: "gksrmf")
+        }, description: "첫 물리 키 입력 한글 또는 gksrmf")
+        try requireFocus()
+        if ExactTextContract.matches(initial, expected: "gksrmf") {
+            driver.clearFocusedText()
+            try toggle()
+            driver.typePhysicalKeys("gksrmf")
+        }
+        try expect("한글")
+        driver.keyPair(.space)
+        try expect("한글 ")
+        // Reproduce LaunchServices reopening the running IMK during a host
+        // reconnection. The old handler opened preferences and stole focus.
+        let reopen = Process()
+        reopen.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        reopen.arguments = ["-g", configuration.installedAppURL.path]
+        try reopen.run()
+        try Poll.wait(timeout: 5, description: "IMK reopen request") { !reopen.isRunning }
+        guard reopen.terminationStatus == 0 else {
+            throw HangyeolE2EError.unexpected("입력기 reopen 요청 실패")
+        }
+        try toggle()
+        driver.typePhysicalKeys("hello")
+        try expect("한글 hello")
+        try toggle()
+        driver.typePhysicalKeys("dkssud")
+        try expect("한글 hello안녕")
+        print("Slack 한글 → 영문 → 한글과 초점 유지 확인; 메시지 전송 없음")
     }
 
     private func verifyTextEditBasic(_ fixture: TextEditFixture) throws {
@@ -1195,6 +1280,22 @@ private final class KeyEventDriver {
 }
 
 private final class AccessibilityClient {
+    func clearRecipientlessSlackComposer(pid: pid_t, expected: String) {
+        guard isRecipientlessSlackComposer(pid: pid),
+              let element = focusedElement(pid: pid),
+              let value = stringAttribute(element, kAXValueAttribute),
+              ExactTextContract.matches(value, expected: expected) else { return }
+        _ = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, "" as CFString)
+    }
+
+    func isRecipientlessSlackComposer(pid: pid_t) -> Bool {
+        guard let element = focusedElement(pid: pid),
+              stringAttribute(element, kAXRoleAttribute) == kAXTextAreaRole,
+              let description = stringAttribute(element, kAXDescriptionAttribute) else { return false }
+        return description == "메시지(선택된 수신인 없음)"
+            || description == "Message (no recipients selected)"
+    }
+
     func waitForFocusedValue(pid: pid_t, expected: String) throws {
         _ = try waitForFocusedValue(
             pid: pid,

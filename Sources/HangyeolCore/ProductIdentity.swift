@@ -5,7 +5,7 @@ public enum ProductIdentity {
     public static let systemName = "Hangyeol"
     public static let bundleID = "com.thlim.inputmethod.Hangyeol"
     public static let inputModeID = bundleID
-    public static let connectionName = "Hangyeol_InputString"
+    public static let connectionName = "\(bundleID)_Connection"
     public static let preferencePrefix = "com.thlim.hangyeol"
     public static let githubRepository = "thlim-cube/Hangyeol"
 

@@ -79,10 +79,12 @@ struct RegistrationContractTests {
         let info = try loadInfoPlist()
         #expect(info["CFBundleIdentifier"] as? String == ProductIdentity.bundleID)
         #expect(info["InputMethodConnectionName"] as? String == ProductIdentity.connectionName)
+        #expect(info["InputMethodConnectionName"] as? String == "com.thlim.inputmethod.Hangyeol_Connection",
+                "Existing IMK clients must be able to reconnect using the bundle-derived connection name")
         #expect(info["InputMethodServerControllerClass"] as? String == "HangyeolInputController")
         #expect(info["CFBundleName"] as? String == ProductIdentity.systemName)
-        #expect(info["CFBundleShortVersionString"] as? String == "3.1.13")
-        #expect(info["CFBundleVersion"] as? String == "129")
+        #expect(info["CFBundleShortVersionString"] as? String == "3.1.14")
+        #expect(info["CFBundleVersion"] as? String == "130")
         let repertoire = info["tsInputMethodCharacterRepertoireKey"] as? [String]
         #expect(repertoire == ["Hang"], "single-mode registration must declare Hang only")
     }

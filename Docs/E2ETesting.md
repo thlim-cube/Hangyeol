@@ -1003,3 +1003,60 @@ session`이 기록됐고, 정식 앱은 3.1.12/128 및 유효한 Apple Developme
 유효한 세션 번호를 복구한 후 임시 앱으로 재전환했다. 이는 세션 만료를
 모의한 실행 증거이고 실제 로그아웃·재로그인 증거는 아니다. 사용자의
 현재 작업을 유지하기 위해 이번 설치 뒤 로그아웃은 실행하지 않았다.
+
+
+### 3.1.14 기존 Slack 세션의 교체 후 입력 복구
+
+사용자는 3.1.13 설치 후 Slack에서 붙여넣기는 되지만 한글·영문 키 입력이
+안 됐다고 보고했고 수정을 요청했다. 수용 조건은 Slack을 재시작하지 않고
+임시 입력기 교체 뒤 한글·영문·한영 전환을 계속 사용할 수 있으며 자동
+재연결이 설정 창으로 초점을 가져가지 않는 것이다. 한결 메뉴가 보이거나
+새로 실행한 Chrome 검사가 통과한 것만으로 이 조건을 대신하지 않는다.
+
+3.1.13 재현에서는 Slack PID 25980의 수신인 없는 새 메시지에서 물리 키
+이벤트가 텍스트를 만들지 못했다. 같은 입력창의 붙여넣기와 ABC를 통한
+동일한 물리 키 입력은 성공했고, 한결 재선택은 복구하지 못했다. Slack을
+재실행한 PID 36639에서는 `gksrmf` → `한글`과 우측 Command 한영 전환이
+정상으로 돌아왔다. CUA의 문자 입력은 성공해도 실제 IMK 조합의 증거로
+취급하지 않았다. 원시 재현 기록은 `.build/slack-session-verification.txt`다.
+
+수정 실험 중 시스템 로그에는 `Refusing connection name for bundle:
+unrecognized 'InputMethodConnectionName' value`와 Slack PID의
+`requestIMKXPCEndpointInvalid`가 기록됐다. 기존 `Hangyeol_InputString`을
+`com.thlim.inputmethod.Hangyeol_Connection`으로 바꾸고, 서명과 나머지
+등록 키가 같은 경우 이 알려진 변경만 허용했다. 해당 이름 계약 검사는
+변경 전 7개 테스트 중 1개가 실패했고 수정 후 통과했다
+(`.build/slack-connection-before.log`). 이름 변경만으로 모든 증상을
+설명하지 않는다. 정식 앱이 이전 등록 이름인 혼합 상태에서는 시스템
+로그에 이전 이름 거부가 남을 수 있으며 정식 경로 교체는 재로그인 시점이다.
+
+정상 종료 요청만 적용한 실험에서도 재연결 문제가 남았다. 연결 이름을
+바꾼 뒤에는 입력이 복구됐지만, 백그라운드 Slack 활성화 시 한결 설정 창이
+앞으로 나오면서 첫 키 입력이 빠지는 경로가 드러났다. 실제 앞 앱의 bundle
+ID가 한결로 바뀐 것을 확인했고 코드의 `applicationShouldHandleReopen`이
+모든 시스템 재실행 요청에서 설정 창을 열고 있었다. 이 콜백은 창을 열지
+않게 수정했으며 입력 메뉴의 명시적 설정 열기는 유지한다. 교체 도우미는
+앱 정상 종료와 `isFinishedLaunching`을 확인한다. 일반 타이핑 지연은 추가하지 않았다.
+
+최종 3.1.14/130 서명 후보는 CDHash
+`84e82de52f573cfa418c3ea4dc0a4840d2369ebc`, 팀 `9FRJXJNGZK`다.
+기존 Slack PID 36639를 계속 유지하고 Finder가 앞에 있는 동안 입력기를
+교체했다. 새 런타임 PID 68127은
+`/private/tmp/hangyeol-session.pzi09mj8/Hangyeol.app`에서 실행됐으며,
+같은 Slack의 첫 한글 입력과 한영 전환을 통과했다. 정식 앱은 계속
+3.1.12/128이고 이번 실험에서 정식 입력기 경로를 변경하지 않았다.
+
+기존 HangyeolE2E에 `--scenario 'Slack 현재 입력창'`을 추가했다. 이미
+실행 중인 Slack의 수신인 없는 빈 본문에서만 진행하며, 현재 런타임 서명과
+지정 앱을 대조한 뒤 실제 키로 한글·영문·한글을 입력한다. 중간에 시스템
+앱 재열기 요청을 보내도 Slack 프로세스와 초점이 유지되는지 확인한다.
+Return은 전송하지 않으며 알려진 테스트 문자열만 정리한다. 앱과 입력창은
+미리 준비해야 하고, 이 시나리오 자체가 설치나 Slack 재시작을 수행하지 않는다.
+
+검증 결과: 최종 Slack 시나리오 1/1 통과
+(`.build/slack-fix-replacement.log`), TextEdit·Chrome 조합 2/2 통과
+(`.build/slack-fix-standard-host.log`), 전체 단위 599개/62 suites 및
+HangyeolVerify 통과. 최종 코드의 셸 문법·diff와 패키지 서명·payload도
+검사한다. 실제 3.1.14 PackageKit 관리자 설치와 재로그인은 아직 수행하지
+않았으므로 그 경계를 완료로 기록하지 않는다. 관리자 인증 없이도 가능한
+현재 세션 검증은 패키지의 앱·도우미를 그대로 추출하여 수행했다.

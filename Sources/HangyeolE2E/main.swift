@@ -6,6 +6,10 @@ private func usage() -> Never {
     사용법:
       swift run -c debug HangyeolE2E --package /absolute/path/Hangyeol_<version>_Local.pkg [--preflight-only] [--scenario 이름일부]
       swift run -c debug HangyeolE2E --app /absolute/path/Hangyeol.app [--scenario 이름일부]
+      swift run -c debug HangyeolE2E --app /absolute/path/Hangyeol.app --scenario 'Slack 현재 입력창'
+
+    Slack 검증은 이미 실행 중인 앱의 수신인 없는 새 메시지, 빈 본문에서만 실행합니다.
+    실제 키 입력과 한영 전환·입력기 재연결 후 초점 유지를 확인하며 메시지를 전송하지 않습니다.
 
     실제 설치본 /Library/Input Methods/Hangyeol.app과 지정한 PKG의 버전, build,
     bundle ID, 코드 서명을 먼저 대조합니다. TCC DB나 SIP 설정은 변경하지 않습니다.
