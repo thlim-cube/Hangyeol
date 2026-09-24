@@ -443,22 +443,27 @@ public final class HangyeolE2ERunner {
 
     private func verifyTextEditBasic(_ fixture: TextEditFixture) throws {
         try fixture.focus()
-        driver.clearFocusedText()
-        try accessibility.waitForFocusedValue(pid: fixture.pid, expected: "")
+        func probe() throws -> String {
+            driver.clearFocusedText()
+            try accessibility.waitForFocusedValue(pid: fixture.pid, expected: "")
+            driver.typePhysicalKeys("rk")
+            return try accessibility.waitForFocusedValue(
+                pid: fixture.pid,
+                matching: { $0 == "가" || $0 == "rk" },
+                description: "TextEdit Korean-mode probe"
+            )
+        }
 
-        driver.typePhysicalKeys("rk")
-        let probe = try accessibility.waitForFocusedValue(
-            pid: fixture.pid,
-            matching: { $0 == "가" || $0 == "rk" },
-            description: "TextEdit Korean-mode probe"
-        )
-        if probe == "rk" {
+        // The first client after a fresh IMK launch can receive raw keys before
+        // its controller is ready; confirm before treating that as English mode.
+        let firstProbe = try probe()
+        let confirmedProbe = firstProbe == "rk" ? try probe() : firstProbe
+        print("TextEdit 한글 모드 확인: first=\(firstProbe), confirmed=\(confirmedProbe)")
+        if confirmedProbe == "rk" {
             originalInternalModeWasEnglish = true
             driver.perform(binding: fixture.toggleBinding)
-            driver.clearFocusedText()
-        } else {
-            driver.clearFocusedText()
         }
+        driver.clearFocusedText()
 
         driver.typePhysicalKeys("gksrmf")
         driver.keyPair(.return)
