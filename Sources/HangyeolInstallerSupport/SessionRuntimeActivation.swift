@@ -17,12 +17,12 @@ public enum SessionRuntimeActivationResult: Equatable {
 }
 
 public enum SessionRuntimeActivation {
-    public static func compatibleConnectionName(installed: String?, proposed: String?, bundleID: String?) -> Bool {
-        guard let installed, let proposed else { return false }
-        if installed == proposed { return true }
-        return bundleID == "com.thlim.inputmethod.Hangyeol"
-            && installed == "Hangyeol_InputString"
-            && proposed == "com.thlim.inputmethod.Hangyeol_Connection"
+    public static func compatibleConnectionName(installed: String?, proposed: String?) -> Bool {
+        // Existing IMK clients retain the registered bundle's connection name.
+        // Even a known name migration must wait for the canonical update at logout;
+        // a running process and selected TIS source do not prove that clients connect.
+        guard let installed, let proposed, !installed.isEmpty else { return false }
+        return installed == proposed
     }
 
     public static func shouldRestoreSelection(

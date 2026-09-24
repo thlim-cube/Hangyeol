@@ -342,9 +342,8 @@ private final class CurrentSessionRuntimeHost: SessionRuntimeHost {
         }
         guard SessionRuntimeActivation.compatibleConnectionName(
             installed: installed["InputMethodConnectionName"] as? String,
-            proposed: proposed["InputMethodConnectionName"] as? String,
-            bundleID: proposed["CFBundleIdentifier"] as? String
-        ) else { return reject("connection name is incompatible") }
+            proposed: proposed["InputMethodConnectionName"] as? String
+        ) else { return reject("connection name differs; keep the current runtime until logout") }
         var installedCode: SecStaticCode?
         var proposedCode: SecStaticCode?
         var requirement: SecRequirement?

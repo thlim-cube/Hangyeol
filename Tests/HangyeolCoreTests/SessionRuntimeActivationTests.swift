@@ -3,23 +3,24 @@ import Foundation
 import HangyeolInstallerSupport
 
 struct SessionRuntimeActivationTests {
-    @Test func connectionMigrationOnlyAllowsTheKnownForwardChange() {
-        let bundleID = "com.thlim.inputmethod.Hangyeol"
+    @Test func connectionNameChangesWaitForLogout() {
         let current = "com.thlim.inputmethod.Hangyeol_Connection"
         #expect(SessionRuntimeActivation.compatibleConnectionName(
-            installed: current, proposed: current, bundleID: bundleID))
+            installed: current, proposed: current))
+        #expect(!SessionRuntimeActivation.compatibleConnectionName(
+            installed: "Hangyeol_InputString", proposed: current))
+        #expect(!SessionRuntimeActivation.compatibleConnectionName(
+            installed: current, proposed: "Hangyeol_InputString"))
+        #expect(!SessionRuntimeActivation.compatibleConnectionName(
+            installed: "another-connection", proposed: current))
+        #expect(!SessionRuntimeActivation.compatibleConnectionName(
+            installed: nil, proposed: current))
+        #expect(!SessionRuntimeActivation.compatibleConnectionName(
+            installed: current, proposed: nil))
         #expect(SessionRuntimeActivation.compatibleConnectionName(
-            installed: "Hangyeol_InputString", proposed: current, bundleID: bundleID))
+            installed: "Hangyeol_InputString", proposed: "Hangyeol_InputString"))
         #expect(!SessionRuntimeActivation.compatibleConnectionName(
-            installed: current, proposed: "Hangyeol_InputString", bundleID: bundleID))
-        #expect(!SessionRuntimeActivation.compatibleConnectionName(
-            installed: "another-connection", proposed: current, bundleID: bundleID))
-        #expect(!SessionRuntimeActivation.compatibleConnectionName(
-            installed: "Hangyeol_InputString", proposed: current, bundleID: "another.bundle"))
-        #expect(!SessionRuntimeActivation.compatibleConnectionName(
-            installed: nil, proposed: current, bundleID: bundleID))
-        #expect(!SessionRuntimeActivation.compatibleConnectionName(
-            installed: current, proposed: nil, bundleID: bundleID))
+            installed: "", proposed: ""))
     }
 
     @Test func sessionPathAcceptsBothMacOSTemporaryDirectorySpellings() {
