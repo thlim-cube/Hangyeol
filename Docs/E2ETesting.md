@@ -1095,3 +1095,32 @@ HangyeolVerify 통과. 최종 코드의 셸 문법·diff와 패키지 서명·pa
 (`.build/connection-guard-live.json`). 전체 단위 599개/62 suites와
 HangyeolVerify도 통과했다. 이 검사는 실제 호스트에서의 도우미 거부 경계이며
 새 패키지의 관리자 설치나 재로그인 후 정식 교체 증거는 아니다.
+
+
+### 3.1.16 패키지 없는 현재 세션 적용
+
+2026-09-25 재부팅으로 정식 앱이 3.1.15/131
+(`com.thlim.inputmethod.Hangyeol_Connection`)로 교체된 뒤, 연결 이름이 같은
+업데이트의 즉시 적용을 패키지 설치 없이 확인했다. 3.1.14 실패의 원인은
+버전 차이가 아니라 정식 번들과 후보의 연결 이름 차이였다. 연결 이름은
+등록된 정식 번들 기준으로 클라이언트가 찾으므로 앞으로 변경하지 않는다.
+
+`Tools/try_session_runtime.sh`는 `postinstall_session`과 같은 순서로
+`/private/tmp/hangyeol-session.*`에 서명 앱과 세션 범위 파일을 만들고
+`HangyeolInstallerHelper --activate-session-runtime`을 실행한다. 정식 번들은
+변경하지 않는다. 후보 버전만 바꾸려면 저장소 `Info.plist` 대신 인자를 쓴다.
+
+```bash
+Tools/try_session_runtime.sh --version 3.1.16 --build 132
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  swift run -c debug HangyeolE2E \
+  --app /private/tmp/hangyeol-session.XXXXXX/Hangyeol.app \
+  --scenario '두벌식 조합'
+```
+
+도우미는 `session-activation=applied`를 반환했고 실행 중인 한결은 임시 경로
+3.1.16/132 PID 하나였다. 입력 소스는 한결로 복귀했다. 손쉬운 사용 권한을
+받은 뒤 러너가 실행 PID의 CDHash를 후보와 대조하고 TextEdit·Chrome
+두벌식 조합 2/2를 통과했다(`.build/session-runtime-e2e.log`). 사용자도 전환을
+직접 확인했다. 이 결과는 도우미 활성화 경로의 증거이며, 실제 PackageKit
+설치와 로그아웃 후 정식 교체는 3.1.16 패키지 설치에서 따로 확인한다.

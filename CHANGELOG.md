@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.16] - 2026-09-25
+
+### Added
+
+- 패키지 없이 로컬 빌드를 현재 로그인 세션에 적용하는 `Tools/try_session_runtime.sh`를 추가했습니다. 설치 스크립트와 같은 임시 경로·세션 범위·도우미 활성화를 거치며 정식 입력기 번들은 변경하지 않습니다.
+
+### Verified
+
+- 정식 3.1.15와 연결 이름이 같은 3.1.16/132 후보를 재로그인 없이 현재 세션에 적용했습니다. 도우미가 `session-activation=applied`를 반환했고, 임시 경로의 새 버전 하나만 실행되며 TextEdit·Chrome 두벌식 조합 2/2가 통과했습니다. 사용자도 입력기 전환을 확인했습니다.
+
+### Verification pending
+
+- 3.1.16 패키지의 실제 관리자 설치에서 같은 즉시 적용과 로그아웃 후 정식 교체는 별도 확인이 필요합니다.
+
 ## [3.1.15] - 2026-09-25
 
 ### Fixed
