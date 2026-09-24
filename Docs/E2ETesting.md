@@ -1124,3 +1124,21 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 두벌식 조합 2/2를 통과했다(`.build/session-runtime-e2e.log`). 사용자도 전환을
 직접 확인했다. 이 결과는 도우미 활성화 경로의 증거이며, 실제 PackageKit
 설치와 로그아웃 후 정식 교체는 3.1.16 패키지 설치에서 따로 확인한다.
+
+### 3.1.16 실제 설치와 재로그인 교체
+
+06:00:13 PackageKit 설치 로그는 `Hangyeol session update applied:
+/private/tmp/hangyeol-session.FGZYJB/Hangyeol.app`를 기록했다. 세션 범위
+파일은 사용자 501과 현재 보안 세션 번호였고, 실행 중인 한결은 이 경로의
+3.1.16/132 PID 하나였다. CDHash `4473c48020f212033b9afd7232bed6eda2b32b38`은
+패키지를 펼쳐 얻은 앱과 같았다. 이 시점 정식 번들은 3.1.15/131이었고
+TextEdit·Chrome 두벌식 조합 2/2가 통과했다(`.build/install-3.1.16-e2e.log`).
+
+재부팅 없이 로그아웃·재로그인한 뒤 정식 번들은 같은 CDHash의 3.1.16/132로
+교체됐고 서명 검증을 통과했다. `/var/log/Hangyeol-staged-update.log`에는
+`Hangyeol staged app installed outside the login session.`이 남았고 교체
+작업은 종료 코드 0으로 끝났으며 대기 압축 파일과 체크섬은 제거됐다. 정식
+경로 PID 하나만 실행됐고 TextEdit·Chrome 두벌식 조합 2/2가 통과했다
+(`.build/relogin-3.1.16-e2e.log`). 설정·정보 메뉴와 기존 호스트의 수동 입력은
+이 자동 검사 범위에 포함하지 않는다. 3.1.17은 정식 3.1.16 위의 일반 업데이트를
+같은 방식으로 확인하기 위한 검증 릴리스다.

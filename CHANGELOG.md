@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.17] - 2026-09-25
+
+### Changed
+
+- 기능 변경 없이 정식 3.1.16 위의 일반 업데이트 경로를 확인하기 위한 검증 릴리스입니다.
+
+### Verified
+
+- 3.1.16 패키지의 실제 관리자 설치에서 재로그인 없이 새 버전이 적용됐습니다. 설치 로그가 `session update applied`를 기록했고, 임시 경로의 3.1.16/132 하나가 패키지 앱과 같은 CDHash로 실행되며 TextEdit·Chrome 두벌식 조합 2/2가 통과했습니다.
+- 이후 재부팅 없이 로그아웃·재로그인만으로 정식 번들이 같은 CDHash의 3.1.16/132로 교체됐습니다. 대기 앱 파일이 정리됐고 정식 경로 프로세스 하나에서 TextEdit·Chrome 두벌식 조합 2/2가 통과했습니다.
+
+### Verification pending
+
+- 정식 3.1.16에서 3.1.17 패키지를 설치할 때의 즉시 적용과 재로그인 후 정식 교체는 설치 후 확인이 필요합니다.
+
 ## [3.1.16] - 2026-09-25
 
 ### Added

@@ -83,8 +83,8 @@ struct RegistrationContractTests {
                 "Existing IMK clients must be able to reconnect using the bundle-derived connection name")
         #expect(info["InputMethodServerControllerClass"] as? String == "HangyeolInputController")
         #expect(info["CFBundleName"] as? String == ProductIdentity.systemName)
-        #expect(info["CFBundleShortVersionString"] as? String == "3.1.16")
-        #expect(info["CFBundleVersion"] as? String == "132")
+        #expect(info["CFBundleShortVersionString"] as? String == "3.1.17")
+        #expect(info["CFBundleVersion"] as? String == "133")
         let repertoire = info["tsInputMethodCharacterRepertoireKey"] as? [String]
         #expect(repertoire == ["Hang"], "single-mode registration must declare Hang only")
     }
